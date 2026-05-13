@@ -65,7 +65,7 @@ The project uses a microservice-style layout orchestrated with Docker Compose.
 ## Project structure
 
 ```
-assistant-project/
+project/
 ├── app/                          # Application sources
 │   ├── backend/                  # Backend API (FastAPI)
 │   │   ├── calculators/          # Biorhythms, psychomatrix, natal, jyotish
@@ -107,8 +107,8 @@ assistant-project/
 
 ```bash
 # Clone repository
-git clone <repository-url>
-cd assistant-project
+git clone git@github.com:dailytuner/project.git
+cd project
 
 # Generate secrets and API keys
 make secrets

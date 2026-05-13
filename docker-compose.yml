@@ -1,0 +1,135 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: pa-postgres
+    ports:
+      - "5432:5432"  
+    environment:
+      POSTGRES_DB: personalassistant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgrespassword
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initscripts:/docker-entrypoint-initdb.d:ro
+      - ./config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    secrets:
+      - postgrespassword
+    networks:
+      - pa-net  
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d personalassistant"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+
+  backend-api:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.backend
+    command: ["uvicorn", "backend.assistant_api:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL_FILE=/run/secrets/db-url  
+    networks:
+      - pa-net
+    secrets:
+      - db-url
+      - backend-api-key
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:                             
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+
+  web-ui:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.web
+    container_name: pa-webui
+    ports:
+      - "8080:8080"
+    environment:
+      - BACKEND_API_URL=http://backend-api:8000
+    secrets:
+      - backend-api-key
+    networks:
+      - pa-net
+    depends_on:
+      backend-api:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
+
+  cron-backup:
+    image: postgres:15-alpine
+    container_name: pa-backup
+    command: >
+      sh -c "
+        echo '0 3 * * * /backup.sh' > /etc/crontabs/root &&
+        crond -f
+      "
+    volumes:
+      - ./scripts/backup-db.sh:/backup.sh:ro
+      - ./backups:/backups
+    environment:
+      PGPASSWORD_FILE: /run/secrets/postgrespassword
+    secrets:
+      - postgrespassword
+    networks:
+      - pa-net
+    depends_on:
+      - postgres
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
+volumes:
+  pgdata: {}
+  grafana_data: {}
+
+secrets:
+  postgrespassword:
+    file: ./docker-secrets/postgrespassword.txt
+  apppassword:
+    file: ./docker-secrets/app_password.txt
+  bot-token:
+    file: ./docker-secrets/bot-token.txt
+  db-url:
+    file: ./docker-secrets/db-url.txt
+  backend-api-key:
+    file: ./docker-secrets/backend-api-key.txt
+
+networks:
+  pa-net:
+    driver: bridge
+

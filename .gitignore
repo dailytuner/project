@@ -1,0 +1,52 @@
+# Docker
+docker-compose.override.yml
+
+# Секреты и конфигурация
+.env
+.env.local
+.env.*.local
+docker-secrets/
+*.secret
+data/
+bot/.env
+
+# Резервные копии
+*.backup
+backup/
+
+# Временные файлы
+tmp/
+*.tmp
+
+# Data
+*.log
+*.bak
+
+# Environment
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+backups/*.sql.gz
+!backups/.gitkeep
+
+# Temp
+temp/
+
+# Python
+__pycache__/
+*.pyc
+.python-version
+
+# Models (крупные файлы)
+models/*.bin
+models/*.gguf

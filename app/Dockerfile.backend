@@ -1,0 +1,38 @@
+FROM python:3.11-slim
+
+# ✅ 1. УСТАНОВКА СИСТЕМНЫХ ПАКЕТОВ (БЕЗ libswe-dev!)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev gcc g++ \
+    curl \
+    tini \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ✅ 2. SwissEph файлы (НЕ libswe2.0!)
+RUN mkdir -p /usr/share/swisseph && \
+    cd /usr/share/swisseph && \
+    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/seas_18.se1 && \
+    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/semo_18.se1 && \
+    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/sepl_18.se1 && \
+    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/sefstars.txt && \
+    echo "✅ Ephemeris files OK" && \
+    ls -la
+
+WORKDIR /app
+
+COPY requirements-backend.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-backend.txt
+
+COPY backend/ ./backend/
+
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["uvicorn", "backend.assistant_api:app", "--host", "0.0.0.0", "--port", "8000"]
+

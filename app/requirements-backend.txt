@@ -1,0 +1,34 @@
+# Основные зависимости backend
+aiogram==3.2.0
+sqlalchemy==2.0.23
+aiosqlite==0.22.1
+aiolimiter==1.2.1
+timezonefinder==8.2.1
+asyncpg==0.29.0
+python-dotenv==1.0.0
+pytz==2023.3
+python-dateutil==2.8.2
+pgvector==0.4.2
+#psycopg2-binary==2.9.9
+
+
+# Астрологические расчеты
+pyswisseph==2.10.3.1
+
+requests==2.31.0
+
+# API зависимости
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
+
+# Добавить если нужно для API:
+python-multipart==0.0.7
+
+# хеширование паролей
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
+# Дополнительные
+numpy>=1.24.0  
+pandas>=2.0.0  

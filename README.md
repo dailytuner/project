@@ -64,35 +64,33 @@ The project uses a microservice-style layout orchestrated with Docker Compose.
 
 ## Project structure
 
-```
 project/
-├── app/                          # Application sources
-│   ├── backend/                  # Backend API (FastAPI)
-│   │   ├── calculators/          # Biorhythms, psychomatrix, natal, jyotish
-│   │   ├── config/               # Configuration and settings
-│   │   ├── database/             # DB models and migrations
-│   │   ├── forecast/             # Forecasting / combination logic
-│   │   ├── magic/                # "Magic" profiles and derived traits
-│   │   ├── services/             # Business logic and orchestration
-│   │   ├── users/                # User management and profiles
-│   │   └── assistant_api.py      # Main API entrypoint
-│   ├── web/                      # Web interface
-│   │   ├── web_api.py            # Web API server
-│   │   ├── web_client.py         # Frontend client for backend calls
+├── app/                         # Application sources
+│   ├── backend/                 # Backend API (FastAPI)
+│   │   ├── calculators/         # Biorhythms, psychomatrix, natal, jyotish
+│   │   ├── config/              # Configuration and settings
+│   │   ├── database/            # DB models and migrations
+│   │   ├── forecast/            # Forecasting / combination logic
+│   │   ├── magic/               # "Magic" profiles and derived traits
+│   │   ├── services/            # Business logic and orchestration
+│   │   ├── users/               # User management and profiles
+│   │   └── assistant_api.py     # Main API entrypoint
+│   ├── web/                     # Web interface
+│   │   ├── web_api.py           # Web API server
+│   │   ├── web_client.py        # Frontend client for backend calls
 │   │   └── __init__.py
-│   ├── requirements-*.txt        # Component dependencies
-│   └── Dockerfile.*              # Docker images for components
-├── docker-secrets/               # Docker secrets (auto-generated)
-├── initscripts/                  # DB initialization scripts
+│   ├── requirements-*.txt       # Component dependencies
+│   └── Dockerfile.*             # Docker images for components
+├── docker-secrets/              # Docker secrets (auto-generated)
+├── initscripts/                 # DB initialization scripts
 │   └── init_db.sql
-├── monitoring/                   # Monitoring configuration
-├── scripts/                      # Utility scripts
-├── backups/                      # Generated DB backups
-├── docker-compose.yml            # Compose orchestration
-├── Makefile                      # Management commands
-├── bash_start.sh                 # Launch helper script
-└── README.md                     # This document
-```
+├── monitoring/                  # Monitoring configuration
+├── scripts/                     # Utility scripts
+├── backups/                     # Generated DB backups
+├── docker-compose.yml           # Compose orchestration
+├── Makefile                     # Management commands
+├── bash_start.sh                # Launch helper script
+└── README.md                    # This document
 
 ## Quick start
 

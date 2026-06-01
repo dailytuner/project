@@ -30,10 +30,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY backend/ ./backend/
 
-RUN adduser --disabled-password --gecos '' appuser && \
-    usermod -aG root appuser && \
-    chown -R appuser:appuser /app
-USER appuser
+#RUN adduser --disabled-password --gecos '' appuser && \
+#    usermod -aG root appuser && \
+#    chown -R appuser:appuser /app
+#USER appuser
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--"]

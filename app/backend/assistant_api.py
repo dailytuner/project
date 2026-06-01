@@ -551,6 +551,7 @@ async def get_forecast(
                 "moon_info": forecast.moon_info,
                 "planetary_hour": forecast.planetary_hour,
                 "dasha_info": forecast.dasha_info,
+                "financial_advice": forecast.financial_advice,
                 "timestamp": iso_timestamp()
             }
 

@@ -231,8 +231,10 @@ class WebAPIClient:
                 "error": result.get("error", "Unknown error")
             }
 
-        # ✅ ТОЛЬКО энергия из осей
+        # Получаем оси
         axes = result.get("axes", [])
+
+        # Находим уровень энергии (ось energy_will)
         energy_level = 0.5
         for axis in axes:
             if isinstance(axis, dict):
@@ -246,26 +248,78 @@ class WebAPIClient:
                 energy_level = daily_val
                 break
 
-        # ✅ БЕРЕМ ГОТОВЫЕ РЕКОМЕНДАЦИИ ИЗ BACKEND (БЕЗ ДОПОЛНИТЕЛЬНОЙ ОБРАБОТКИ)
+        # Формируем рекомендации
         recommendations = []
 
+        # Основной совет
         top_advice = result.get("top_advice", "")
         if top_advice:
             recommendations.append(f"⭐ {top_advice}")
 
+        # Предупреждения
         caution_advice = result.get("caution_advice", "")
         if caution_advice and caution_advice != "✅ Особых предостережений нет":
             recommendations.append(f"⚠️ {caution_advice}")
 
+        # Сводка
         summary = result.get("summary", "")
         if summary and summary != "➡️ Нейтральный день":
             recommendations.append(f"📌 {summary}")
 
-        # ❌ НЕ ДОБАВЛЯЕМ СОВЕТЫ ИЗ ОСЕЙ - backend уже всё сформировал!
-        # ❌ НЕ ДОБАВЛЯЕМ background_risks - они уже в caution_advice
+        # ========== ФИНАНСОВЫЕ РЕКОМЕНДАЦИИ (исправлено) ==========
+        financial_advice = result.get("financial_advice", {})
+
+        if financial_advice and isinstance(financial_advice, dict):
+            # Проверяем наличие данных
+            has_finance = any([
+                financial_advice.get("advice"),
+                financial_advice.get("index") is not None,
+                financial_advice.get("favorable_actions"),
+                financial_advice.get("avoid_actions"),
+                financial_advice.get("best_time")
+            ])
+
+            if has_finance:
+                recommendations.append("")  # пустая строка для отступа
+                recommendations.append("💎 ФИНАНСОВЫЙ ПРОГНОЗ:")
+
+                # Индекс
+                index_val = financial_advice.get("index")
+                if index_val is not None:
+                    score_emoji = "🟢" if index_val >= 70 else "🟡" if index_val >= 40 else "🔴"
+                    recommendations.append(
+                        f"{score_emoji} Индекс: {index_val}% ({financial_advice.get('level', 'medium')})")
+
+                # Основной совет
+                advice_text = financial_advice.get("advice", "")
+                if advice_text:
+                    recommendations.append(f"📊 {advice_text}")
+
+                # Лучшее время
+                best_time_finance = financial_advice.get("best_time", "")
+                if best_time_finance:
+                    recommendations.append(f"🕐 {best_time_finance}")
+
+                # Благоприятные действия
+                favorable = financial_advice.get("favorable_actions", [])
+                if favorable:
+                    rec_line = "✅ Благоприятно: " + ", ".join(favorable[:3])
+                    recommendations.append(rec_line)
+
+                # Действия которых стоит избегать
+                avoid = financial_advice.get("avoid_actions", [])
+                if avoid:
+                    rec_line = "❌ Избегай: " + ", ".join(avoid[:3])
+                    recommendations.append(rec_line)
+
+                # Подсказка по инвестициям
+                invest_hint = financial_advice.get("investment_hint", "")
+                if invest_hint:
+                    recommendations.append(f"💡 {invest_hint}")
 
         activities_text = "\n".join(recommendations) if recommendations else "Нет рекомендаций на этот день"
 
+        # Форматируем дату
         forecast_date = result.get("forecast_date")
         if forecast_date:
             date_obj = date.fromisoformat(forecast_date) if isinstance(forecast_date, str) else forecast_date
@@ -281,7 +335,8 @@ class WebAPIClient:
             "recommendations_text": activities_text,
             "energy_percent": round(energy_level * 100),
             "summary": summary,
-            "warnings": caution_advice
+            "warnings": caution_advice,
+            "financial_advice": financial_advice
         }
 
     async def close(self):

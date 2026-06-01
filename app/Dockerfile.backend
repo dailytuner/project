@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     wget \
     ca-certificates \
+    swig \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ✅ 2. SwissEph файлы (НЕ libswe2.0!)
@@ -23,8 +25,8 @@ WORKDIR /app
 
 COPY requirements-backend.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements-backend.txt
+    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --timeout 900 -r requirements-backend.txt
 
 COPY backend/ ./backend/
 

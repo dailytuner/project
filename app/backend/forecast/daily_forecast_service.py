@@ -23,6 +23,7 @@ from .axis_modulator import AxisModulator, AxisName, get_axis_modulator
 from .biorhythm_calculator import get_biorhythm_calculator
 from .dasha_calculator import get_dasha_calculator
 from .panchanga_calculator import get_panchanga_calculator
+from .financial_advisor import get_financial_advisor, FinancialAdvice
 from ..users.user_services import user_service
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class DailyForecastResult:
     background_risks: List[str] = field(default_factory=list)
     subtle_signals: Dict[str, Any] = field(default_factory=dict)
     signal_categories: Dict[str, List[Dict]] = field(default_factory=dict)
+    financial_advice: Optional[Dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict:
         return {
@@ -86,7 +88,8 @@ class DailyForecastResult:
             'calculated_at': self.calculated_at.isoformat(),
             'background_risks': self.background_risks,
             'subtle_signals': self.subtle_signals,
-            'signal_categories': self.signal_categories
+            'signal_categories': self.signal_categories,
+            'financial_advice': self.financial_advice
         }
 
 
@@ -119,87 +122,88 @@ class DailyForecastService:
     # НОВЫЙ МЕТОД: КАТЕГОРИЗАЦИЯ СИГНАЛОВ
     # ============================================================
 
-    def _categorize_signals(self, deltas: Dict[AxisName, float]) -> Dict[str, List[Tuple[AxisName, float]]]:
-        """
-        Категоризирует сигналы по силе изменений
-
-        Returns:
-            {
-                'critical_positive': [(axis, delta), ...],  # >= 0.12
-                'critical_negative': [(axis, delta), ...],  # <= -0.12
-                'strong_positive': [(axis, delta), ...],    # >= 0.08
-                'strong_negative': [(axis, delta), ...],    # <= -0.08
-                'medium_positive': [(axis, delta), ...],    # >= 0.04
-                'medium_negative': [(axis, delta), ...],    # <= -0.04
-                'weak_positive': [(axis, delta), ...],      # >= 0.02
-                'weak_negative': [(axis, delta), ...]       # <= -0.02
-            }
-        """
+    def _categorize_signals(self, deltas: Dict) -> Dict[str, List[Tuple[str, float]]]:
         result = {
-            'critical_positive': [],
-            'critical_negative': [],
-            'strong_positive': [],
-            'strong_negative': [],
-            'medium_positive': [],
-            'medium_negative': [],
-            'weak_positive': [],
-            'weak_negative': []
+            'critical_positive': [], 'critical_negative': [],
+            'strong_positive': [], 'strong_negative': [],
+            'medium_positive': [], 'medium_negative': [],
+            'weak_positive': [], 'weak_negative': []
         }
 
         for axis, delta in deltas.items():
-            if delta >= 0.12:
-                result['critical_positive'].append((axis, delta))
-            elif delta >= 0.08:
-                result['strong_positive'].append((axis, delta))
-            elif delta >= 0.04:
-                result['medium_positive'].append((axis, delta))
-            elif delta >= 0.02:
-                result['weak_positive'].append((axis, delta))
-            elif delta <= -0.12:
-                result['critical_negative'].append((axis, delta))
-            elif delta <= -0.08:
-                result['strong_negative'].append((axis, delta))
-            elif delta <= -0.04:
-                result['medium_negative'].append((axis, delta))
-            elif delta <= -0.02:
-                result['weak_negative'].append((axis, delta))
+            # Приводим к float
+            delta = float(delta)
 
-        # Сортируем по абсолютной величине
+            # Получаем имя оси
+            if hasattr(axis, 'value'):
+                axis_name = axis.value
+            else:
+                axis_name = str(axis)
+
+            # Положительные сигналы
+            if delta >= 0.12:
+                result['critical_positive'].append((axis_name, delta))
+            elif delta >= 0.08:
+                result['strong_positive'].append((axis_name, delta))
+            elif delta >= 0.04:
+                result['medium_positive'].append((axis_name, delta))
+            elif delta >= 0.02:
+                result['weak_positive'].append((axis_name, delta))
+
+            # Отрицательные сигналы (исправлено!)
+            if delta <= -0.12:  # ← было elif, исправлено на if
+                result['critical_negative'].append((axis_name, delta))
+            elif delta <= -0.08:
+                result['strong_negative'].append((axis_name, delta))
+            elif delta <= -0.04:
+                result['medium_negative'].append((axis_name, delta))
+            elif delta <= -0.02:
+                result['weak_negative'].append((axis_name, delta))
+
         for key in result:
             result[key].sort(key=lambda x: abs(x[1]), reverse=True)
 
         return result
 
-    def _analyze_background_risks(self, deltas: Dict[AxisName, float]) -> Tuple[List[str], Dict[str, Any]]:
+    def _analyze_background_risks(self, deltas: Dict) -> Tuple[List[str], Dict[str, Any]]:
         """
         Анализирует фоновые риски от слабых сигналов
-
-        Returns:
-            (background_risks, subtle_signals)
+        Работает и с Enum, и со строками
         """
         background_risks = []
         subtle_signals = {}
 
-        # Выявляем слабые сигналы
-        weak_negative = [(axis, delta) for axis, delta in deltas.items() if -0.04 < delta < -0.02]
-        weak_positive = [(axis, delta) for axis, delta in deltas.items() if 0.02 < delta < 0.04]
+        # ✅ Универсальное получение имени
+        weak_negative = []
+        weak_positive = []
+
+        for axis, delta in deltas.items():
+            if hasattr(axis, 'value'):
+                axis_name = axis.value
+            else:
+                axis_name = str(axis)
+
+            if -0.04 < delta < -0.02:
+                weak_negative.append((axis_name, delta))
+            elif 0.02 < delta < 0.04:
+                weak_positive.append((axis_name, delta))
 
         if weak_negative:
             subtle_signals['weak_negative_axes'] = {
-                self._axis_name_ru(a[0]): round(d, 3)
-                for a, d in weak_negative
+                name: round(d, 3)
+                for name, d in weak_negative
             }
 
             if len(weak_negative) >= 4:
                 background_risks.append(f"📊 Фоновый спад на {len(weak_negative)} осях - будь внимателен")
             elif len(weak_negative) >= 2:
-                axes_names = [self._axis_name_ru(a[0]) for a, _ in weak_negative]
+                axes_names = [name for name, _ in weak_negative]
                 background_risks.append(f"📉 Легкий спад: {', '.join(axes_names)}")
 
         if weak_positive:
             subtle_signals['weak_positive_axes'] = {
-                self._axis_name_ru(a[0]): round(d, 3)
-                for a, d in weak_positive
+                name: round(d, 3)
+                for name, d in weak_positive
             }
 
         # Проверяем комбинации слабых сигналов
@@ -315,7 +319,8 @@ class DailyForecastService:
                 calculated_at=cached.created_at or datetime.now(timezone.utc),
                 background_risks=background_risks,
                 subtle_signals=subtle_signals,
-                signal_categories=signal_categories
+                signal_categories=signal_categories,
+                financial_advice=cached.recommendations.get('financial_advice', {})
             )
 
         return None
@@ -347,7 +352,8 @@ class DailyForecastService:
             'best_time': forecast_result.best_time,
             'moon_info': forecast_result.moon_info,
             'planetary_hour': forecast_result.planetary_hour,
-            'dasha_info': forecast_result.dasha_info
+            'dasha_info': forecast_result.dasha_info,
+            'financial_advice': forecast_result.financial_advice
         }
 
         existing = await session.execute(
@@ -399,22 +405,21 @@ class DailyForecastService:
     def _generate_enhanced_summary(
             self,
             deltas: Dict[AxisName, float],
-            signal_categories: Dict[str, List[Tuple[AxisName, float]]]
+            signal_categories: Dict[str, List[Tuple[str, float]]]
     ) -> Tuple[str, str, str]:
         """
         Сгенерировать расширенную текстовую сводку прогноза
-        Возвращает: (summary, top_advice, caution_advice)
         """
 
-        # Получаем категории
-        critical_neg = signal_categories['critical_negative']
-        critical_pos = signal_categories['critical_positive']
-        strong_neg = signal_categories['strong_negative']
-        strong_pos = signal_categories['strong_positive']
-        medium_neg = signal_categories['medium_negative']
-        medium_pos = signal_categories['medium_positive']
-        weak_neg = signal_categories['weak_negative']
-        weak_pos = signal_categories['weak_positive']
+        # Получаем категории (имена уже строки)
+        critical_neg = signal_categories.get('critical_negative', [])
+        critical_pos = signal_categories.get('critical_positive', [])
+        strong_neg = signal_categories.get('strong_negative', [])
+        strong_pos = signal_categories.get('strong_positive', [])
+        medium_neg = signal_categories.get('medium_negative', [])
+        medium_pos = signal_categories.get('medium_positive', [])
+        weak_neg = signal_categories.get('weak_negative', [])
+        weak_pos = signal_categories.get('weak_positive', [])
 
         # === ФОРМИРУЕМ SUMMARY ===
         summary_parts = []
@@ -473,21 +478,30 @@ class DailyForecastService:
         caution_advice_parts = []
 
         # Критические негативные советы
-        for axis, delta in critical_neg[:2]:
-            caution_advice_parts.append(f"🔴 {self._axis_name_ru(axis)}: {self._get_caution_advice(axis)}")
+        for axis_name, delta in critical_neg[:2]:
+            # axis_name уже строка, нужно получить AxisName для совета
+            axis_enum = self._get_axis_enum(axis_name)
+            if axis_enum:
+                caution_advice_parts.append(f"🔴 {self._axis_name_ru(axis_name)}: {self._get_caution_advice(axis_enum)}")
 
-        # Сильные негативные советы (если мало критических)
+        # Сильные негативные советы
         if len(critical_neg) < 2:
-            for axis, delta in strong_neg[:2]:
-                level = "🟠" if len(critical_neg) > 0 else "⚠️"
-                caution_advice_parts.append(f"{level} {self._axis_name_ru(axis)}: {self._get_caution_advice(axis)}")
+            for axis_name, delta in strong_neg[:2]:
+                axis_enum = self._get_axis_enum(axis_name)
+                if axis_enum:
+                    level = "🟠" if len(critical_neg) > 0 else "⚠️"
+                    caution_advice_parts.append(
+                        f"{level} {self._axis_name_ru(axis_name)}: {self._get_caution_advice(axis_enum)}")
 
-        # Средние негативные (как дополнение)
+        # Средние негативные
         if len(caution_advice_parts) < 3 and medium_neg:
-            for axis, delta in medium_neg[:1]:
-                caution_advice_parts.append(f"📉 {self._axis_name_ru(axis)}: {self._get_caution_advice(axis)}")
+            for axis_name, delta in medium_neg[:1]:
+                axis_enum = self._get_axis_enum(axis_name)
+                if axis_enum:
+                    caution_advice_parts.append(
+                        f"📉 {self._axis_name_ru(axis_name)}: {self._get_caution_advice(axis_enum)}")
 
-        # Суммарное предупреждение при массовом спаде
+        # Суммарное предупреждение
         total_negative = len(critical_neg) + len(strong_neg) + len(medium_neg) + len(weak_neg)
         if total_negative >= 5:
             caution_advice_parts.append("\n📌 ОБЩЕЕ: снижена активность в большинстве сфер - отдохни сегодня")
@@ -495,8 +509,10 @@ class DailyForecastService:
             caution_advice_parts.append("\n📌 Рекомендуется снизить активность и избегать рисков")
 
         # Позитивные советы
-        for axis, delta in (critical_pos + strong_pos + medium_pos)[:2]:
-            top_advice_parts.append(f"✅ {self._axis_name_ru(axis)}: {self._get_positive_advice(axis)}")
+        for axis_name, delta in (critical_pos + strong_pos + medium_pos)[:2]:
+            axis_enum = self._get_axis_enum(axis_name)
+            if axis_enum:
+                top_advice_parts.append(f"✅ {self._axis_name_ru(axis_name)}: {self._get_positive_advice(axis_enum)}")
 
         # Если нет позитивных сигналов
         if not top_advice_parts and total_negative < 3:
@@ -509,20 +525,33 @@ class DailyForecastService:
 
         return summary, top_advice, caution_advice
 
-    def _axis_name_ru(self, axis: AxisName) -> str:
-        """Русское название оси"""
+    def _get_axis_enum(self, axis_name: str) -> Optional[AxisName]:
+        """Преобразует строку в AxisName Enum"""
+        for axis in AxisName:
+            if axis.value == axis_name:
+                return axis
+        return None
+
+    def _axis_name_ru(self, axis) -> str:
+        """Русское название оси (работает с Enum и строкой)"""
+        # Если передан Enum
+        if hasattr(axis, 'value'):
+            axis_value = axis.value
+        else:
+            axis_value = str(axis)
+
         names = {
-            AxisName.ENERGY_WILL: "энергия",
-            AxisName.HEALTH_PHYSICAL: "здоровье",
-            AxisName.INTELLECT_LOGIC: "интеллект",
-            AxisName.EMOTIONS_INTUITION: "эмоции",
-            AxisName.WORK_DISCIPLINE: "дисциплина",
-            AxisName.LUCK_TALENT: "удача",
-            AxisName.SOCIAL_RELATIONS: "социум",
-            AxisName.KARMA_CYCLES: "карма",
-            AxisName.DESTINY_MISSION: "миссия",
+            "energy_will": "энергия",
+            "health_physical": "здоровье",
+            "intellect_logic": "интеллект",
+            "emotions_intuition": "эмоции",
+            "work_discipline": "дисциплина",
+            "luck_talent": "удача",
+            "social_relations": "социум",
+            "karma_cycles": "карма",
+            "destiny_mission": "миссия",
         }
-        return names.get(axis, axis.value)
+        return names.get(axis_value, axis_value)
 
     def _get_positive_advice(self, axis: AxisName) -> str:
         """Совет при повышенной оси"""
@@ -685,6 +714,34 @@ class DailyForecastService:
                 moon_phase=transits.planetary_hour_info.get('moon_phase', ''),
                 void_of_course_moon=transits.void_of_course_moon
             )
+            # ========== НОВЫЙ БЛОК: ФИНАНСОВЫЙ СОВЕТНИК ==========
+            # 8.1 Получаем ретроградные планеты из транзитов
+            retrograde_planets = []
+            for planet_name, planet_data in transits.transit_positions.items():
+                if planet_data.get('is_retrograde', False):
+                    retrograde_planets.append(planet_name)
+
+            # 8.2 Создаём финансового советника
+            financial_advisor = get_financial_advisor()
+
+            # 8.3 Рассчитываем финансовый индекс
+            financial_index = financial_advisor.calculate_financial_index(
+                transit_positions=transits.transit_positions,
+                natal_chart=natal_chart,
+                moon_phase=transits.planetary_hour_info.get('moon_phase', ''),
+                void_of_course_moon=transits.void_of_course_moon,
+                retrograde_planets=retrograde_planets
+            )
+
+            # 8.4 Получаем рекомендации
+            financial_advice = financial_advisor.get_financial_advice(
+                financial_index=financial_index,
+                transit_positions=transits.transit_positions,
+                moon_phase=transits.planetary_hour_info.get('moon_phase', ''),
+                void_of_course_moon=transits.void_of_course_moon,
+                retrograde_planets=retrograde_planets,
+                planetary_hour=transits.planetary_hour_info
+            )
 
             # 9. Категоризируем сигналы (НОВОЕ!)
             signal_categories = self._categorize_signals(deltas)
@@ -761,16 +818,8 @@ class DailyForecastService:
                 calculated_at=datetime.now(timezone.utc),
                 background_risks=background_risks,
                 subtle_signals=subtle_signals,
-                signal_categories={
-                    'critical_negative': [(a.value, d) for a, d in signal_categories['critical_negative']],
-                    'critical_positive': [(a.value, d) for a, d in signal_categories['critical_positive']],
-                    'strong_negative': [(a.value, d) for a, d in signal_categories['strong_negative']],
-                    'strong_positive': [(a.value, d) for a, d in signal_categories['strong_positive']],
-                    'medium_negative': [(a.value, d) for a, d in signal_categories['medium_negative']],
-                    'medium_positive': [(a.value, d) for a, d in signal_categories['medium_positive']],
-                    'weak_negative': [(a.value, d) for a, d in signal_categories['weak_negative']],
-                    'weak_positive': [(a.value, d) for a, d in signal_categories['weak_positive']]
-                }
+                signal_categories=signal_categories,
+                financial_advice=financial_advice.to_dict()
             )
 
             # 16. Сохраняем в кэш

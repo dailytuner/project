@@ -73,7 +73,7 @@ services:
       dockerfile: Dockerfile.web
     container_name: pa-webui
     ports:
-      - "80:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - BACKEND_API_URL=http://backend-api:8000
     secrets:

@@ -4,7 +4,7 @@
 """
 import logging
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlencode
 
@@ -384,7 +384,14 @@ class YandexOAuthService:
 
                     # Создаем пустой профиль (пользователь заполнит позже)
                     from ..database.models import UserProfile
-                    profile = UserProfile(user_id=user.id)
+                    #profile = UserProfile(user_id=user.id)
+                    profile = UserProfile(
+                        user_id=user.id,
+                        birth_date=date(2000, 1, 1),  # ← фиктивная дата
+                        birth_time=datetime.strptime("12:00", "%H:%M").time(),  # ← фиктивное время
+                        birth_city="Moscow",  # ← фиктивный город
+                        birth_country="Russia"
+                    )
                     session.add(profile)
                     await session.commit()
 

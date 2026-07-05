@@ -1,5 +1,5 @@
 # user_serices.py
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, Tuple, Any
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -504,6 +504,147 @@ class UserService:
         async with self._get_session(session) as db_session:
             return await get_user_by_phone(db_session, phone)
 
+    # =============================================
+    # 🆕 МЕТОДЫ ДЛЯ YANDEX OAUTH
+    # =============================================
+
+    async def get_or_create_user_by_yandex(
+            self,
+            yandex_id: str,
+            email: str,
+            login: str,
+            avatar_url: Optional[str] = None,
+            session: Optional[AsyncSession] = None
+    ) -> Tuple[bool, User]:
+        """
+        Получить или создать пользователя по данным Яндекса
+
+        Returns:
+            Tuple[bool, User]: (created, user)
+        """
+        async with self._get_session(session) as db_session:
+            # Ищем по yandex_id
+            user = await get_user_by_platform(db_session, AuthPlatform.YANDEX, yandex_id)
+
+            if user:
+                # Обновляем данные если изменились
+                if email and not user.email_hash:
+                    user.email_hash = email
+                if login and not user.yandex_login:
+                    user.yandex_login = login
+                if avatar_url and not user.yandex_avatar_url:
+                    user.yandex_avatar_url = avatar_url
+
+                await db_session.commit()
+                return (False, user)
+
+            # Создаем нового пользователя
+            user = User()
+            user.yandex_id = yandex_id
+            user.yandex_email = email
+            user.yandex_login = login
+            user.yandex_avatar_url = avatar_url
+            user.email_hash = email  # Используем email как основной
+            user.primary_auth_method = 'yandex'
+            user.is_verified = True  # Яндекс подтверждает email
+
+            db_session.add(user)
+            await db_session.flush()
+            await db_session.refresh(user)
+
+            logger.info(f"🆕 Создан новый пользователь через Яндекс: {email} (ID: {yandex_id})")
+            return (True, user)
+
+    async def update_yandex_tokens(
+            self,
+            user_id: int,
+            access_token: str,
+            refresh_token: str,
+            expires_in: int,
+            session: Optional[AsyncSession] = None
+    ) -> bool:
+        """Обновляет Яндекс-токены пользователя"""
+        from .users_repositories import update_yandex_tokens as _update_tokens
+
+        async with self._get_session(session) as db_session:
+            return await _update_tokens(
+                db_session,
+                user_id,
+                access_token,
+                refresh_token,
+                expires_in,
+                None,  # email не обновляем здесь
+                None  # login не обновляем здесь
+            )
+
+    # backend/users/user_services.py - добавить в класс UserService
+
+    async def refresh_yandex_token(
+            self,
+            user_id: int,
+            session: Optional[AsyncSession] = None
+    ) -> Optional[str]:
+        """
+        Обновляет Яндекс-токен для пользователя используя refresh_token
+
+        Returns:
+            Optional[str]: Новый access_token или None
+        """
+        from ..services.yandex_oauth import yandex_oauth_service
+
+        async with self._get_session(session) as db_session:
+            user = await db_session.get(User, user_id)
+            if not user or not user.yandex_refresh_token:
+                logger.warning(f"No Yandex refresh token for user {user_id}")
+                return None
+
+            try:
+                result = await yandex_oauth_service.refresh_access_token(
+                    user.yandex_refresh_token
+                )
+
+                # Обновляем токены в БД
+                user.yandex_access_token = result.get('access_token')
+                if result.get('refresh_token'):
+                    user.yandex_refresh_token = result['refresh_token']
+
+                user.yandex_token_expires_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=result.get('expires_in', 3600)
+                )
+
+                await db_session.commit()
+                logger.info(f"✅ Yandex token refreshed for user {user_id}")
+                return result.get('access_token')
+
+            except Exception as e:
+                logger.error(f"❌ Failed to refresh Yandex token for user {user_id}: {e}")
+                return None
+
+    async def get_yandex_access_token(
+            self,
+            user_id: int,
+            session: Optional[AsyncSession] = None
+    ) -> Optional[str]:
+        """
+        Получает действующий Яндекс-токен, при необходимости обновляя его
+
+        Returns:
+            Optional[str]: Актуальный access_token
+        """
+        from datetime import datetime, timezone
+
+        async with self._get_session(session) as db_session:
+            user = await db_session.get(User, user_id)
+            if not user or not user.yandex_refresh_token:
+                return None
+
+            # Проверяем, истек ли токен
+            if (user.yandex_token_expires_at and
+                    user.yandex_token_expires_at <= datetime.now(timezone.utc)):
+                # Токен истек, обновляем
+                return await self.refresh_yandex_token(user_id, db_session)
+
+            return user.yandex_access_token
 
 # Синглтон для удобства использования
 user_service = UserService(geocoder=AsyncCityGeocoder())

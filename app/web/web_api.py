@@ -1,9 +1,12 @@
 """web_api.py Веб-интерфейс для Daily Tuner API (регистрация по email/phone)"""
 import logging
+import json
 from datetime import date as date_class
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
+import aiohttp
+from typing import Optional
 
 from .web_client import web_client, AuthPlatform
 
@@ -280,6 +283,33 @@ async def index():
 
                 <button onclick="login()" id="login-btn">Продолжить</button>
                 <div id="auth-result"></div>
+                <!-- БЛОК яндекс авторизации -->
+                <div style="margin-top: 20px; text-align: center;">
+                    <div style="border-top: 1px solid #ddd; padding-top: 20px;">
+                        <p style="color: #666; margin-bottom: 15px;">Или войдите через:</p>
+                        <button onclick="yandexLogin()" style="
+                            background: #fc3f1d;
+                            color: white;
+                            border: none;
+                            padding: 12px 24px;
+                            border-radius: 30px;
+                            font-size: 16px;
+                            cursor: pointer;
+                            width: 100%;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            gap: 10px;
+                        ">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                                <path d="M12 6c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
+                                <path d="M12 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                            </svg>
+                            Войти через Яндекс
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Модальное окно для ввода пароля -->
@@ -401,9 +431,20 @@ async def index():
                 if (savedPlatform && savedUserId && savedAuthenticated === 'true') {
                     currentPlatform = savedPlatform;
                     currentUserId = savedUserId;
+        
+                    // Показываем профиль
                     document.getElementById('auth-page').style.display = 'none';
                     document.getElementById('profile-page').style.display = 'block';
-                    document.getElementById('profile-user-id').innerHTML = `👤 ${savedUserId}`;
+        
+                    // Определяем отображаемое имя
+                    let displayName = savedUserId;
+                    if (savedPlatform === 'yandex') {
+                        const email = localStorage.getItem('yandex_user_email');
+                        const login = localStorage.getItem('yandex_user_login');
+                        displayName = email || login || savedUserId;
+                    }
+        
+                    document.getElementById('profile-user-id').innerHTML = `👤 ${displayName}`;
                     loadProfile();
                     checkPasswordStatus();
                     showToast('Сессия восстановлена', 'success');
@@ -425,7 +466,7 @@ async def index():
             }
 
             function formatPhoneNumber(input) {
-                let value = input.value.replace(/\\D/g, '');
+                let value = input.value.replace(/\D/g, '');
                 if (value.startsWith('7') || value.startsWith('8')) {
                     if (value.length > 1) {
                         let formatted = '+7';
@@ -580,7 +621,7 @@ async def index():
                 }
 
                 if (!isEmail) {
-                    userId = userId.replace(/\\D/g, '');
+                    userId = userId.replace(/\D/g, '');
                     if (userId.startsWith('8')) userId = '7' + userId.substring(1);
                     if (!userId.startsWith('7')) userId = '7' + userId;
                 }
@@ -657,6 +698,11 @@ async def index():
             }
 
             function logout() {
+                // Если пользователь через Яндекс - делаем logout в Яндексе
+                if (isYandexAuthenticated()) {
+                    yandexLogout();
+                }
+    
                 localStorage.removeItem('daily_tuner_platform');
                 localStorage.removeItem('daily_tuner_user_id');
                 localStorage.removeItem('daily_tuner_authenticated');
@@ -925,6 +971,134 @@ async def index():
                 forecastHtml += '</div>';
                 resultDiv.innerHTML = forecastHtml;
             }
+            
+            // =============================================
+            //  YANDEX OAUTH ФУНКЦИИ
+            // =============================================
+
+            async function yandexLogin() {
+                try {
+                    showToast('⏳ Перенаправление на Яндекс...', 'info');
+        
+                    // Получаем URL для авторизации
+                    const response = await fetch('/api/auth/yandex/login');
+                    const data = await response.json();
+        
+                    if (data.success && data.auth_url) {
+                        // Сохраняем state в sessionStorage для проверки
+                        sessionStorage.setItem('yandex_state', data.state);
+            
+                        // Перенаправляем на Яндекс
+                        window.location.href = data.auth_url;
+                    } else {
+                        showToast('Ошибка получения ссылки для входа через Яндекс', 'error');
+                    }
+                } catch(e) {
+                    console.error('Yandex login error:', e);
+                    showToast('Ошибка: ' + e.message, 'error');
+                }
+            }
+
+            // Обработка callback от Яндекса
+            async function handleYandexCallback() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const code = urlParams.get('code');
+                const state = urlParams.get('state');
+                const error = urlParams.get('error');
+    
+                // Проверяем, есть ли код в URL (значит мы вернулись от Яндекса)
+                if (code || error) {
+                    // Очищаем URL от параметров
+                    const newUrl = window.location.pathname + window.location.hash;
+                    window.history.replaceState({}, document.title, newUrl);
+                }
+    
+                if (error) {
+                    showToast('Ошибка авторизации через Яндекс: ' + error, 'error');
+                    return;
+                }
+    
+                if (code) {
+                    // Проверяем state
+                    const savedState = sessionStorage.getItem('yandex_state');
+                    if (state && savedState && state !== savedState) {
+                        showToast('Ошибка безопасности: неверный state', 'error');
+                        sessionStorage.removeItem('yandex_state');
+                        return;
+                    }
+                    sessionStorage.removeItem('yandex_state');
+        
+                    try {
+                        showToast('⏳ Вход через Яндекс...', 'info');
+            
+                        // Отправляем код на бекенд
+                        const response = await fetch(`/api/auth/yandex/callback?code=${code}&state=${state || ''}`);
+                        const result = await response.json();
+            
+                        if (result.success) {
+                            // Сохраняем данные пользователя
+                            localStorage.setItem('daily_tuner_platform', 'yandex');
+                            localStorage.setItem('daily_tuner_user_id', result.user_id.toString());
+                            localStorage.setItem('daily_tuner_authenticated', 'true');
+                            localStorage.setItem('yandex_access_token', result.access_token);
+                            localStorage.setItem('yandex_refresh_token', result.refresh_token);
+                            localStorage.setItem('yandex_user_email', result.email || '');
+                            localStorage.setItem('yandex_user_login', result.login || '');
+                
+                            currentPlatform = 'yandex';
+                            currentUserId = result.user_id.toString();
+                
+                            showToast('✅ Успешный вход через Яндекс!', 'success');
+                
+                            // Переходим в профиль
+                            document.getElementById('auth-page').style.display = 'none';
+                            document.getElementById('profile-page').style.display = 'block';
+                            document.getElementById('profile-user-id').innerHTML = `👤 ${result.email || result.login || 'Пользователь'}`;
+                
+                            await loadProfile();
+                            await checkPasswordStatus();
+                
+                            // Если пользователь новый, предлагаем заполнить профиль
+                            if (result.is_new_user) {
+                                showToast('🎉 Добро пожаловать! Заполните свой профиль', 'info');
+                                setTimeout(() => {
+                                    document.getElementById('birth_date').focus();
+                                }, 500);
+                            }
+                        } else {
+                            showToast('Ошибка входа через Яндекс: ' + (result.error || 'Неизвестная ошибка'), 'error');
+                        }
+                    } catch(e) {
+                        console.error('Yandex callback error:', e);
+                        showToast('Ошибка: ' + e.message, 'error');
+                    }
+                }
+            }
+
+            // Проверка, авторизован ли пользователь через Яндекс
+            function isYandexAuthenticated() {
+                return localStorage.getItem('daily_tuner_platform') === 'yandex' &&
+                    localStorage.getItem('daily_tuner_authenticated') === 'true';
+            }
+
+            // Выход из Яндекс (очистка токенов)
+            async function yandexLogout() {
+                try {
+                    const userId = localStorage.getItem('daily_tuner_user_id');
+                    if (userId && isYandexAuthenticated()) {
+                        await fetch(`/api/auth/yandex/logout?user_id=${userId}`, {
+                            method: 'POST'
+                        });
+                    }
+                } catch(e) {
+                    console.error('Yandex logout error:', e);
+                }
+    
+                localStorage.removeItem('yandex_access_token');
+                localStorage.removeItem('yandex_refresh_token');
+                localStorage.removeItem('yandex_user_email');
+                localStorage.removeItem('yandex_user_login');
+            }
 
             // Инициализация
             const today = new Date();
@@ -934,6 +1108,7 @@ async def index():
             }
             toggleAuthType();
             restoreSession();
+            handleYandexCallback();
         </script>
     </body>
     </html>
@@ -1087,6 +1262,148 @@ async def auth_status(platform: str, platform_user_id: str):
 @web_app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ========== YANDEX OAUTH ПРОКСИ ЭНДПОИНТЫ ==========
+
+@web_app.get("/api/auth/yandex/login")
+async def yandex_login():
+    """Получить URL для авторизации через Яндекс"""
+    try:
+        # Проксируем запрос к бекенду
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                    f"{web_client.base_url}/api/v1/auth/yandex/login"
+            ) as response:
+                result = await response.json()
+                return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Yandex login proxy error: {e}")
+        return JSONResponse({"success": False, "error": str(e)})
+
+
+@web_app.get("/api/auth/yandex/callback")
+async def yandex_callback(
+        code: str,
+        state: Optional[str] = None,
+        error: Optional[str] = None,
+        error_description: Optional[str] = None
+):
+    """Обработка callback от Яндекса (прокси к бекенду)"""
+    try:
+        # Если есть ошибка - показываем пользователю
+        if error:
+            error_messages = {
+                'access_denied': 'Вы отклонили запрос на доступ к аккаунту',
+                'invalid_request': 'Неверный запрос к Яндекс API',
+                'unauthorized_client': 'Приложение не авторизовано',
+                'invalid_scope': 'Запрошены недоступные права',
+                'server_error': 'Ошибка на стороне Яндекса'
+            }
+            user_message = error_messages.get(error, f'Ошибка авторизации: {error}')
+            if error_description:
+                user_message += f' ({error_description})'
+
+            return HTMLResponse(f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Ошибка авторизации</title>
+                <style>
+                    body {{ font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
+                    .container {{ background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }}
+                    h1 {{ color: #e74c3c; }}
+                    .close-btn {{ margin-top: 20px; padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>❌ Ошибка</h1>
+                    <p>{user_message}</p>
+                    <button onclick="window.location.href='/'" class="close-btn">Вернуться на главную</button>
+                </div>
+            </body>
+            </html>
+            """)
+
+        # Проксируем запрос к бекенду
+        params = {"code": code}
+        if state:
+            params["state"] = state
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                    f"{web_client.base_url}/api/v1/auth/yandex/callback",
+                    params=params
+            ) as response:
+                result = await response.json()
+
+                if result.get('success'):
+                    # Возвращаем HTML с автоматическим закрытием
+                    return HTMLResponse(f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <title>Успешный вход</title>
+                        <style>
+                            body {{ font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
+                            .container {{ background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }}
+                            h1 {{ color: #27ae60; }}
+                            .spinner {{ display: inline-block; width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; margin: 10px auto; }}
+                            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+                        </style>
+                        <script>
+                            // Сохраняем данные в localStorage
+                            const data = {json.dumps(result)};
+                            localStorage.setItem('daily_tuner_platform', 'yandex');
+                            localStorage.setItem('daily_tuner_user_id', data.user_id.toString());
+                            localStorage.setItem('daily_tuner_authenticated', 'true');
+                            localStorage.setItem('yandex_access_token', data.access_token);
+                            localStorage.setItem('yandex_refresh_token', data.refresh_token);
+                            localStorage.setItem('yandex_user_email', data.email || '');
+                            localStorage.setItem('yandex_user_login', data.login || '');
+
+                            // Через секунду закрываем окно и обновляем основное
+                            setTimeout(() => {{
+                                window.opener?.location.reload();
+                                window.close();
+                            }}, 1500);
+                        </script>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>✅ Успешный вход</h1>
+                            <p>Вы успешно вошли через Яндекс как <strong>{result.get('email', result.get('login', 'пользователь'))}</strong></p>
+                            <div class="spinner"></div>
+                            <p style="color: #666; font-size: 14px;">Закрытие окна...</p>
+                        </div>
+                    </body>
+                    </html>
+                    """)
+                else:
+                    return JSONResponse(result)
+
+    except Exception as e:
+        logger.error(f"Yandex callback proxy error: {e}")
+        return JSONResponse({"success": False, "error": str(e)})
+
+
+@web_app.post("/api/auth/yandex/logout")
+async def yandex_logout(user_id: int):
+    """Выход из Яндекс (прокси к бекенду)"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                    f"{web_client.base_url}/api/v1/auth/yandex/logout",
+                    params={"user_id": user_id}
+            ) as response:
+                result = await response.json()
+                return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Yandex logout proxy error: {e}")
+        return JSONResponse({"success": False, "error": str(e)})
 
 
 if __name__ == "__main__":

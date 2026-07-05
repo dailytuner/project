@@ -18,7 +18,6 @@ class AuthPlatform(str, Enum):
     APPLE = 'apple'
     PHONE = 'phone'
     EMAIL = 'email'
-    YANDEX = 'yandex'  # ✅ ДОБАВЛЕНО
 
 
 class WebAPIClient:
@@ -51,7 +50,7 @@ class WebAPIClient:
             )
         return self._session
 
-    # ========== МЕТОДЫ ДЛЯ ПАРОЛЬНОЙ АУТЕНТИФИКАЦИИ ==========
+    # ========== НОВЫЕ МЕТОДЫ ДЛЯ ПАРОЛЬНОЙ АУТЕНТИФИКАЦИИ ==========
 
     async def set_password(
             self,
@@ -112,7 +111,7 @@ class WebAPIClient:
         ) as response:
             return await response.json()
 
-    # ========== ОСНОВНЫЕ МЕТОДЫ ==========
+    # ========== СУЩЕСТВУЮЩИЕ МЕТОДЫ (с небольшими изменениями) ==========
 
     async def save_user_profile(
             self,
@@ -143,7 +142,7 @@ class WebAPIClient:
             self,
             platform: AuthPlatform,
             platform_user_id: str,
-            password: Optional[str] = None
+            password: Optional[str] = None  # ✅ НОВЫЙ параметр
     ) -> Dict[str, Any]:
         """Проверка профиля пользователя (опционально с паролем)"""
         session = await self._get_session()
@@ -153,6 +152,7 @@ class WebAPIClient:
             "platform_user_id": platform_user_id
         }
 
+        # ✅ Добавляем пароль, если передан
         if password:
             params["password"] = password
 
@@ -266,10 +266,11 @@ class WebAPIClient:
         if summary and summary != "➡️ Нейтральный день":
             recommendations.append(f"📌 {summary}")
 
-        # Финансовые рекомендации
+        # ========== ФИНАНСОВЫЕ РЕКОМЕНДАЦИИ (исправлено) ==========
         financial_advice = result.get("financial_advice", {})
 
         if financial_advice and isinstance(financial_advice, dict):
+            # Проверяем наличие данных
             has_finance = any([
                 financial_advice.get("advice"),
                 financial_advice.get("index") is not None,
@@ -321,10 +322,7 @@ class WebAPIClient:
         # Форматируем дату
         forecast_date = result.get("forecast_date")
         if forecast_date:
-            if isinstance(forecast_date, str):
-                date_obj = date.fromisoformat(forecast_date)
-            else:
-                date_obj = forecast_date
+            date_obj = date.fromisoformat(forecast_date) if isinstance(forecast_date, str) else forecast_date
             date_formatted = date_obj.strftime("%d.%m.%Y")
         else:
             date_formatted = (target_date or date.today()).strftime("%d.%m.%Y")
@@ -388,6 +386,8 @@ class WebAPIClient:
 
     async def __aexit__(self, *args):
         await self.close()
+
+
 
 
 # Глобальный экземпляр

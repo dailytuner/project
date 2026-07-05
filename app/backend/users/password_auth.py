@@ -1,3 +1,4 @@
+# password_auth.py
 """Аутентификация по паролю для веб-интерфейса"""
 from typing import Optional
 from sqlalchemy import select, update

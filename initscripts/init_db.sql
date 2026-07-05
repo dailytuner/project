@@ -105,15 +105,24 @@ CREATE TABLE IF NOT EXISTS users (
     udemy_id VARCHAR(255) UNIQUE,
     google_id VARCHAR(255) UNIQUE,
     apple_id VARCHAR(255) UNIQUE,
+    yandex_id VARCHAR(255) UNIQUE,
     
     -- Анонимизированные данные (хеши)
     phone_hash VARCHAR(128),
     email_hash VARCHAR(128),
     password_hash VARCHAR(255),
     
+    -- Яндекс OAuth токены
+    yandex_refresh_token TEXT,
+    yandex_access_token TEXT,
+    yandex_token_expires_at TIMESTAMPTZ,
+    yandex_email VARCHAR(255),
+    yandex_login VARCHAR(255),
+    yandex_avatar_url TEXT,
+    
     -- Метод первичной авторизации
     primary_auth_method VARCHAR(20) DEFAULT 'telegram' 
-        CHECK (primary_auth_method IN ('telegram', 'max', 'udemy', 'phone', 'email', 'google', 'apple')),
+        CHECK (primary_auth_method IN ('telegram', 'max', 'udemy', 'phone', 'email', 'google', 'apple', 'yandex')),
     
     -- Статус пользователя
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'suspended', 'deleted')),
@@ -153,6 +162,10 @@ ON users(google_id) WHERE google_id IS NOT NULL;
 -- Apple ID (уникальный, если не NULL)
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_apple 
 ON users(apple_id) WHERE apple_id IS NOT NULL;
+
+-- Yandex ID (уникальный, если не NULL)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_yandex 
+ON users(yandex_id) WHERE yandex_id IS NOT NULL;
 
 -- =====================================================
 -- ✅ ИНДЕКСЫ ДЛЯ ТЕЛЕФОНА И EMAIL (PARTIAL UNIQUE)

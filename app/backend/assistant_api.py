@@ -1,7 +1,11 @@
 # assistant_api.py
+
 import logging
+import os
 import asyncio
-from datetime import datetime, date,timezone
+import secrets  # для генерации state
+import jwt
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, HTTPException, Depends, status, Query
 from fastapi.security import APIKeyHeader
@@ -13,7 +17,7 @@ from sqlalchemy import text, select
 
 from .database.core import async_session
 from .database.models import NatalChart, PsyhoMatrix, Biorhythm, MagicProfile
-from .users.users_auth import AuthPlatform, get_user_id_by_platform
+from .users.users_auth import AuthPlatform, get_user_id_by_platform  # ✅ ТОЛЬКО ОДИН РАЗ
 from .users.user_services import user_service, User, UserProfile
 from .users.password_auth import has_password as check_has_password
 from .services.activity_services import activity_optimizer_service
@@ -21,10 +25,87 @@ from .services.chart_services import create_and_save_natal_chart
 from .services.matrix_services import calculate_and_save_psyho_matrix
 from .services.biorhythm_services import get_user_biorhythm_profile
 from .magic.magic_services import MagicProfileService
-#from .predictions import AstroPredictor, create_predictor_from_user_id
 from .forecast.daily_forecast_service import get_forecast_service
+from .services.yandex_oauth import (  # ✅ ТОЛЬКО ИСПОЛЬЗУЕМЫЕ
+    yandex_oauth_service,
+    get_yandex_auth_url,
+)
+
+# JWT настройки
+
+
+def read_secret_file(file_path: str) -> str:
+    """Безопасно читает секрет из файла"""
+    if not file_path:
+        return ""
+    try:
+        with open(file_path, 'r') as f:
+            return f.read().strip()
+    except Exception as e:
+        logger.error(f"Failed to read secret from {file_path}: {e}")
+        return ""
+
+
+# Загрузка JWT_SECRET
+def load_jwt_secret() -> str:
+    """Загружает JWT_SECRET из файла или переменной окружения"""
+    # Сначала пробуем файл секрета
+    secret_file = os.getenv('JWT_SECRET_FILE')
+    if secret_file:
+        secret = read_secret_file(secret_file)
+        if secret:
+            return secret
+
+    # Затем переменную окружения
+    secret = os.getenv('JWT_SECRET')
+    if secret:
+        return secret
+
+    # В крайнем случае используем стандартный (для разработки)
+    logger.warning("⚠️ JWT_SECRET not set, using default (INSECURE!)")
+    return "your-secret-key-change-in-production"
+
+
+# Загружаем JWT секрет
+JWT_SECRET = load_jwt_secret()
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 часа
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = 30  # 30 дней
+
+
+def create_jwt_token(user_id: int, expires_delta: timedelta) -> str:
+    """Создает JWT токен"""
+    expire = datetime.now(timezone.utc) + expires_delta
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "access"
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def create_refresh_token(user_id: int) -> str:
+    """Создает refresh токен"""
+    expire = datetime.now(timezone.utc) + timedelta(days=JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "refresh"
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def decode_jwt_token(token: str) -> Optional[dict]:
+    """Декодирует JWT токен"""
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        return None
 
 logger = logging.getLogger(__name__)
+
 
 def iso_timestamp() -> str:
     return datetime.now().isoformat()
@@ -53,11 +134,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://dailytuner.ru",
+        "http://localhost:8080",  # для локальной разработки
+        "http://localhost:80",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Pydantic модели
 class UserProfileCreate(BaseModel):
@@ -201,6 +287,35 @@ class ApiProxyService:
         }
         return {act: ACTIVITY_MAP.get(act, "Неизвестная активность") for act in activity_list}
 
+# МОДЕЛИ ДЛЯ YANDEX OAUTH
+
+
+class YandexAuthResponse(BaseResponse):
+    """Ответ при авторизации через Яндекс"""
+    user_id: int
+    platform: str = "yandex"
+    email: Optional[str] = None
+    login: Optional[str] = None
+    is_new_user: bool = False
+    access_token: str  # JWT токен нашего приложения
+    refresh_token: str  # JWT refresh токен нашего приложения
+
+
+class YandexLoginUrlResponse(BaseResponse):
+    """URL для перенаправления на Яндекс"""
+    auth_url: str
+    state: str
+
+
+class YandexUserDataResponse(BaseResponse):
+    """Данные пользователя из Яндекса"""
+    user_id: int
+    yandex_id: str
+    email: Optional[str]
+    login: Optional[str]
+    avatar_url: Optional[str]
+    is_verified: bool
+
 assistant_api_service = ApiProxyService()
 
 # Health checks
@@ -306,12 +421,12 @@ async def get_user_profile(
 async def validate_user(
         platform: AuthPlatform = Query(...),
         platform_user_id: str = Query(...),
-        password: Optional[str] = Query(None),  # ✅ НОВЫЙ параметр
+        password: Optional[str] = Query(None),
         api_key: str = Depends(verify_api_key)
-):
+        ):
     validation_result = await user_service.validate_user_profile(platform, platform_user_id)
 
-    # ✅ Если передан пароль - проверяем его
+    # Если передан пароль - проверяем его
     if password and validation_result.get('user_id'):
         is_valid = await user_service.authenticate(platform, platform_user_id, password)
         if not is_valid:
@@ -689,6 +804,250 @@ async def auth_status_endpoint(
     except Exception as e:
         logger.error(f"Error in auth_status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# assistant_api.py - добавить после существующих эндпоинтов
+
+# =============================================
+# 🆕 YANDEX OAUTH ЭНДПОИНТЫ
+# =============================================
+
+@app.get("/api/v1/auth/yandex/login")
+async def yandex_login(
+        redirect_uri: Optional[str] = Query(None, description="Custom redirect URI (optional)")
+):
+    """
+    Направляет пользователя на страницу авторизации Яндекса
+
+    Возвращает URL для редиректа с state для защиты от CSRF
+    """
+    try:
+        # Генерируем случайный state для защиты от CSRF
+        state = secrets.token_urlsafe(32)
+
+        # Получаем URL для авторизации
+        auth_url = await get_yandex_auth_url(
+            state=state,
+            redirect_uri=redirect_uri
+        )
+
+        # Сохраняем state в сессии или кэше для проверки в callback
+        # Для простоты используем временное хранилище, но в продакшене
+        # лучше использовать Redis или кэш
+        # TODO: добавить Redis для хранения state
+        # await redis.setex(f"yandex_state:{state}", 300, "1")
+
+        return YandexLoginUrlResponse(
+            success=True,
+            auth_url=auth_url,
+            state=state,
+            timestamp=iso_timestamp()
+        )
+
+    except ValueError as e:
+        logger.error(f"Yandex login error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Yandex login error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate Yandex login URL"
+        )
+
+
+@app.get("/api/v1/auth/yandex/callback")
+async def yandex_callback(
+        code: str = Query(..., description="Authorization code from Yandex"),
+        state: Optional[str] = Query(None, description="State parameter for CSRF protection"),
+        error: Optional[str] = Query(None, description="Error from Yandex"),
+        error_description: Optional[str] = Query(None, description="Error description from Yandex")
+):
+    """Обработка callback от Яндекса после авторизации"""
+    try:
+        if error:
+            logger.error(f"Yandex OAuth error: {error} - {error_description}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Yandex OAuth error: {error} - {error_description}"
+            )
+
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing authorization code"
+            )
+
+        # 1. Аутентифицируем пользователя через Яндекс
+        user, user_info, tokens = await yandex_oauth_service.authenticate_with_code(
+            code=code,
+            create_user=True
+        )
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found and could not be created"
+            )
+
+        # 2. Создаем JWT токены для нашего приложения
+        access_token = create_jwt_token(
+            user.id,
+            timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        refresh_token = create_refresh_token(user.id)
+
+        # 3. Определяем, новый ли пользователь
+        # Простой способ: проверяем, есть ли у пользователя профиль
+        async with async_session() as session:
+            from .database.models import UserProfile
+            profile_result = await session.execute(
+                select(UserProfile).where(UserProfile.user_id == user.id)
+            )
+            has_profile = profile_result.scalar_one_or_none() is not None
+
+        # 4. Возвращаем ответ
+        return YandexAuthResponse(
+            success=True,
+            user_id=user.id,
+            platform="yandex",
+            email=user_info.email,
+            login=user_info.login,
+            is_new_user=not has_profile,  # ✅ Более точная проверка
+            access_token=access_token,
+            refresh_token=refresh_token,
+            timestamp=iso_timestamp()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Yandex callback error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Yandex authentication failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/auth/yandex/user")
+async def get_yandex_user_data(
+        user_id: int = Query(..., description="User ID"),
+        api_key: str = Depends(verify_api_key)
+):
+    """
+    Получить данные пользователя из Яндекса
+
+    Требуется API Key для доступа
+    """
+    try:
+        async with async_session() as session:
+            user = await session.get(User, user_id)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            if not user.yandex_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User does not have Yandex account"
+                )
+
+            return YandexUserDataResponse(
+                success=True,
+                user_id=user.id,
+                yandex_id=user.yandex_id,
+                email=user.yandex_email or user.login,  # ✅ ИСПРАВЛЕНО
+                login=user.yandex_login,
+                avatar_url=user.yandex_avatar_url,
+                is_verified=user.is_verified,
+                timestamp=iso_timestamp()
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting Yandex user data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get Yandex user data"
+        )
+
+
+@app.post("/api/v1/auth/yandex/refresh")
+async def refresh_yandex_token(
+        user_id: int = Query(..., description="User ID"),
+        api_key: str = Depends(verify_api_key)
+):
+    """
+    Принудительно обновить Яндекс токен пользователя
+
+    Используется для ручного обновления или при ошибках
+    """
+    try:
+        new_token = await user_service.refresh_yandex_token(user_id)
+
+        if not new_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to refresh Yandex token"
+            )
+
+        return BaseResponse(
+            success=True,
+            timestamp=iso_timestamp()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing Yandex token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh Yandex token"
+        )
+
+
+@app.post("/api/v1/auth/yandex/logout")
+async def yandex_logout(
+        user_id: int = Query(..., description="User ID"),
+        api_key: str = Depends(verify_api_key)
+):
+    """
+    Выход из Яндекс аккаунта (очистка токенов в БД)
+    """
+    try:
+        async with async_session() as session:
+            user = await session.get(User, user_id)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            # Очищаем Яндекс токены
+            user.yandex_access_token = None
+            user.yandex_refresh_token = None
+            user.yandex_token_expires_at = None
+
+            await session.commit()
+
+            return BaseResponse(
+                success=True,
+                timestamp=iso_timestamp()
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during Yandex logout: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to logout from Yandex"
+        )
 
 if __name__ == "__main__":
     uvicorn.run("backend.assistant_api:app", host="0.0.0.0", port=8000, reload=True)

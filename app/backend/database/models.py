@@ -1,7 +1,7 @@
 """Все модели базы данных"""
 import json
 from typing import Optional, List, Dict, Any
-
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, BigInteger, Integer, SmallInteger, String, Date, Time,
     TIMESTAMP, Text, Boolean, Numeric, Float, DECIMAL, ForeignKey,
@@ -24,7 +24,7 @@ class User(Base):
     __tablename__ = 'users'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    #telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    # telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
     telegram_id = Column(BigInteger, unique=True, nullable=True)
     max_id = Column(String(255), unique=True, nullable=True)  # NEW
     udemy_id = Column(String(255), unique=True, nullable=True)  # NEW
@@ -50,13 +50,24 @@ class User(Base):
         nullable=False,
         server_default='standard'
     )
-    
+
     # ПОЛЕ ДЛЯ ПАРОЛЯ
     password_hash = Column(String(128), nullable=True, comment="Bcrypt hash of password")
 
-    # google and apple ID
+    # Google и Apple ID
     google_id = Column(String(255), unique=True, nullable=True)
     apple_id = Column(String(255), unique=True, nullable=True)
+
+    # =============================================
+    # ПОЛЯ ДЛЯ YANDEX OAUTH
+    # =============================================
+    yandex_id = Column(String(255), unique=True, nullable=True, comment="Yandex user ID")
+    yandex_refresh_token = Column(Text, nullable=True, comment="Yandex refresh token for long-term access")
+    yandex_access_token = Column(Text, nullable=True, comment="Current Yandex access token")
+    yandex_token_expires_at = Column(TIMESTAMP(timezone=True), nullable=True, comment="Access token expiration time")
+    yandex_email = Column(String(255), nullable=True, comment="Email from Yandex")
+    yandex_login = Column(String(255), nullable=True, comment="Login/username from Yandex")
+    yandex_avatar_url = Column(Text, nullable=True, comment="Avatar URL from Yandex")
 
     # Временные метки
     created_at = Column(
@@ -83,13 +94,16 @@ class User(Base):
                         name='ck_users_status'),
         CheckConstraint("privacy_level IN ('minimal', 'standard', 'maximum')",
                         name='ck_users_privacy'),
-        CheckConstraint("primary_auth_method IN ('telegram', 'max', 'udemy', 'phone', 'email', 'google', 'apple')",
-                        name='ck_users_primary_auth'),
+        CheckConstraint(
+            "primary_auth_method IN ('telegram', 'max', 'udemy', 'phone', 'email', 'google', 'apple', 'yandex')",
+            name='ck_users_primary_auth'),
         UniqueConstraint('phone_hash', 'email_hash',
                          postgresql_nulls_not_distinct=True, name='uq_users_phone_email'),
         Index('idx_users_status', status,
               postgresql_where=status == 'active'),
         Index('idx_users_last_activity', last_activity_at.desc()),
+        # Индекс для Yandex ID
+        Index('idx_users_yandex', yandex_id, postgresql_where=yandex_id.is_not(None)),
     )
 
     # Relationships
@@ -140,7 +154,25 @@ class User(Base):
     )
 
     def __repr__(self):
-        return f"<User(id={self.id}, telegram_id={self.telegram_id})>"
+        return f"<User(id={self.id}, telegram_id={self.telegram_id}, yandex_id={self.yandex_id})>"
+
+    @property
+    def is_yandex_authenticated(self) -> bool:
+        """Проверяет, есть ли действующий Яндекс-токен"""
+        if not self.yandex_access_token:
+            return False
+        if self.yandex_token_expires_at and self.yandex_token_expires_at <= datetime.now(timezone.utc):
+            return False
+        return True
+
+    @property
+    def has_yandex_refresh_token(self) -> bool:
+        """Проверяет наличие refresh-токена для долгосрочного доступа"""
+        return bool(self.yandex_refresh_token)
+
+    def get_yandex_auth_method(self) -> str:
+        """Возвращает метод авторизации для Яндекса"""
+        return 'yandex'
 
 
 class UserProfile(Base):

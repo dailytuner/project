@@ -32,30 +32,22 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile.backend
-    command: [ "uvicorn", "backend.assistant_api:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]
+    command: ["uvicorn", "backend.assistant_api:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      - DATABASE_URL_FILE=/run/secrets/db-url
-      - YANDEX_CLIENT_ID_FILE=/run/secrets/yandex-client-id
-      - YANDEX_CLIENT_SECRET_FILE=/run/secrets/yandex-client-secret
-      - YANDEX_REDIRECT_URI_FILE=/run/secrets/yandex-redirect-uri
-      - JWT_SECRET_FILE=/run/secrets/jwt-secret
+      - DATABASE_URL_FILE=/run/secrets/db-url  
     networks:
       - pa-net
     secrets:
       - db-url
       - backend-api-key
-      - yandex-client-id
-      - yandex-client-secret
-      - yandex-redirect-uri
-      - jwt-secret
     ports:
       - "8000:8000"
     restart: unless-stopped
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+    healthcheck:                             
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -136,14 +128,6 @@ secrets:
     file: ./docker-secrets/db-url.txt
   backend-api-key:
     file: ./docker-secrets/backend-api-key.txt
-  yandex-client-id:
-    file: ./docker-secrets/yandex-client-id
-  yandex-client-secret:
-    file: ./docker-secrets/yandex-client-secret
-  yandex-redirect-uri:
-    file: ./docker-secrets/yandex-redirect-uri
-  jwt-secret:
-    file: ./docker-secrets/jwt-secret
 
 networks:
   pa-net:

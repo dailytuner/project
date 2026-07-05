@@ -15,6 +15,7 @@ class AuthPlatform(str, Enum):
     APPLE = 'apple'
     PHONE = 'phone'
     EMAIL = 'email'
+    YANDEX = 'yandex'
 
 
 class UserAuthService:
@@ -64,6 +65,8 @@ class UserAuthService:
                 return select(User).where(User.google_id == platform_id)
             case AuthPlatform.APPLE:
                 return select(User).where(User.apple_id == platform_id)
+            case AuthPlatform.YANDEX:
+                return select(User).where(User.yandex_id == platform_id)
             case AuthPlatform.PHONE:
                 return select(User).where(User.phone_hash == platform_id)
             case AuthPlatform.EMAIL:
@@ -89,6 +92,8 @@ class UserAuthService:
                 return select(User.id).where(User.google_id == platform_id)
             case AuthPlatform.APPLE:
                 return select(User.id).where(User.apple_id == platform_id)
+            case AuthPlatform.YANDEX:
+                return select(User.id).where(User.yandex_id == platform_id)
             case AuthPlatform.PHONE:
                 return select(User.id).where(User.phone_hash == platform_id)
             case AuthPlatform.EMAIL:

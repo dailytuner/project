@@ -102,7 +102,7 @@ class YandexOAuthService:
         "login:email",  # Доступ к email
         "login:info",  # Доступ к базовой информации
         "login:avatar",  # Доступ к аватару
-        "login:birthday",  # Доступ к дате рождения (опционально)
+        #"login:birthday",  # Доступ к дате рождения (опционально)
         # "calendar:read",  # Для будущей интеграции с Календарем
         # "calendar:write", # Для будущей интеграции с Календарем
     ]
@@ -473,7 +473,7 @@ async def get_yandex_auth_url(
             "login:email",
             "login:info",
             "login:avatar",
-            "login:birthday",
+            #"login:birthday",
         ]),
         "access_type": "offline",
         "prompt": "select_account",

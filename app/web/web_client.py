@@ -24,7 +24,8 @@ class WebAPIClient:
     """Клиент для веб-интерфейса (поддержка email/phone)"""
 
     def __init__(self):
-        self.base_url = os.getenv("BACKEND_API_URL", "http://backend-api:8000")
+        # ✅ base_url уже содержит /api/v1
+        self.base_url = os.getenv("BACKEND_API_URL", "http://backend-api:8000/api/v1")
         self.api_key_file = os.getenv("API_KEY_FILE", "/run/secrets/backend-api-key")
         self.api_key = self._load_api_key()
         self._session = None
@@ -50,7 +51,7 @@ class WebAPIClient:
             )
         return self._session
 
-    # ========== НОВЫЕ МЕТОДЫ ДЛЯ ПАРОЛЬНОЙ АУТЕНТИФИКАЦИИ ==========
+    # ========== МЕТОДЫ ДЛЯ ПАРОЛЬНОЙ АУТЕНТИФИКАЦИИ ==========
 
     async def set_password(
             self,
@@ -67,8 +68,9 @@ class WebAPIClient:
             "password": password
         }
 
+        # ✅ Убираем /api/v1, так как base_url уже содержит его
         async with session.post(
-                f"{self.base_url}/api/v1/auth/set-password",
+                f"{self.base_url}/auth/set-password",  # ← /api/v1 уже в base_url
                 json=payload
         ) as response:
             return await response.json()
@@ -89,7 +91,7 @@ class WebAPIClient:
         }
 
         async with session.post(
-                f"{self.base_url}/api/v1/auth/login",
+                f"{self.base_url}/auth/login",  # ← /api/v1 уже в base_url
                 json=payload
         ) as response:
             return await response.json()
@@ -103,7 +105,7 @@ class WebAPIClient:
         session = await self._get_session()
 
         async with session.get(
-                f"{self.base_url}/api/v1/auth/status",
+                f"{self.base_url}/auth/status",  # ← /api/v1 уже в base_url
                 params={
                     "platform": platform.value,
                     "platform_user_id": platform_user_id
@@ -111,7 +113,7 @@ class WebAPIClient:
         ) as response:
             return await response.json()
 
-    # ========== СУЩЕСТВУЮЩИЕ МЕТОДЫ (с небольшими изменениями) ==========
+    # ========== ОСНОВНЫЕ МЕТОДЫ ==========
 
     async def save_user_profile(
             self,
@@ -133,7 +135,7 @@ class WebAPIClient:
         logger.info(f"Saving profile for {platform.value}: {platform_user_id}")
 
         async with session.post(
-                f"{self.base_url}/api/v1/user/profile",
+                f"{self.base_url}/user/profile",  # ← /api/v1 уже в base_url
                 json=payload
         ) as response:
             return await response.json()
@@ -142,7 +144,7 @@ class WebAPIClient:
             self,
             platform: AuthPlatform,
             platform_user_id: str,
-            password: Optional[str] = None  # ✅ НОВЫЙ параметр
+            password: Optional[str] = None
     ) -> Dict[str, Any]:
         """Проверка профиля пользователя (опционально с паролем)"""
         session = await self._get_session()
@@ -152,12 +154,11 @@ class WebAPIClient:
             "platform_user_id": platform_user_id
         }
 
-        # ✅ Добавляем пароль, если передан
         if password:
             params["password"] = password
 
         async with session.get(
-                f"{self.base_url}/api/v1/user/validate",
+                f"{self.base_url}/user/validate",  # ← /api/v1 уже в base_url
                 params=params
         ) as response:
             return await response.json()
@@ -176,7 +177,7 @@ class WebAPIClient:
         }
 
         async with session.get(
-                f"{self.base_url}/api/v1/user/profile",
+                f"{self.base_url}/user/profile",  # ← /api/v1 уже в base_url
                 params=params
         ) as response:
             return await response.json()
@@ -198,7 +199,7 @@ class WebAPIClient:
             payload["date"] = target_date.isoformat()
 
         async with session.post(
-                f"{self.base_url}/api/v1/optimal-activities",
+                f"{self.base_url}/optimal-activities",  # ← /api/v1 уже в base_url
                 json=payload
         ) as response:
             return await response.json()
@@ -220,7 +221,7 @@ class WebAPIClient:
             params["forecast_date"] = target_date.isoformat()
 
         async with session.get(
-                f"{self.base_url}/api/v1/forecast",
+                f"{self.base_url}/forecast",  # ← /api/v1 уже в base_url
                 params=params
         ) as response:
             result = await response.json()
@@ -266,11 +267,10 @@ class WebAPIClient:
         if summary and summary != "➡️ Нейтральный день":
             recommendations.append(f"📌 {summary}")
 
-        # ========== ФИНАНСОВЫЕ РЕКОМЕНДАЦИИ (исправлено) ==========
+        # Финансовые рекомендации
         financial_advice = result.get("financial_advice", {})
 
         if financial_advice and isinstance(financial_advice, dict):
-            # Проверяем наличие данных
             has_finance = any([
                 financial_advice.get("advice"),
                 financial_advice.get("index") is not None,
@@ -280,39 +280,33 @@ class WebAPIClient:
             ])
 
             if has_finance:
-                recommendations.append("")  # пустая строка для отступа
+                recommendations.append("")
                 recommendations.append("💎 ФИНАНСОВЫЙ ПРОГНОЗ:")
 
-                # Индекс
                 index_val = financial_advice.get("index")
                 if index_val is not None:
                     score_emoji = "🟢" if index_val >= 70 else "🟡" if index_val >= 40 else "🔴"
                     recommendations.append(
                         f"{score_emoji} Индекс: {index_val}% ({financial_advice.get('level', 'medium')})")
 
-                # Основной совет
                 advice_text = financial_advice.get("advice", "")
                 if advice_text:
                     recommendations.append(f"📊 {advice_text}")
 
-                # Лучшее время
                 best_time_finance = financial_advice.get("best_time", "")
                 if best_time_finance:
                     recommendations.append(f"🕐 {best_time_finance}")
 
-                # Благоприятные действия
                 favorable = financial_advice.get("favorable_actions", [])
                 if favorable:
                     rec_line = "✅ Благоприятно: " + ", ".join(favorable[:3])
                     recommendations.append(rec_line)
 
-                # Действия которых стоит избегать
                 avoid = financial_advice.get("avoid_actions", [])
                 if avoid:
                     rec_line = "❌ Избегай: " + ", ".join(avoid[:3])
                     recommendations.append(rec_line)
 
-                # Подсказка по инвестициям
                 invest_hint = financial_advice.get("investment_hint", "")
                 if invest_hint:
                     recommendations.append(f"💡 {invest_hint}")

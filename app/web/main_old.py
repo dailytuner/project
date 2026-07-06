@@ -1,21 +1,22 @@
-# web/main.py
-import os
+# main.py
+
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from .routers import pages, auth, profile, recommendations, oauth  # Добавляем oauth
+from .routers import pages, auth, profile, recommendations
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Создаем приложение
 app = FastAPI(
     title="Daily Tuner Web Interface",
-    version="2.0.0"
+    version="2.0.0",
+    description="Веб-интерфейс с поддержкой аутентификации"
 )
 
-# CORS
+# CORS (для разработки)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,23 +25,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Подключаем статику (CSS, JS)
-static_path = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(static_path):
-    app.mount("/static", StaticFiles(directory=static_path), name="static")
-    logger.info(f"Static files mounted from {static_path}")
-else:
-    logger.warning(f"Static directory not found: {static_path}")
-
 # Подключаем роутеры
 app.include_router(pages.router)
 app.include_router(auth.router)
 app.include_router(profile.router)
 app.include_router(recommendations.router)
-app.include_router(oauth.router)  # 👈 Добавляем OAuth роутер
+
+# Для обратной совместимости - оставляем старые endpoints
+# (чтобы не сломать существующие ссылки)
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """Закрытие ресурсов при завершении"""
     from .web_client import web_client
     await web_client.close()
 

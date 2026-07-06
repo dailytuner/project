@@ -1,7 +1,7 @@
 # web/routers/recommendations.py
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from datetime import datetime, date  # ✅ Правильный импорт
+from datetime import datetime, date
 import logging
 
 from ..services.user_service import UserService
@@ -25,7 +25,7 @@ async def get_recommendations(platform: str, platform_user_id: str, date: str = 
     try:
         target_date = None
         if date:
-            # ✅ Правильный способ конвертации
+            #  конвертации
             try:
                 target_date = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError:

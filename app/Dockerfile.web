@@ -6,10 +6,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Копируем зависимости
 COPY requirements-web.txt .
+
+# Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements-web.txt
 
+# Копируем код
 COPY web/ ./web/
+
+# Создаем пользователя для безопасности
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --gid 1001 appuser && \
+    chown -R appuser:appgroup /app
+
+USER appuser
+
+# Настройки Python
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8080
 

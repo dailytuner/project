@@ -65,11 +65,20 @@ services:
       dockerfile: Dockerfile.web
     container_name: pa-webui
     ports:
-      - "80:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - BACKEND_API_URL=http://backend-api:8000
+      - YANDEX_CLIENT_ID_FILE=/run/secrets/yandex-client-id
+      - YANDEX_CLIENT_SECRET_FILE=/run/secrets/yandex-client-secret
+      - YANDEX_REDIRECT_URI_FILE=/run/secrets/yandex-redirect-uri
+      - JWT_SECRET_FILE=/run/secrets/jwt-secret
     secrets:
       - backend-api-key
+      - db-url
+      - yandex-client-id
+      - yandex-client-secret
+      - yandex-redirect-uri
+      - jwt-secret
     networks:
       - pa-net
     depends_on:
@@ -128,6 +137,14 @@ secrets:
     file: ./docker-secrets/db-url.txt
   backend-api-key:
     file: ./docker-secrets/backend-api-key.txt
+  yandex-client-id:
+    file: ./docker-secrets/yandex-client-id
+  yandex-client-secret:
+    file: ./docker-secrets/yandex-client-secret
+  yandex-redirect-uri:
+    file: ./docker-secrets/yandex-redirect-uri
+  jwt-secret:
+    file: ./docker-secrets/jwt-secret
 
 networks:
   pa-net:

@@ -215,7 +215,7 @@ async def health_check():
     return {"status": "healthy", "database": "connected"}
 
 # ✅ ОСНОВНЫЕ ЭНДПОИНТЫ
-@app.get("/api/v1/activities/descriptions")
+@app.get("/api/activities/descriptions")
 async def get_activities_descriptions(
         activities: str,
         api_key: str = Depends(verify_api_key)
@@ -241,7 +241,7 @@ async def get_activities_descriptions(
         )
 
 
-@app.post("/api/v1/optimal-activities")
+@app.post("/api/optimal-activities")
 async def get_optimal_activities(
         request: OptimalActivitiesRequest,
         api_key: str = Depends(verify_api_key)
@@ -267,7 +267,7 @@ async def get_optimal_activities(
             **result
         )
 
-@app.post("/api/v1/user/profile", response_model=ProfileResponse)
+@app.post("/api/user/profile", response_model=ProfileResponse)
 async def save_user_profile(
     request: PlatformUserRequest, profile: UserProfileCreate, 
     api_key: str = Depends(verify_api_key)
@@ -288,7 +288,7 @@ async def save_user_profile(
         platform_user_id=request.platform_user_id, has_complete_data=True
     )
 
-@app.get("/api/v1/user/profile")
+@app.get("/api/user/profile")
 async def get_user_profile(
     platform: AuthPlatform = Query(...), platform_user_id: str = Query(...),
     include_extended: bool = Query(False), api_key: str = Depends(verify_api_key)
@@ -301,8 +301,8 @@ async def get_user_profile(
     return {"success": True, "profile": profile_data}
 
 
-# В существующий эндпоинт /api/v1/user/validate добавить параметр password
-@app.get("/api/v1/user/validate", response_model=ProfileResponse)
+# В существующий эндпоинт /api/user/validate добавить параметр password
+@app.get("/api/user/validate", response_model=ProfileResponse)
 async def validate_user(
         platform: AuthPlatform = Query(...),
         platform_user_id: str = Query(...),
@@ -480,7 +480,7 @@ async def general_exception_handler(request, exc: Exception):
     )
 
 
-@app.post("/api/v1/forecast/feedback")
+@app.post("/api/forecast/feedback")
 async def submit_feedback(
         request: FeedbackRequest,
         api_key: str = Depends(verify_api_key)
@@ -502,7 +502,7 @@ async def submit_feedback(
     return BaseResponse(success=True)
 
 
-@app.get("/api/v1/forecast")
+@app.get("/api/forecast")
 async def get_forecast(
         platform: AuthPlatform = Query(...),
         platform_user_id: str = Query(...),
@@ -562,7 +562,7 @@ async def get_forecast(
 
 # ========== ЭНДПОИНТЫ ДЛЯ ПАРОЛЬНОЙ АУТЕНТИФИКАЦИИ ==========
 
-@app.post("/api/v1/auth/set-password")
+@app.post("/api/auth/set-password")
 async def set_password_endpoint(
         request: SetPasswordRequest,
         api_key: str = Depends(verify_api_key)
@@ -606,7 +606,7 @@ async def set_password_endpoint(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/v1/auth/login")
+@app.post("/api/auth/login")
 async def login_endpoint(
         request: LoginRequest,
         api_key: str = Depends(verify_api_key)
@@ -650,7 +650,7 @@ async def login_endpoint(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/v1/auth/status")
+@app.get("/api/auth/status")
 async def auth_status_endpoint(
         platform: AuthPlatform = Query(...),
         platform_user_id: str = Query(...),

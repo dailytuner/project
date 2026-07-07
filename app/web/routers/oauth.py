@@ -115,7 +115,7 @@ async def yandex_callback(
         )
         response.set_cookie(
             key="user_platform_id",
-            value=email,
+            value=yandex_id,
             max_age=604800,
             httponly=True,
             secure=True,
@@ -140,6 +140,16 @@ async def yandex_callback(
             samesite="lax",
             path="/"
         )
+        response.set_cookie(
+            key="user_email",
+            value=email,
+            max_age=604800,
+            httponly=False,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+        
         
         # Добавляем имя пользователя в cookie (для отображения)
         if name:

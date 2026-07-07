@@ -712,45 +712,36 @@ function restoreSession() {
     let platformId = null;
     let authenticated = false;
     let name = null;
-    let userId = null;
-    
+    let email = null;
+
     cookies.forEach(cookie => {
         const [key, value] = cookie.trim().split('=');
         if (key === 'user_platform') platform = decodeURIComponent(value);
         if (key === 'user_platform_id') platformId = decodeURIComponent(value);
         if (key === 'user_authenticated') authenticated = value === 'true';
         if (key === 'user_name') name = decodeURIComponent(value);
-        if (key === 'user_id') userId = decodeURIComponent(value);
+        if (key === 'user_email') email = decodeURIComponent(value);
     });
 
     if (authenticated && platform && platformId) {
         currentPlatform = platform;
-        currentUserId = platformId;
-        
-        // Обновляем глобальные переменные
-        window.userAuthenticated = true;
-        window.userPlatform = platform;
-        window.userPlatformId = platformId;
-        if (name) window.userName = name;
-        
-        // Скрываем форму входа
-        document.getElementById('auth-page').classList.add('hidden');
-        
-        // Показываем профиль
-        document.getElementById('profile-page').classList.remove('hidden');
-        const profileUserId = document.getElementById('profile-user-id');
-        if (profileUserId) {
-            profileUserId.innerHTML = `👤 ${name || platformId}`;
+        currentUserId = platformId;  // ← Это yandex_id для Яндекса!
+
+        // Для отображения используем email если это Яндекс
+        let displayName = name || platformId;
+        if (platform === 'yandex' && email) {
+            displayName = email;  // Показываем email, а не yandex_id
         }
-        
-        // Загружаем данные
+
+        document.getElementById('auth-page').classList.add('hidden');
+        document.getElementById('profile-page').classList.remove('hidden');
+        document.getElementById('profile-user-id').innerHTML = `👤 ${displayName}`;
+
         loadProfile();
         checkPasswordStatus();
         showToast('Сессия восстановлена', 'success');
-        
         return true;
     }
-    
     return false;
 }
 

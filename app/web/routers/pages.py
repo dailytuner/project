@@ -4,13 +4,10 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pages"])
-
-# Настройка Jinja2
 templates = Jinja2Templates(directory="web/templates")
 
 
@@ -22,6 +19,14 @@ async def index(request: Request):
     user_platform = request.cookies.get("user_platform")
     user_platform_id = request.cookies.get("user_platform_id")
     user_name = request.cookies.get("user_name")
+    user_email = request.cookies.get("user_email")
+
+    # Определяем отображаемое имя
+    display_name = user_name
+    if user_platform == "yandex" and user_email:
+        display_name = user_email
+    elif not display_name:
+        display_name = user_platform_id
 
     # Проверяем включен ли Яндекс OAuth
     yandex_oauth_enabled = bool(
@@ -29,16 +34,12 @@ async def index(request: Request):
         os.path.exists("/run/secrets/yandex-client-id")
     )
 
-    # Если платформа Яндекс, показываем имя
-    if user_platform == "yandex" and not user_name:
-        user_name = user_platform_id  # email от Яндекса
-
     context = {
         "request": request,
         "user_authenticated": user_authenticated,
         "user_platform": user_platform,
         "user_platform_id": user_platform_id,
-        "user_name": user_name,
+        "user_name": display_name,
         "yandex_oauth_enabled": yandex_oauth_enabled,
     }
 

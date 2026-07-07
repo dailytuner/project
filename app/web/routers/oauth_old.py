@@ -1,7 +1,6 @@
 # web/routers/oauth.py
 import secrets
 import logging
-from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 
@@ -17,21 +16,22 @@ user_service = UserService()
 # Простое хранилище для state (в проде использовать Redis)
 STATE_STORE = {}
 
+
 @router.get("/yandex")
 async def yandex_login(request: Request):
     """Начало авторизации через Яндекс"""
     try:
         # Генерируем state для защиты от CSRF
         state = secrets.token_urlsafe(32)
-        
+
         # Сохраняем state
         STATE_STORE[state] = {"created_at": secrets.token_urlsafe(8)}
-        
+
         # Получаем URL для редиректа
         auth_url = yandex_service.get_auth_url(state)
-        
+
         return RedirectResponse(auth_url)
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -41,12 +41,13 @@ async def yandex_login(request: Request):
             content={"success": False, "error": str(e)}
         )
 
+
 @router.get("/yandex/callback")
 async def yandex_callback(
-    request: Request,
-    response: Response,
-    code: str,
-    state: str = None
+        request: Request,
+        response: Response,
+        code: str,
+        state: str = None
 ):
     """Callback после авторизации в Яндексе"""
     try:
@@ -54,59 +55,43 @@ async def yandex_callback(
         if not state or state not in STATE_STORE:
             logger.warning(f"Invalid OAuth state: {state}")
             raise HTTPException(status_code=400, detail="Invalid state parameter")
-        
+
         # Удаляем использованный state
         del STATE_STORE[state]
-        
+
         # Получаем данные пользователя от Яндекса
         user_info = await yandex_service.authenticate(code)
-        
+
         if not user_info["success"]:
             raise HTTPException(status_code=400, detail="Failed to get user info")
-        
-        yandex_id = user_info.get("yandex_id")
+
         email = user_info.get("email")
-        login = user_info.get("login")
+        yandex_id = user_info.get("yandex_id")
         name = user_info.get("full_name") or user_info.get("login")
-        
+
         if not email:
             raise HTTPException(status_code=400, detail="Email not provided by Yandex")
-        
+
         logger.info(f"Yandex auth for: {email} (ID: {yandex_id})")
-        
-        # Получаем токены из yandex_service (они сохраняются внутри)
-        # ВАЖНО: нужно, чтобы yandex_service хранил токены для передачи
-        # Или получаем их из user_info
-        access_token = user_info.get("access_token")
-        refresh_token = user_info.get("refresh_token")
-        expires_in = user_info.get("expires_in", 3600)
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
-        
-        # ✅ НОВЫЙ ПОДХОД: Создаем пользователя через backend
-        from ..web_client import web_client
-        
-        result = await web_client.create_yandex_user(
-            yandex_id=yandex_id,
-            email=email,
-            login=login,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at=expires_at
+
+        # Проверяем существование пользователя
+        validate_result = await user_service.validate_user(
+            platform=AuthPlatform.EMAIL.value,
+            platform_user_id=email
         )
-        
-        if not result.get("success"):
-            logger.error(f"Failed to create yandex user: {result}")
-            raise HTTPException(status_code=400, detail="Failed to create user")
-        
-        user_id = result.get("user_id")
-        is_new = result.get("is_new", False)
-        
-        logger.info(f"Yandex user {'created' if is_new else 'logged in'}: {email} (ID: {user_id})")
-        
+
+        if validate_result.get("success"):
+            # Пользователь существует - логиним
+            logger.info(f"Existing user logged in: {email}")
+        else:
+            # Новый пользователь - создаем профиль
+            logger.info(f"New user registered: {email}")
+            # TODO: Создать профиль пользователя через API если нужно
+
         # Сохраняем данные в cookies
         response.set_cookie(
             key="user_platform",
-            value=AuthPlatform.YANDEX.value,
+            value=AuthPlatform.EMAIL.value,
             max_age=604800,  # 7 дней
             httponly=True,
             secure=True,  # Для HTTPS
@@ -131,16 +116,7 @@ async def yandex_callback(
             samesite="lax",
             path="/"
         )
-        response.set_cookie(
-            key="user_id",
-            value=str(user_id),
-            max_age=604800,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            path="/"
-        )
-        
+
         # Добавляем имя пользователя в cookie (для отображения)
         if name:
             response.set_cookie(
@@ -152,18 +128,19 @@ async def yandex_callback(
                 samesite="lax",
                 path="/"
             )
-        
+
         # Редирект на главную
         return RedirectResponse("/", status_code=303)
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Yandex callback error: {e}", exc_info=True)
         return RedirectResponse(
-            f"/?error=oauth_failed", 
+            f"/?error=oauth_failed",
             status_code=303
         )
+
 
 @router.get("/logout")
 async def logout(response: Response):
@@ -173,9 +150,9 @@ async def logout(response: Response):
     response.delete_cookie("user_platform_id", path="/")
     response.delete_cookie("user_authenticated", path="/")
     response.delete_cookie("user_name", path="/")
-    response.delete_cookie("user_id", path="/")
-    
+
     return RedirectResponse("/", status_code=303)
+
 
 @router.get("/session")
 async def get_session_info(request: Request):
@@ -184,12 +161,10 @@ async def get_session_info(request: Request):
     platform_id = request.cookies.get("user_platform_id")
     authenticated = request.cookies.get("user_authenticated") == "true"
     name = request.cookies.get("user_name")
-    user_id = request.cookies.get("user_id")
-    
+
     return JSONResponse({
         "authenticated": authenticated,
         "user": {
-            "user_id": user_id,
             "name": name,
             "platform": platform,
             "platform_user_id": platform_id

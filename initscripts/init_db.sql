@@ -105,24 +105,32 @@ CREATE TABLE IF NOT EXISTS users (
     udemy_id VARCHAR(255) UNIQUE,
     google_id VARCHAR(255) UNIQUE,
     apple_id VARCHAR(255) UNIQUE,
-    
+    yandex_id VARCHAR(255) UNIQUE,
+
     -- Анонимизированные данные (хеши)
     phone_hash VARCHAR(128),
     email_hash VARCHAR(128),
     password_hash VARCHAR(255),
-    
+
+    -- Яндекс OAuth токены
+    yandex_refresh_token TEXT,
+    yandex_access_token TEXT,
+    yandex_token_expires_at TIMESTAMPTZ,
+    yandex_email VARCHAR(255),
+    yandex_login VARCHAR(255),
+
     -- Метод первичной авторизации
-    primary_auth_method VARCHAR(20) DEFAULT 'telegram' 
-        CHECK (primary_auth_method IN ('telegram', 'max', 'udemy', 'phone', 'email', 'google', 'apple')),
-    
+    primary_auth_method VARCHAR(20) DEFAULT 'telegram'
+        CHECK (primary_auth_method IN ('telegram', 'max', 'udemy', 'phone', 'email', 'google', 'apple', 'yandex')),
+
     -- Статус пользователя
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'suspended', 'deleted')),
     is_verified BOOLEAN DEFAULT FALSE,
     is_premium BOOLEAN DEFAULT FALSE,
-    
+
     -- Конфиденциальность
     privacy_level VARCHAR(20) DEFAULT 'standard' CHECK (privacy_level IN ('minimal', 'standard', 'maximum')),
-    
+
     -- Временные метки
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
@@ -135,24 +143,28 @@ CREATE TABLE IF NOT EXISTS users (
 -- =====================================================
 
 -- Telegram ID (уникальный, если не NULL)
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_telegram 
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_telegram
 ON users(telegram_id) WHERE telegram_id IS NOT NULL;
 
 -- MAX ID (уникальный, если не NULL)
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_max 
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_max
 ON users(max_id) WHERE max_id IS NOT NULL;
 
 -- Udemy ID (уникальный, если не NULL)
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_udemy 
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_udemy
 ON users(udemy_id) WHERE udemy_id IS NOT NULL;
 
 -- Google ID (уникальный, если не NULL)
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_google 
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_google
 ON users(google_id) WHERE google_id IS NOT NULL;
 
 -- Apple ID (уникальный, если не NULL)
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_apple 
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_apple
 ON users(apple_id) WHERE apple_id IS NOT NULL;
+
+-- Yandex ID (уникальный, если не NULL)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_users_yandex
+ON users(yandex_id) WHERE yandex_id IS NOT NULL;
 
 -- =====================================================
 -- ✅ ИНДЕКСЫ ДЛЯ ТЕЛЕФОНА И EMAIL (PARTIAL UNIQUE)

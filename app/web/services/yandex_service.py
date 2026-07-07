@@ -121,27 +121,18 @@ class YandexOAuthService:
 
                 return await response.json()
 
+
     async def authenticate(self, code: str) -> Dict:
         """Полный процесс аутентификации через Яндекс"""
         try:
             # 1. Получаем токен
             token = await self.get_token(code)
-
+            
             # 2. Получаем информацию о пользователе
             user_data = await self.get_user_info(token)
-
-            # Структура ответа от Яндекса:
-            # {
-            #   "id": "123456789",
-            #   "login": "username",
-            #   "first_name": "Имя",
-            #   "last_name": "Фамилия",
-            #   "default_email": "user@yandex.ru",
-            #   "emails": ["user@yandex.ru", ...]
-            # }
-
+            
             logger.info(f"Yandex user authenticated: {user_data.get('default_email')}")
-
+            
             return {
                 "success": True,
                 "yandex_id": user_data.get("id"),
@@ -150,15 +141,18 @@ class YandexOAuthService:
                 "first_name": user_data.get("first_name"),
                 "last_name": user_data.get("last_name"),
                 "full_name": f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip(),
+                "access_token": token,  # ← Добавить
+                "refresh_token": None,  # Яндекс не возвращает refresh_token в этом потоке
+                "expires_in": 3600,  # По умолчанию 1 час
                 "raw_data": user_data
             }
-
+            
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Yandex authentication error: {e}", exc_info=True)
             raise HTTPException(
-                status_code=500,
+                status_code=500, 
                 detail=f"Authentication failed: {str(e)}"
             )
 

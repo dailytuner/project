@@ -705,43 +705,52 @@ function showPage(page) {
 /**
  * Восстановить сессию из cookies
  */
+
 function restoreSession() {
     const cookies = document.cookie.split(';');
     let platform = null;
     let platformId = null;
     let authenticated = false;
     let name = null;
-
+    let userId = null;
+    
     cookies.forEach(cookie => {
         const [key, value] = cookie.trim().split('=');
         if (key === 'user_platform') platform = decodeURIComponent(value);
         if (key === 'user_platform_id') platformId = decodeURIComponent(value);
         if (key === 'user_authenticated') authenticated = value === 'true';
         if (key === 'user_name') name = decodeURIComponent(value);
+        if (key === 'user_id') userId = decodeURIComponent(value);
     });
 
     if (authenticated && platform && platformId) {
         currentPlatform = platform;
         currentUserId = platformId;
-
+        
+        // Обновляем глобальные переменные
+        window.userAuthenticated = true;
+        window.userPlatform = platform;
+        window.userPlatformId = platformId;
+        if (name) window.userName = name;
+        
         // Скрываем форму входа
         document.getElementById('auth-page').classList.add('hidden');
-
+        
         // Показываем профиль
         document.getElementById('profile-page').classList.remove('hidden');
         const profileUserId = document.getElementById('profile-user-id');
         if (profileUserId) {
             profileUserId.innerHTML = `👤 ${name || platformId}`;
         }
-
+        
         // Загружаем данные
         loadProfile();
         checkPasswordStatus();
         showToast('Сессия восстановлена', 'success');
-
+        
         return true;
     }
-
+    
     return false;
 }
 

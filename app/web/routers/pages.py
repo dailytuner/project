@@ -29,6 +29,10 @@ async def index(request: Request):
         os.path.exists("/run/secrets/yandex-client-id")
     )
 
+    # Если платформа Яндекс, показываем имя
+    if user_platform == "yandex" and not user_name:
+        user_name = user_platform_id  # email от Яндекса
+
     context = {
         "request": request,
         "user_authenticated": user_authenticated,

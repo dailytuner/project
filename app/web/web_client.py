@@ -24,7 +24,8 @@ class WebAPIClient:
     """Клиент для веб-интерфейса (поддержка email/phone)"""
 
     def __init__(self):
-        self.base_url = os.getenv("BACKEND_API_URL", "http://backend-api:8000/api")
+        #self.base_url = os.getenv("BACKEND_API_URL", "http://backend-api:8000/api")
+        self.base_url = os.getenv("BACKEND_API_URL", "http://backend-api:8000/api/v1")
         self.api_key_file = os.getenv("API_KEY_FILE", "/run/secrets/backend-api-key")
         self.api_key = self._load_api_key()
         self._session = None

@@ -67,7 +67,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      - BACKEND_API_URL=http://backend-api:8000
+      - BACKEND_API_URL=http://backend-api:8000/api/v1 
       - YANDEX_CLIENT_ID_FILE=/run/secrets/yandex-client-id
       - YANDEX_CLIENT_SECRET_FILE=/run/secrets/yandex-client-secret
       - YANDEX_REDIRECT_URI_FILE=/run/secrets/yandex-redirect-uri

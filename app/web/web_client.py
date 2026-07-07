@@ -341,8 +341,8 @@ class WebAPIClient:
         email: str,
         login: str,
         access_token: str,
-        refresh_token: str,
-        expires_at: str  # ISO format datetime string
+        expires_at: str,  # ISO format datetime string
+        refresh_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Создание или получение пользователя через Яндекс OAuth.

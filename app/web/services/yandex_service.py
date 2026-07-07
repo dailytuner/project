@@ -142,8 +142,8 @@ class YandexOAuthService:
                 "last_name": user_data.get("last_name"),
                 "full_name": f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip(),
                 "access_token": token,  # ← Добавить
+                "expires_in": 3600,
                 "refresh_token": None,  # Яндекс не возвращает refresh_token в этом потоке
-                "expires_in": 3600,  # По умолчанию 1 час
                 "raw_data": user_data
             }
             

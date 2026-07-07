@@ -90,8 +90,8 @@ async def yandex_callback(
             email=email,
             login=login,
             access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at=expires_at
+            expires_at=expires_at,
+            refresh_token=refresh_token
         )
         
         if not result.get("success"):

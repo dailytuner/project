@@ -713,6 +713,7 @@ function restoreSession() {
     let authenticated = false;
     let name = null;
     let email = null;
+    let userId = null;
 
     cookies.forEach(cookie => {
         const [key, value] = cookie.trim().split('=');
@@ -721,27 +722,37 @@ function restoreSession() {
         if (key === 'user_authenticated') authenticated = value === 'true';
         if (key === 'user_name') name = decodeURIComponent(value);
         if (key === 'user_email') email = decodeURIComponent(value);
+        if (key === 'user_id') userId = decodeURIComponent(value);
     });
 
     if (authenticated && platform && platformId) {
         currentPlatform = platform;
-        currentUserId = platformId;  // ← Это yandex_id для Яндекса!
+        currentUserId = platformId;  // yandex_id для Яндекса!
 
-        // Для отображения используем email если это Яндекс
+        // Определяем отображаемое имя
         let displayName = name || platformId;
         if (platform === 'yandex' && email) {
-            displayName = email;  // Показываем email, а не yandex_id
+            displayName = email;  // Для Яндекс показываем email
         }
 
+        // Скрываем форму входа
         document.getElementById('auth-page').classList.add('hidden');
-        document.getElementById('profile-page').classList.remove('hidden');
-        document.getElementById('profile-user-id').innerHTML = `👤 ${displayName}`;
 
+        // Показываем профиль
+        document.getElementById('profile-page').classList.remove('hidden');
+        const profileUserId = document.getElementById('profile-user-id');
+        if (profileUserId) {
+            profileUserId.innerHTML = `👤 ${displayName}`;
+        }
+
+        // Загружаем данные
         loadProfile();
         checkPasswordStatus();
         showToast('Сессия восстановлена', 'success');
+
         return true;
     }
+
     return false;
 }
 

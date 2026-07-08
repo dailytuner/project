@@ -333,40 +333,45 @@ class WebAPIClient:
             "warnings": caution_advice,
             "financial_advice": financial_advice
         }
-    
 
     async def create_yandex_user(
-        self,
-        yandex_id: str,
-        email: str,
-        login: str,
-        access_token: str,
-        expires_at: str,  # ISO format datetime string
-        refresh_token: Optional[str] = None
+            self,
+            yandex_id: str,
+            email: str,
+            login: str,
+            access_token: str,
+            expires_at: str,
+            refresh_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Создание или получение пользователя через Яндекс OAuth.
         Возвращает информацию о пользователе.
         """
         session = await self._get_session()
-        
+
         payload = {
             "platform": AuthPlatform.YANDEX.value,
             "platform_user_id": yandex_id,
             "email": email,
             "login": login,
             "access_token": access_token,
-            "refresh_token": refresh_token,
             "expires_at": expires_at
         }
-        
+
+        # Добавляем refresh_token только если он есть
+        if refresh_token:
+            payload["refresh_token"] = refresh_token
+
         logger.info(f"Creating yandex user: {email} (ID: {yandex_id})")
-        
+
         async with session.post(
-            f"{self.base_url}/user/yandex",
-            json=payload
+                f"{self.base_url}/user/yandex",
+                json=payload
         ) as response:
-            return await response.json()
+            result = await response.json()
+            if result.get("success"):
+                logger.info(f"Yandex user processed: ID={result.get('user_id')}")
+            return result
 
 
 

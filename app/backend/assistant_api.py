@@ -716,111 +716,43 @@ async def auth_status_endpoint(
 
 @app.post("/api/v1/user/yandex", response_model=YandexUserResponse)
 async def create_yandex_user(
-    request: YandexUserCreate,
-    api_key: str = Depends(verify_api_key)
-):
+        self,
+        yandex_id: str,
+        email: str,
+        login: str,
+        access_token: str,
+        expires_at: str,
+        refresh_token: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Создание или получение пользователя через Яндекс OAuth.
+    Возвращает информацию о пользователе.
     """
-    try:
-        import hashlib
-        
-        async with async_session() as session:
-            # Проверяем существование по yandex_id
-            user_id = await get_user_id_by_platform(
-                session, 
-                AuthPlatform.YANDEX, 
-                request.platform_user_id
-            )
-            
-            if user_id:
-                # Обновляем токены у существующего пользователя
-                user = await session.get(User, user_id)
-                if user:
-                    user.yandex_access_token = request.access_token
-                    if request.refresh_token:
-                        user.yandex_refresh_token = request.refresh_token
-                    user.yandex_token_expires_at = datetime.fromisoformat(request.expires_at)
-                    user.last_activity_at = datetime.now(timezone.utc)
-                    await session.commit()
-                    
-                    logger.info(f"🔄 Обновлены токены для пользователя ID={user_id}")
-                
-                return YandexUserResponse(
-                    success=True,
-                    user_id=user_id,
-                    is_new=False,
-                    email=request.email,
-                    message="User already exists, tokens updated"
-                )
-            
-            # Проверяем существование по email
-            email_hash = hashlib.sha256(request.email.encode()).hexdigest()
-            result = await session.execute(
-                select(User).where(User.email_hash == email_hash)
-            )
-            existing_user = result.scalar_one_or_none()
-            
-            if existing_user:
-                # Привязываем Яндекс к существующему пользователю
-                existing_user.yandex_id = request.platform_user_id
-                existing_user.yandex_email = request.email
-                existing_user.yandex_login = request.login
-                existing_user.yandex_access_token = request.access_token
-                if request.refresh_token:
-                    existing_user.yandex_refresh_token = request.refresh_token
-                existing_user.yandex_token_expires_at = datetime.fromisoformat(request.expires_at)
-                existing_user.primary_auth_method = AuthPlatform.YANDEX.value
-                existing_user.is_verified = True
-                existing_user.last_activity_at = datetime.now(timezone.utc)
-                
-                await session.commit()
-                await session.refresh(existing_user)
-                
-                logger.info(f"🔗 Привязан Яндекс к существующему пользователю ID={existing_user.id}")
-                
-                return YandexUserResponse(
-                    success=True,
-                    user_id=existing_user.id,
-                    is_new=False,
-                    email=request.email,
-                    message="Yandex linked to existing user"
-                )
-            
-            # Создаем нового пользователя
-            new_user = User(
-                yandex_id=request.platform_user_id,
-                yandex_email=request.email,
-                yandex_login=request.login,
-                yandex_access_token=request.access_token,
-                yandex_refresh_token=request.refresh_token,  # Может быть None
-                yandex_token_expires_at=datetime.fromisoformat(request.expires_at),
-                email_hash=email_hash,
-                primary_auth_method=AuthPlatform.YANDEX.value,
-                is_verified=True,
-                status='active'
-            )
-            
-            session.add(new_user)
-            await session.flush()
-            await session.refresh(new_user)
-            
-            logger.info(f"🆕 Создан новый пользователь через Яндекс ID={new_user.id}")
-            
-            return YandexUserResponse(
-                success=True,
-                user_id=new_user.id,
-                is_new=True,
-                email=request.email,
-                message="User created successfully"
-            )
-            
-    except ValueError as e:
-        logger.error(f"Error parsing expires_at: {e}")
-        raise HTTPException(status_code=400, detail="Invalid expires_at format")
-    except Exception as e:
-        logger.error(f"Error creating yandex user: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    session = await self._get_session()
+
+    payload = {
+        "platform": AuthPlatform.YANDEX.value,
+        "platform_user_id": yandex_id,
+        "email": email,
+        "login": login,
+        "access_token": access_token,
+        "expires_at": expires_at
+    }
+
+    # Добавляем refresh_token только если он есть
+    if refresh_token:
+        payload["refresh_token"] = refresh_token
+
+    logger.info(f"Creating yandex user: {email} (ID: {yandex_id})")
+
+    async with session.post(
+            f"{self.base_url}/user/yandex",
+            json=payload
+    ) as response:
+        result = await response.json()
+        if result.get("success"):
+            logger.info(f"Yandex user processed: ID={result.get('user_id')}")
+        return result
 
 if __name__ == "__main__":
     uvicorn.run("backend.assistant_api:app", host="0.0.0.0", port=8000, reload=True)

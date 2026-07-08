@@ -24,7 +24,7 @@ async def index(request: Request):
     # Определяем отображаемое имя
     display_name = user_name
     if user_platform == "yandex" and user_email:
-        display_name = user_email
+        display_name = user_email  # Для Яндекс показываем email
     elif not display_name:
         display_name = user_platform_id
 

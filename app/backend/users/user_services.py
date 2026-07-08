@@ -576,6 +576,126 @@ class UserService:
 
             return new_user, True
 
+    async def create_or_update_yandex_user(
+            self,
+            yandex_id: str,
+            email: str,
+            login: str,
+            access_token: str,
+            expires_at: datetime,
+            refresh_token: Optional[str] = None,
+            session: Optional[AsyncSession] = None
+    ) -> Tuple[User, bool, bool]:
+        """
+        Создать или обновить пользователя через Яндекс OAuth.
+        Возвращает: (User, is_new, profile_created)
+        - is_new: создан ли новый пользователь
+        - profile_created: создан ли профиль (всегда True, если пользователь существует)
+        """
+        import hashlib
+
+        async with self._get_session(session) as db_session:
+            # 1. Проверяем существование по yandex_id
+            user = await get_user_by_platform(
+                db_session, AuthPlatform.YANDEX, yandex_id
+            )
+
+            if user:
+                # Обновляем токены
+                user.yandex_access_token = access_token
+                user.yandex_refresh_token = refresh_token
+                user.yandex_token_expires_at = expires_at
+                user.last_activity_at = datetime.now(timezone.utc)
+                await db_session.commit()
+                await db_session.refresh(user)
+
+                logger.info(f"🔄 Обновлены токены для Яндекс пользователя ID={user.id}")
+
+                # Проверяем наличие профиля
+                profile = await db_session.execute(
+                    select(UserProfile).where(UserProfile.user_id == user.id)
+                )
+                profile = profile.scalar_one_or_none()
+
+                if not profile:
+                    # Создаем пустой профиль
+                    profile = UserProfile(user_id=user.id)
+                    db_session.add(profile)
+                    await db_session.commit()
+                    logger.info(f"📝 Создан пустой профиль для пользователя ID={user.id}")
+                    return user, False, True
+
+                return user, False, False
+
+            # 2. Проверяем существование по email
+            email_hash = hashlib.sha256(email.encode()).hexdigest()
+            result = await db_session.execute(
+                select(User).where(User.email_hash == email_hash)
+            )
+            existing_user = result.scalar_one_or_none()
+
+            if existing_user:
+                # Привязываем Яндекс к существующему пользователю
+                existing_user.yandex_id = yandex_id
+                existing_user.yandex_email = email
+                existing_user.yandex_login = login
+                existing_user.yandex_access_token = access_token
+                existing_user.yandex_refresh_token = refresh_token
+                existing_user.yandex_token_expires_at = expires_at
+                existing_user.primary_auth_method = AuthPlatform.YANDEX.value
+                existing_user.is_verified = True
+                existing_user.last_activity_at = datetime.now(timezone.utc)
+
+                await db_session.commit()
+                await db_session.refresh(existing_user)
+
+                logger.info(f"🔗 Привязан Яндекс к существующему пользователю ID={existing_user.id}")
+
+                # Проверяем наличие профиля
+                profile = await db_session.execute(
+                    select(UserProfile).where(UserProfile.user_id == existing_user.id)
+                )
+                profile = profile.scalar_one_or_none()
+
+                if not profile:
+                    profile = UserProfile(user_id=existing_user.id)
+                    db_session.add(profile)
+                    await db_session.commit()
+                    logger.info(f"📝 Создан пустой профиль для пользователя ID={existing_user.id}")
+                    return existing_user, False, True
+
+                return existing_user, False, False
+
+            # 3. Создаем нового пользователя
+            new_user = User(
+                yandex_id=yandex_id,
+                yandex_email=email,
+                yandex_login=login,
+                yandex_access_token=access_token,
+                yandex_refresh_token=refresh_token,
+                yandex_token_expires_at=expires_at,
+                email_hash=email_hash,
+                primary_auth_method=AuthPlatform.YANDEX.value,
+                is_verified=True,
+                status='active'
+            )
+
+            db_session.add(new_user)
+            await db_session.flush()
+            await db_session.refresh(new_user)
+
+            logger.info(f"🆕 Создан новый пользователь через Яндекс ID={new_user.id}")
+
+            # 4. Всегда создаем профиль
+            profile = UserProfile(user_id=new_user.id)
+            db_session.add(profile)
+            await db_session.commit()
+            await db_session.refresh(new_user)
+
+            logger.info(f"📝 Создан пустой профиль для нового пользователя ID={new_user.id}")
+
+            return new_user, True, True
+
 
 # Синглтон для удобства использования
 user_service = UserService(geocoder=AsyncCityGeocoder())

@@ -720,16 +720,16 @@ async def create_yandex_user(
         api_key: str = Depends(verify_api_key)
 ):
     """Создание или получение пользователя через Яндекс OAuth."""
-    logger.info("=" * 60)
-    logger.info("🔵 STEP 3.2: BACKEND CREATE YANDEX USER")
-    logger.info(f"📥 Request received:")
-    logger.info(f"   - platform: {request.platform}")
-    logger.info(f"   - platform_user_id: {request.platform_user_id}")
-    logger.info(f"   - email: {request.email}")
-    logger.info(f"   - login: {request.login}")
-    logger.info(f"   - access_token: {request.access_token[:20]}...")
-    logger.info(f"   - refresh_token: {request.refresh_token}")
-    logger.info(f"   - expires_at: {request.expires_at}")
+    #logger.info("=" * 60)
+    #logger.info("🔵 STEP 3.2: BACKEND CREATE YANDEX USER")
+    #logger.info(f"📥 Request received:")
+    #logger.info(f"   - platform: {request.platform}")
+    #logger.info(f"   - platform_user_id: {request.platform_user_id}")
+    #logger.info(f"   - email: {request.email}")
+    #logger.info(f"   - login: {request.login}")
+    #logger.info(f"   - access_token: {request.access_token[:20]}...")
+    #logger.info(f"   - refresh_token: {request.refresh_token}")
+    #logger.info(f"   - expires_at: {request.expires_at}")
 
     try:
         expires_at = datetime.fromisoformat(request.expires_at)

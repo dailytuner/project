@@ -344,17 +344,17 @@ class WebAPIClient:
             refresh_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """Создание или получение пользователя через Яндекс OAuth."""
-        logger.info("=" * 60)
-        logger.info("🔵 STEP 3.1: WEB_CLIENT CREATE YANDEX USER")
-        logger.info(f"📤 Payload to backend:")
-        logger.info(f"   - platform: {AuthPlatform.YANDEX.value}")
-        logger.info(f"   - platform_user_id: {yandex_id}")
-        logger.info(f"   - email: {email}")
-        logger.info(f"   - login: {login}")
-        logger.info(f"   - access_token: {access_token[:20]}...")
-        logger.info(f"   - expires_at: {expires_at}")
-        logger.info(f"   - refresh_token: {refresh_token}")
-        logger.info(f"📤 URL: {self.base_url}/user/yandex")
+        #logger.info("=" * 60)
+        #logger.info("🔵 STEP 3.1: WEB_CLIENT CREATE YANDEX USER")
+        #logger.info(f"📤 Payload to backend:")
+        #logger.info(f"   - platform: {AuthPlatform.YANDEX.value}")
+        #logger.info(f"   - platform_user_id: {yandex_id}")
+        #logger.info(f"   - email: {email}")
+        #logger.info(f"   - login: {login}")
+        #logger.info(f"   - access_token: {access_token[:20]}...")
+        #logger.info(f"   - expires_at: {expires_at}")
+        #logger.info(f"   - refresh_token: {refresh_token}")
+        #logger.info(f"📤 URL: {self.base_url}/user/yandex")
 
         session = await self._get_session()
 

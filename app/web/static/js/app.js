@@ -362,7 +362,18 @@ async function submitSetPassword() {
  */
 async function checkPasswordStatus() {
     try {
-        const response = await fetch(`/api/auth/status?platform=${currentPlatform}&platform_user_id=${encodeURIComponent(currentUserId)}`);
+        // ✅ Сначала получаем значения
+        const platform = currentPlatform || window.userPlatform;
+        const userId = currentUserId || window.userPlatformId;
+
+        // ✅ Проверяем ДО запроса
+        if (!platform || !userId) {
+            console.warn('No platform or userId for checkPasswordStatus');
+            return;
+        }
+
+        // ✅ Теперь отправляем запрос с правильными значениями
+        const response = await fetch(`/api/auth/status?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
         const result = await response.json();
 
         const hasPasswordInfo = document.getElementById('has-password-info');
@@ -446,7 +457,18 @@ async function changePassword() {
  */
 async function loadProfile() {
     try {
-        const response = await fetch(`/api/profile?platform=${currentPlatform}&platform_user_id=${encodeURIComponent(currentUserId)}`);
+        // ✅ Сначала получаем значения
+        const platform = currentPlatform || window.userPlatform;
+        const userId = currentUserId || window.userPlatformId;
+
+        // ✅ Проверяем ДО запроса
+        if (!platform || !userId) {
+            console.warn('No platform or userId for loadProfile');
+            return;
+        }
+
+        // ✅ Теперь отправляем запрос с правильными значениями
+        const response = await fetch(`/api/profile?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
         const result = await response.json();
 
         if (result.success && result.profile) {
@@ -473,6 +495,16 @@ async function loadProfile() {
  * Сохранить профиль
  */
 async function saveProfile() {
+    // ✅ Сначала получаем значения
+    const platform = currentPlatform || window.userPlatform;
+    const userId = currentUserId || window.userPlatformId;
+
+    // ✅ Проверяем ДО запроса
+    if (!platform || !userId) {
+        showToast('Ошибка: пользователь не авторизован', 'error');
+        return;
+    }
+
     const birthDate = document.getElementById('birth_date').value;
     const birthTime = document.getElementById('birth_time').value;
     const birthCity = document.getElementById('birth_city').value;
@@ -495,8 +527,8 @@ async function saveProfile() {
 
     const requestData = {
         request: {
-            platform: currentPlatform,
-            platform_user_id: currentUserId
+            platform: platform,
+            platform_user_id: userId
         },
         profile: profile
     };
@@ -530,11 +562,21 @@ async function saveProfile() {
  * Проверить заполненность профиля
  */
 async function checkProfile() {
+    // ✅ Сначала получаем значения
+    const platform = currentPlatform || window.userPlatform;
+    const userId = currentUserId || window.userPlatformId;
+
+    // ✅ Проверяем ДО запроса
+    if (!platform || !userId) {
+        showToast('Ошибка: пользователь не авторизован', 'error');
+        return;
+    }
+
     const resultDiv = document.getElementById('profile-result');
     resultDiv.innerHTML = '<div class="loading">🔍 Проверка...</div>';
 
     try {
-        const response = await fetch(`/api/validate?platform=${currentPlatform}&platform_user_id=${encodeURIComponent(currentUserId)}`);
+        const response = await fetch(`/api/validate?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
         const result = await response.json();
 
         if (result.success) {
@@ -568,13 +610,23 @@ async function checkProfile() {
  * Получить рекомендации на день
  */
 async function getRecommendations() {
+    // ✅ Сначала получаем значения
+    const platform = currentPlatform || window.userPlatform;
+    const userId = currentUserId || window.userPlatformId;
+
+    // ✅ Проверяем ДО запроса
+    if (!platform || !userId) {
+        showToast('Ошибка: пользователь не авторизован', 'error');
+        return;
+    }
+
     const resultDiv = document.getElementById('activities-result');
     const targetDate = document.getElementById('target_date').value || new Date().toISOString().split('T')[0];
 
     resultDiv.innerHTML = '<div class="loading">🎯 Расчет рекомендаций...</div>';
 
     try {
-        const response = await fetch(`/api/recommendations?platform=${currentPlatform}&platform_user_id=${encodeURIComponent(currentUserId)}&date=${targetDate}`);
+        const response = await fetch(`/api/recommendations?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}&date=${targetDate}`);
         const result = await response.json();
 
         if (result.success) {
@@ -619,6 +671,16 @@ async function getRecommendations() {
  * Получить прогноз на несколько дней
  */
 async function getForecast() {
+    // ✅ Сначала получаем значения
+    const platform = currentPlatform || window.userPlatform;
+    const userId = currentUserId || window.userPlatformId;
+
+    // ✅ Проверяем ДО запроса
+    if (!platform || !userId) {
+        showToast('Ошибка: пользователь не авторизован', 'error');
+        return;
+    }
+
     const resultDiv = document.getElementById('forecast-result');
     const days = parseInt(document.getElementById('forecast_days').value);
 
@@ -638,7 +700,7 @@ async function getForecast() {
         const dayMonth = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
         try {
-            const response = await fetch(`/api/recommendations?platform=${currentPlatform}&platform_user_id=${encodeURIComponent(currentUserId)}&date=${dateStr}`);
+            const response = await fetch(`/api/recommendations?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}&date=${dateStr}`);
             const result = await response.json();
 
             if (result.success) {
@@ -728,6 +790,10 @@ function restoreSession() {
     if (authenticated && platform && platformId) {
         currentPlatform = platform;
         currentUserId = platformId;  // yandex_id для Яндекса!
+
+        window.userAuthenticated = true;
+        window.userPlatform = platform;
+        window.userPlatformId = platformId;
 
         // Определяем отображаемое имя
         let displayName = name || platformId;

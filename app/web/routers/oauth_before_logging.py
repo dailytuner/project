@@ -41,7 +41,6 @@ async def yandex_login(request: Request):
             content={"success": False, "error": str(e)}
         )
 
-
 @router.get("/yandex/callback")
 async def yandex_callback(
         request: Request,
@@ -50,68 +49,38 @@ async def yandex_callback(
         state: str = None
 ):
     """Callback после авторизации в Яндексе"""
-    logger.info("=" * 60)
-    logger.info("🔵 STEP 2: YANDEX CALLBACK RECEIVED")
-    logger.info(f"📥 Request URL: {request.url}")
-    logger.info(f"📥 Code: {code}")
-    logger.info(f"📥 State: {state}")
-    logger.info(f"📥 Request headers: {dict(request.headers)}")
-    logger.info(f"📥 Client: {request.client}")
-
     try:
         # Проверяем state
-        logger.info(f"🔍 Checking state in store: {list(STATE_STORE.keys())}")
         if not state or state not in STATE_STORE:
-            logger.error(f"❌ Invalid state: {state}")
+            logger.warning(f"Invalid OAuth state: {state}")
             raise HTTPException(status_code=400, detail="Invalid state parameter")
 
-        logger.info(f"✅ State validated: {state}")
+        # Удаляем использованный state
         del STATE_STORE[state]
 
-        # Получаем данные от Яндекса
-        logger.info("🔄 Getting user info from Yandex...")
+        # Получаем данные пользователя от Яндекса
         user_info = await yandex_service.authenticate(code)
 
-        logger.info(f"📦 Yandex user_info: {user_info}")
-
-        if not user_info.get("success"):
-            logger.error("❌ Yandex authentication failed")
+        if not user_info["success"]:
             raise HTTPException(status_code=400, detail="Failed to get user info")
 
         yandex_id = user_info.get("yandex_id")
         email = user_info.get("email")
         login = user_info.get("login")
         name = user_info.get("full_name") or user_info.get("login")
+
+        if not email:
+            raise HTTPException(status_code=400, detail="Email not provided by Yandex")
+
+        logger.info(f"Yandex auth for: {email} (ID: {yandex_id})")
+
+        # Получаем токены
         access_token = user_info.get("access_token")
         refresh_token = user_info.get("refresh_token")
         expires_in = user_info.get("expires_in", 3600)
-
-        logger.info(f"👤 User data:")
-        logger.info(f"   - yandex_id: {yandex_id}")
-        logger.info(f"   - email: {email}")
-        logger.info(f"   - login: {login}")
-        logger.info(f"   - name: {name}")
-        logger.info(f"   - access_token: {access_token[:20]}...")
-        logger.info(f"   - refresh_token: {refresh_token}")
-        logger.info(f"   - expires_in: {expires_in}")
-
-        if not email:
-            logger.error("❌ Email not provided by Yandex")
-            raise HTTPException(status_code=400, detail="Email not provided by Yandex")
-
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
-        logger.info(f"⏰ expires_at: {expires_at}")
 
-        # Создаем пользователя
-        logger.info("🔵 STEP 3: CREATING YANDEX USER")
-        logger.info(f"📤 Sending to backend:")
-        logger.info(f"   - yandex_id: {yandex_id}")
-        logger.info(f"   - email: {email}")
-        logger.info(f"   - login: {login}")
-        logger.info(f"   - access_token: {access_token[:20]}...")
-        logger.info(f"   - expires_at: {expires_at}")
-        logger.info(f"   - refresh_token: {refresh_token}")
-
+        # Создаем пользователя через backend
         from ..web_client import web_client
 
         result = await web_client.create_yandex_user(
@@ -123,51 +92,78 @@ async def yandex_callback(
             refresh_token=refresh_token
         )
 
-        logger.info(f"📥 Backend response: {result}")
-
         if not result.get("success"):
-            logger.error(f"❌ Failed to create yandex user: {result}")
+            logger.error(f"Failed to create yandex user: {result}")
             raise HTTPException(status_code=400, detail="Failed to create user")
 
         user_id = result.get("user_id")
         is_new = result.get("is_new", False)
 
-        logger.info(f"✅ User processed: ID={user_id}, is_new={is_new}")
+        logger.info(f"Yandex user {'created' if is_new else 'logged in'}: {email} (ID: {user_id})")
 
-        # Устанавливаем cookies
-        logger.info("🔵 STEP 4: SETTING COOKIES")
+        # ✅ Устанавливаем cookies
+        response.set_cookie(
+            key="user_authenticated",
+            value="true",
+            max_age=604800,  # 7 дней
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+        response.set_cookie(
+            key="user_platform",
+            value=AuthPlatform.YANDEX.value,
+            max_age=604800,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+        response.set_cookie(
+            key="user_platform_id",
+            value=yandex_id,  # ← yandex_id, НЕ email!
+            max_age=604800,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+        response.set_cookie(
+            key="user_id",
+            value=str(user_id),
+            max_age=604800,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+        response.set_cookie(
+            key="user_name",
+            value=name or email,
+            max_age=604800,
+            httponly=False,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
+        response.set_cookie(
+            key="user_email",
+            value=email,
+            max_age=604800,
+            httponly=False,
+            secure=True,
+            samesite="lax",
+            path="/"
+        )
 
-        cookies_to_set = {
-            "user_authenticated": "true",
-            "user_platform": AuthPlatform.YANDEX.value,
-            "user_platform_id": yandex_id,
-            "user_id": str(user_id),
-            "user_name": name or email,
-            "user_email": email
-        }
-
-        for key, value in cookies_to_set.items():
-            logger.info(f"   - Setting cookie: {key}={value}")
-            response.set_cookie(
-                key=key,
-                value=value,
-                max_age=604800,
-                httponly=True if key not in ["user_name", "user_email"] else False,
-                secure=True,
-                samesite="lax",
-                path="/"
-            )
-
-        logger.info("✅ Cookies set successfully")
-        logger.info("🔵 STEP 5: REDIRECTING TO HOME")
-        logger.info("=" * 60)
-
+        # Редирект на главную
         return RedirectResponse("/", status_code=303)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Yandex callback error: {e}", exc_info=True)
+        logger.error(f"Yandex callback error: {e}", exc_info=True)
         return RedirectResponse(
             f"/?error=oauth_failed",
             status_code=303
@@ -205,30 +201,3 @@ async def get_session_info(request: Request):
     })
 
 
-@router.get("/yandex")
-async def yandex_login(request: Request):
-    """Начало авторизации через Яндекс"""
-    logger.info("=" * 60)
-    logger.info("🔵 STEP 1: YANDEX LOGIN STARTED")
-    logger.info(f"📥 Request headers: {dict(request.headers)}")
-    logger.info(f"📥 Request client: {request.client}")
-
-    try:
-        state = secrets.token_urlsafe(32)
-        STATE_STORE[state] = {"created_at": datetime.now(timezone.utc).isoformat()}
-
-        logger.info(f"🔑 Generated state: {state}")
-        logger.info(f"💾 State store: {list(STATE_STORE.keys())}")
-
-        auth_url = yandex_service.get_auth_url(state)
-        logger.info(f"🔗 Redirecting to Yandex: {auth_url}")
-        logger.info("=" * 60)
-
-        return RedirectResponse(auth_url)
-
-    except Exception as e:
-        logger.error(f"❌ Yandex login error: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": str(e)}
-        )

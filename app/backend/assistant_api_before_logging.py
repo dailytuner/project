@@ -716,58 +716,43 @@ async def auth_status_endpoint(
 
 @app.post("/api/v1/user/yandex", response_model=YandexUserResponse)
 async def create_yandex_user(
-        request: YandexUserCreate,
-        api_key: str = Depends(verify_api_key)
-):
-    """Создание или получение пользователя через Яндекс OAuth."""
-    logger.info("=" * 60)
-    logger.info("🔵 STEP 3.2: BACKEND CREATE YANDEX USER")
-    logger.info(f"📥 Request received:")
-    logger.info(f"   - platform: {request.platform}")
-    logger.info(f"   - platform_user_id: {request.platform_user_id}")
-    logger.info(f"   - email: {request.email}")
-    logger.info(f"   - login: {request.login}")
-    logger.info(f"   - access_token: {request.access_token[:20]}...")
-    logger.info(f"   - refresh_token: {request.refresh_token}")
-    logger.info(f"   - expires_at: {request.expires_at}")
+        self,
+        yandex_id: str,
+        email: str,
+        login: str,
+        access_token: str,
+        expires_at: str,
+        refresh_token: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Создание или получение пользователя через Яндекс OAuth.
+    Возвращает информацию о пользователе.
+    """
+    session = await self._get_session()
 
-    try:
-        expires_at = datetime.fromisoformat(request.expires_at)
-        logger.info(f"✅ Parsed expires_at: {expires_at}")
+    payload = {
+        "platform": AuthPlatform.YANDEX.value,
+        "platform_user_id": yandex_id,
+        "email": email,
+        "login": login,
+        "access_token": access_token,
+        "expires_at": expires_at
+    }
 
-        logger.info("🔄 Calling user_service.create_or_update_yandex_user()...")
-        user, is_new, profile_created = await user_service.create_or_update_yandex_user(
-            yandex_id=request.platform_user_id,
-            email=request.email,
-            login=request.login,
-            access_token=request.access_token,
-            expires_at=expires_at,
-            refresh_token=request.refresh_token
-        )
+    # Добавляем refresh_token только если он есть
+    if refresh_token:
+        payload["refresh_token"] = refresh_token
 
-        logger.info(f"✅ User processed:")
-        logger.info(f"   - user_id: {user.id}")
-        logger.info(f"   - is_new: {is_new}")
-        logger.info(f"   - profile_created: {profile_created}")
-        logger.info(f"   - primary_auth_method: {user.primary_auth_method}")
-        logger.info(f"   - yandex_id: {user.yandex_id}")
-        logger.info(f"   - yandex_email: {user.yandex_email}")
-        logger.info("=" * 60)
+    logger.info(f"Creating yandex user: {email} (ID: {yandex_id})")
 
-        return YandexUserResponse(
-            success=True,
-            user_id=user.id,
-            is_new=is_new,
-            email=request.email,
-            message="User processed successfully"
-        )
-
-    except ValueError as e:
-        logger.error(f"❌ Error parsing expires_at: {e}")
-        raise HTTPException(status_code=400, detail="Invalid expires_at format")
-    except Exception as e:
-        logger.error(f"❌ Error creating yandex user: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    async with session.post(
+            f"{self.base_url}/user/yandex",
+            json=payload
+    ) as response:
+        result = await response.json()
+        if result.get("success"):
+            logger.info(f"Yandex user processed: ID={result.get('user_id')}")
+        return result
 
 if __name__ == "__main__":
     uvicorn.run("backend.assistant_api:app", host="0.0.0.0", port=8000, reload=True)

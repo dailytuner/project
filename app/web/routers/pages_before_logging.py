@@ -14,24 +14,12 @@ templates = Jinja2Templates(directory="web/templates")
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Главная страница"""
-    logger.info("=" * 60)
-    logger.info("🔵 PAGE: INDEX")
-    logger.info(f"📥 Request cookies: {request.cookies}")
-    logger.info(f"📥 Request headers: {dict(request.headers)}")
-
+    # Получаем данные из cookies
     user_authenticated = request.cookies.get("user_authenticated") == "true"
     user_platform = request.cookies.get("user_platform")
     user_platform_id = request.cookies.get("user_platform_id")
     user_name = request.cookies.get("user_name")
     user_email = request.cookies.get("user_email")
-
-    logger.info(f"📊 Cookies parsed:")
-    logger.info(f"   - user_authenticated: {user_authenticated}")
-    logger.info(f"   - user_platform: {user_platform}")
-    logger.info(f"   - user_platform_id: {user_platform_id}")
-    logger.info(f"   - user_name: {user_name}")
-    logger.info(f"   - user_email: {user_email}")
-    logger.info("=" * 60)
 
     # Определяем отображаемое имя
     display_name = user_name

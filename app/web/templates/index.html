@@ -1,4 +1,5 @@
 <!-- web/templates/index.html -->
+<!-- ЗАКОММЕНИРОВАН ВХОД E_MAIL PHONE -->
 {% extends "base.html" %}
 
 {% block title %}Daily Tuner - Персональные рекомендации{% endblock %}
@@ -39,7 +40,8 @@
         </button>
         <div class="divider">или</div>
         {% endif %}
-
+    </div>
+        <!--
         <div class="auth-type">
             <label>
                 <input type="radio" name="auth_type" value="email" checked onchange="toggleAuthType()">
@@ -61,6 +63,7 @@
         <button onclick="login()" id="login-btn">Продолжить</button>
         <div id="auth-result"></div>
     </div>
+    -->
 
     <!-- Профиль -->
     <div id="profile-page" class="card {% if not user_authenticated %}hidden{% endif %}">

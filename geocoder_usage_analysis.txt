@@ -1,0 +1,58 @@
+=== АНАЛИЗ ИСПОЛЬЗОВАНИЯ MODULE geocoder.py ===
+Дата: Сб 11 июл 2026 16:05:36 EET
+=========================================
+
+1. ФАЙЛЫ С ИМПОРТАМИ:
+----------------------------------------
+  📄 ./app/backend/calculators/natal_chart.py
+    18:from .geocoder import AsyncCityGeocoder
+  📄 ./app/backend/users/user_services.py
+    15:from ..calculators.geocoder import AsyncCityGeocoder
+
+2. ВЫЗОВЫ ОСНОВНЫХ МЕТОДОВ ПО ФАЙЛАМ:
+----------------------------------------
+  🔹 geocode():
+    ./app/backend/calculators/natal_chart.py:84:            coords = await self.geocoder.geocode(city_name, country_code="ru")
+    ./app/backend/users/user_services.py:148:            coords = await self.geocoder.geocode(
+
+  🔸 batch_geocode():
+
+  🔹 geocode_batch_structured():
+
+  🔸 get_stats():
+    ./app/backend/calculators/ephemeris_base.py:1958:        metrics['cache'] = self.cache.get_stats()
+
+3. КОНТЕКСТ ИСПОЛЬЗОВАНИЯ:
+----------------------------------------
+  🔹 async with geocoder:
+
+  🔸 await geocoder.initialize():
+    ./app/backend/calculators/natal_chart.py:61:            await self.geocoder.initialize()
+
+  🔹 geocoder.close():
+
+4. ТИПЫ ИСПОЛЬЗОВАНИЯ CityCoordinates:
+----------------------------------------
+  🔹 Создание объектов:
+
+  🔸 Доступ к полям:
+    ./app/backend/calculators/natal_chart.py:86:            if coords and coords.lat is not None and coords.lon is not None:
+    ./app/backend/calculators/natal_chart.py:88:                    lat=coords.lat,
+    ./app/backend/calculators/natal_chart.py:89:                    lon=coords.lon,
+    ./app/backend/calculators/natal_chart.py:90:                    timezone=coords.timezone,
+    ./app/backend/calculators/natal_chart.py:92:                    country=coords.country_code
+    ./app/backend/calculators/natal_chart.py:97:                logger.info(f"✅ Геокодирован: {city_name} → {coords.lat:.4f}, {coords.lon:.4f}")
+    ./app/backend/users/user_services.py:154:                profile.birth_lat = float(coords.lat) if coords.lat else None
+    ./app/backend/users/user_services.py:155:                profile.birth_lng = float(coords.lon) if coords.lon else None
+    ./app/backend/users/user_services.py:156:                profile.birth_timezone = coords.timezone
+    ./app/backend/users/user_services.py:157:                profile.birth_country_code = coords.country_code
+
+5. ТЕСТЫ:
+----------------------------------------
+
+6. ФАЙЛЫ КОНФИГУРАЦИИ:
+----------------------------------------
+  📄 ./app/backend/calculators/natal_chart.py
+  📄 ./app/backend/database/models.py
+  📄 ./app/backend/services/chart_services.py
+  📄 ./app/backend/users/user_services.py

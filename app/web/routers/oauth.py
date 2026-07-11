@@ -162,7 +162,10 @@ async def yandex_callback(
         logger.info("🔵 STEP 5: REDIRECTING TO HOME")
         logger.info("=" * 60)
 
-        return RedirectResponse("/", status_code=303)
+        # Создаем RedirectResponse через response
+        response.status_code = 303
+        response.headers["Location"] = "/"
+        return response
 
     except HTTPException:
         raise

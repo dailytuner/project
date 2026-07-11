@@ -357,15 +357,15 @@ async def _verify_calculations(user_id: int):
                 logger.error(f"❌ Пользователь {user_id} не найден")
                 return
 
-            logger.info("=" * 60)
-            logger.info(f"🔍 ПРОВЕРКА ДАННЫХ ДЛЯ user_id={user_id}")
+            #logger.info("=" * 60)
+            #logger.info(f"🔍 ПРОВЕРКА ДАННЫХ ДЛЯ user_id={user_id}")
 
             # ✅ PsyhoMatrix (УЖЕ ПРАВИЛЬНО)
             matrix_result = await session.execute(
                 select(PsyhoMatrix).where(PsyhoMatrix.user_id == user_id)
             )
             matrix = matrix_result.scalars().first()
-            logger.info(f"📊 PsyhoMatrix: {'✅ Есть' if matrix else '❌ НЕТ'}")
+            #logger.info(f"📊 PsyhoMatrix: {'✅ Есть' if matrix else '❌ НЕТ'}")
             if matrix:
                 logger.info(f"   - first_number: {matrix.first_number}")
 
@@ -745,14 +745,14 @@ async def create_yandex_user(
             refresh_token=request.refresh_token
         )
 
-        logger.info(f"✅ User processed:")
-        logger.info(f"   - user_id: {user.id}")
-        logger.info(f"   - is_new: {is_new}")
-        logger.info(f"   - profile_created: {profile_created}")
-        logger.info(f"   - primary_auth_method: {user.primary_auth_method}")
-        logger.info(f"   - yandex_id: {user.yandex_id}")
-        logger.info(f"   - yandex_email: {user.yandex_email}")
-        logger.info("=" * 60)
+        #logger.info(f"✅ User processed:")
+        #logger.info(f"   - user_id: {user.id}")
+        #logger.info(f"   - is_new: {is_new}")
+        #logger.info(f"   - profile_created: {profile_created}")
+        #logger.info(f"   - primary_auth_method: {user.primary_auth_method}")
+        #logger.info(f"   - yandex_id: {user.yandex_id}")
+        #logger.info(f"   - yandex_email: {user.yandex_email}")
+        #logger.info("=" * 60)
 
         return YandexUserResponse(
             success=True,

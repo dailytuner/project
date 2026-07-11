@@ -369,7 +369,7 @@ class WebAPIClient:
 
         if refresh_token:
             payload["refresh_token"] = refresh_token
-            logger.info(f"   - refresh_token included: {refresh_token}")
+            #logger.info(f"   - refresh_token included: {refresh_token}")
 
         #logger.info(f"📦 Full payload: {payload}")
 

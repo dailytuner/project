@@ -147,7 +147,7 @@ async def yandex_callback(
         }
 
         for key, value in cookies_to_set.items():
-            logger.info(f"   - Setting cookie: {key}={value}")
+            logger.info(f"   - Setting cookies...")
             response.set_cookie(
                 key=key,
                 value=value,
@@ -211,10 +211,10 @@ async def get_session_info(request: Request):
 @router.get("/yandex")
 async def yandex_login(request: Request):
     """Начало авторизации через Яндекс"""
-    logger.info("=" * 60)
-    logger.info("🔵 STEP 1: YANDEX LOGIN STARTED")
-    logger.info(f"📥 Request headers: {dict(request.headers)}")
-    logger.info(f"📥 Request client: {request.client}")
+    #logger.info("=" * 60)
+    #logger.info("🔵 STEP 1: YANDEX LOGIN STARTED")
+    #logger.info(f"📥 Request headers: {dict(request.headers)}")
+    #logger.info(f"📥 Request client: {request.client}")
 
     try:
         state = secrets.token_urlsafe(32)

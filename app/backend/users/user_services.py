@@ -69,7 +69,7 @@ class UserService:
             await db_session.flush()  # Получаем user.id
             await db_session.refresh(user)
 
-            logger.info(f"🆕 Создан новый пользователь: {platform}:{platform_user_id}")
+            #logger.info(f"🆕 Создан новый пользователь: {platform}:{platform_user_id}")
             return user
 
     async def create_or_update_full_profile(
@@ -131,7 +131,7 @@ class UserService:
             if created or not profile.birth_lat:
                 await self._geocode_and_update_profile(profile, db_session)
 
-            logger.info(f"{'🆕 Создан' if created else '📝 Обновлен'} профиль {platform}:{platform_user_id}")
+            #logger.info(f"{'🆕 Создан' if created else '📝 Обновлен'} профиль {platform}:{platform_user_id}")
             await db_session.commit()
             return (created, user, profile)
 

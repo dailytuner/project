@@ -589,10 +589,9 @@ class UserService:
         """
         Создать или обновить пользователя через Яндекс OAuth.
         Возвращает: (User, is_new, profile_created)
-        - is_new: создан ли новый пользователь
-        - profile_created: создан ли профиль (всегда True, если пользователь существует)
         """
         import hashlib
+        from datetime import datetime, time
 
         async with self._get_session(session) as db_session:
             # 1. Проверяем существование по yandex_id
@@ -618,11 +617,17 @@ class UserService:
                 profile = profile.scalar_one_or_none()
 
                 if not profile:
-                    # Создаем пустой профиль
-                    profile = UserProfile(user_id=user.id)
+                    profile = UserProfile(
+                        user_id=user.id,
+                        birth_date=datetime.strptime("2001-01-01", "%Y-%m-%d").date(),
+                        birth_time=datetime.strptime("12:00", "%H:%M").time(),
+                        birth_city="Moscow",
+                        birth_country="Russia",
+                        profession="worker"
+                    )
                     db_session.add(profile)
                     await db_session.commit()
-                    logger.info(f"📝 Создан пустой профиль для пользователя ID={user.id}")
+                    logger.info(f"📝 Создан профиль с дефолтными значениями для пользователя ID={user.id}")
                     return user, False, True
 
                 return user, False, False
@@ -658,10 +663,17 @@ class UserService:
                 profile = profile.scalar_one_or_none()
 
                 if not profile:
-                    profile = UserProfile(user_id=existing_user.id)
+                    profile = UserProfile(
+                        user_id=existing_user.id,
+                        birth_date=datetime.strptime("2001-01-01", "%Y-%m-%d").date(),
+                        birth_time=datetime.strptime("12:00", "%H:%M").time(),
+                        birth_city="Moscow",
+                        birth_country="Russia",
+                        profession="worker"
+                    )
                     db_session.add(profile)
                     await db_session.commit()
-                    logger.info(f"📝 Создан пустой профиль для пользователя ID={existing_user.id}")
+                    logger.info(f"📝 Создан профиль с дефолтными значениями для пользователя ID={existing_user.id}")
                     return existing_user, False, True
 
                 return existing_user, False, False
@@ -686,13 +698,20 @@ class UserService:
 
             logger.info(f"🆕 Создан новый пользователь через Яндекс ID={new_user.id}")
 
-            # 4. Всегда создаем профиль
-            profile = UserProfile(user_id=new_user.id)
+            # 4. Создаем профиль с дефолтными значениями
+            profile = UserProfile(
+                user_id=new_user.id,
+                birth_date=datetime.strptime("2001-01-01", "%Y-%m-%d").date(),
+                birth_time=datetime.strptime("12:00", "%H:%M").time(),
+                birth_city="Moscow",
+                birth_country="Russia",
+                profession="worker"
+            )
             db_session.add(profile)
             await db_session.commit()
             await db_session.refresh(new_user)
 
-            logger.info(f"📝 Создан пустой профиль для нового пользователя ID={new_user.id}")
+            logger.info(f"📝 Создан профиль с дефолтными значениями для нового пользователя ID={new_user.id}")
 
             return new_user, True, True
 

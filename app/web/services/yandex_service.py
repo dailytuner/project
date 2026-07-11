@@ -123,31 +123,31 @@ class YandexOAuthService:
 
     async def authenticate(self, code: str) -> Dict:
         """Полный процесс аутентификации через Яндекс"""
-        logger.info("=" * 60)
-        logger.info("🔵 STEP 2.1: YANDEX AUTHENTICATE")
-        logger.info(f"📥 Code: {code}")
+        #logger.info("=" * 60)
+        #logger.info("🔵 STEP 2.1: YANDEX AUTHENTICATE")
+        #logger.info(f"📥 Code: {code}")
 
         try:
             # 1. Получаем токен
-            logger.info("🔄 Getting access token...")
+            #logger.info("🔄 Getting access token...")
             token = await self.get_token(code)
-            logger.info(f"✅ Access token received: {token[:20]}...")
+            #logger.info(f"✅ Access token received: {token[:20]}...")
 
             # 2. Получаем информацию о пользователе
-            logger.info("🔄 Getting user info...")
+            #logger.info("🔄 Getting user info...")
             user_data = await self.get_user_info(token)
-            logger.info(f"📦 Raw user_data: {user_data}")
+            #logger.info(f"📦 Raw user_data: {user_data}")
 
             email = user_data.get("default_email")
             yandex_id = user_data.get("id")
             login = user_data.get("login")
 
-            logger.info(f"👤 User info extracted:")
-            logger.info(f"   - id: {yandex_id}")
-            logger.info(f"   - email: {email}")
-            logger.info(f"   - login: {login}")
-            logger.info(f"   - first_name: {user_data.get('first_name')}")
-            logger.info(f"   - last_name: {user_data.get('last_name')}")
+            #logger.info(f"👤 User info extracted:")
+            #logger.info(f"   - id: {yandex_id}")
+            #logger.info(f"   - email: {email}")
+            #logger.info(f"   - login: {login}")
+            #logger.info(f"   - first_name: {user_data.get('first_name')}")
+            #logger.info(f"   - last_name: {user_data.get('last_name')}")
 
             result = {
                 "success": True,
@@ -163,8 +163,8 @@ class YandexOAuthService:
                 "raw_data": user_data
             }
 
-            logger.info(f"✅ Return result: {result}")
-            logger.info("=" * 60)
+            #logger.info(f"✅ Return result: {result}")
+            #logger.info("=" * 60)
 
             return result
 

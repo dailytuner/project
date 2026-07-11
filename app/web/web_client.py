@@ -133,7 +133,7 @@ class WebAPIClient:
             "profile": {k: str(v) for k, v in profile_data.items() if v}
         }
 
-        logger.info(f"Saving profile for {platform.value}: {platform_user_id}")
+        #logger.info(f"Saving profile for {platform.value}: {platform_user_id}")
 
         async with session.post(
                 f"{self.base_url}/user/profile",  # ← /api/v1 уже в base_url
@@ -371,16 +371,16 @@ class WebAPIClient:
             payload["refresh_token"] = refresh_token
             logger.info(f"   - refresh_token included: {refresh_token}")
 
-        logger.info(f"📦 Full payload: {payload}")
+        #logger.info(f"📦 Full payload: {payload}")
 
         async with session.post(
                 f"{self.base_url}/user/yandex",
                 json=payload
         ) as response:
             result = await response.json()
-            logger.info(f"📥 Backend response status: {response.status}")
-            logger.info(f"📥 Backend response body: {result}")
-            logger.info("=" * 60)
+            #logger.info(f"📥 Backend response status: {response.status}")
+            #logger.info(f"📥 Backend response body: {result}")
+            #logger.info("=" * 60)
 
             if result.get("success"):
                 logger.info(f"✅ Yandex user processed: ID={result.get('user_id')}")

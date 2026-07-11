@@ -50,29 +50,29 @@ async def yandex_callback(
         state: str = None
 ):
     """Callback после авторизации в Яндексе"""
-    logger.info("=" * 60)
-    logger.info("🔵 STEP 2: YANDEX CALLBACK RECEIVED")
-    logger.info(f"📥 Request URL: {request.url}")
-    logger.info(f"📥 Code: {code}")
-    logger.info(f"📥 State: {state}")
-    logger.info(f"📥 Request headers: {dict(request.headers)}")
-    logger.info(f"📥 Client: {request.client}")
+    #logger.info("=" * 60)
+    #logger.info("🔵 STEP 2: YANDEX CALLBACK RECEIVED")
+    #logger.info(f"📥 Request URL: {request.url}")
+    #logger.info(f"📥 Code: {code}")
+    #logger.info(f"📥 State: {state}")
+    #logger.info(f"📥 Request headers: {dict(request.headers)}")
+    #logger.info(f"📥 Client: {request.client}")
 
     try:
         # Проверяем state
-        logger.info(f"🔍 Checking state in store: {list(STATE_STORE.keys())}")
+        #logger.info(f"🔍 Checking state in store: {list(STATE_STORE.keys())}")
         if not state or state not in STATE_STORE:
             logger.error(f"❌ Invalid state: {state}")
             raise HTTPException(status_code=400, detail="Invalid state parameter")
 
-        logger.info(f"✅ State validated: {state}")
+        #logger.info(f"✅ State validated: {state}")
         del STATE_STORE[state]
 
         # Получаем данные от Яндекса
-        logger.info("🔄 Getting user info from Yandex...")
+        #logger.info("🔄 Getting user info from Yandex...")
         user_info = await yandex_service.authenticate(code)
 
-        logger.info(f"📦 Yandex user_info: {user_info}")
+        #logger.info(f"📦 Yandex user_info: {user_info}")
 
         if not user_info.get("success"):
             logger.error("❌ Yandex authentication failed")
@@ -86,31 +86,31 @@ async def yandex_callback(
         refresh_token = user_info.get("refresh_token")
         expires_in = user_info.get("expires_in", 3600)
 
-        logger.info(f"👤 User data:")
-        logger.info(f"   - yandex_id: {yandex_id}")
-        logger.info(f"   - email: {email}")
-        logger.info(f"   - login: {login}")
-        logger.info(f"   - name: {name}")
-        logger.info(f"   - access_token: {access_token[:20]}...")
-        logger.info(f"   - refresh_token: {refresh_token}")
-        logger.info(f"   - expires_in: {expires_in}")
+        #logger.info(f"👤 User data:")
+        #logger.info(f"   - yandex_id: {yandex_id}")
+        #logger.info(f"   - email: {email}")
+        #logger.info(f"   - login: {login}")
+        #logger.info(f"   - name: {name}")
+        #logger.info(f"   - access_token: {access_token[:20]}...")
+        #logger.info(f"   - refresh_token: {refresh_token}")
+        #logger.info(f"   - expires_in: {expires_in}")
 
         if not email:
             logger.error("❌ Email not provided by Yandex")
             raise HTTPException(status_code=400, detail="Email not provided by Yandex")
 
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
-        logger.info(f"⏰ expires_at: {expires_at}")
+        #logger.info(f"⏰ expires_at: {expires_at}")
 
         # Создаем пользователя
-        logger.info("🔵 STEP 3: CREATING YANDEX USER")
-        logger.info(f"📤 Sending to backend:")
-        logger.info(f"   - yandex_id: {yandex_id}")
-        logger.info(f"   - email: {email}")
-        logger.info(f"   - login: {login}")
-        logger.info(f"   - access_token: {access_token[:20]}...")
-        logger.info(f"   - expires_at: {expires_at}")
-        logger.info(f"   - refresh_token: {refresh_token}")
+        #logger.info("🔵 STEP 3: CREATING YANDEX USER")
+        #logger.info(f"📤 Sending to backend:")
+        #logger.info(f"   - yandex_id: {yandex_id}")
+        #logger.info(f"   - email: {email}")
+        #logger.info(f"   - login: {login}")
+        #logger.info(f"   - access_token: {access_token[:20]}...")
+        #logger.info(f"   - expires_at: {expires_at}")
+        #logger.info(f"   - refresh_token: {refresh_token}")
 
         from ..web_client import web_client
 
@@ -123,7 +123,7 @@ async def yandex_callback(
             refresh_token=refresh_token
         )
 
-        logger.info(f"📥 Backend response: {result}")
+        #logger.info(f"📥 Backend response: {result}")
 
         if not result.get("success"):
             logger.error(f"❌ Failed to create yandex user: {result}")
@@ -132,10 +132,10 @@ async def yandex_callback(
         user_id = result.get("user_id")
         is_new = result.get("is_new", False)
 
-        logger.info(f"✅ User processed: ID={user_id}, is_new={is_new}")
+        #logger.info(f"✅ User processed: ID={user_id}, is_new={is_new}")
 
         # Устанавливаем cookies
-        logger.info("🔵 STEP 4: SETTING COOKIES")
+        #logger.info("🔵 STEP 4: SETTING COOKIES")
 
         cookies_to_set = {
             "user_authenticated": "true",
@@ -158,9 +158,9 @@ async def yandex_callback(
                 path="/"
             )
 
-        logger.info("✅ Cookies set successfully")
-        logger.info("🔵 STEP 5: REDIRECTING TO HOME")
-        logger.info("=" * 60)
+        #logger.info("✅ Cookies set successfully")
+        #logger.info("🔵 STEP 5: REDIRECTING TO HOME")
+        #logger.info("=" * 60)
 
         # Создаем RedirectResponse через response
         response.status_code = 303

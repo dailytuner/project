@@ -249,6 +249,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     -- Данные для расчётов
     birth_date DATE NOT NULL,
     birth_time TIME NOT NULL,
+    birth_region VARCHAR(100),
+    birth_display_name VARCHAR(100),
+    birth_geocoder_data JSONB NOT NULL DEFAULT '{}',
     birth_city VARCHAR(100) NOT NULL,
     birth_country VARCHAR(100) DEFAULT 'Russia',
     birth_lat DECIMAL(9,6),
@@ -260,6 +263,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     current_city VARCHAR(100),
     current_lat DECIMAL(9,6),
     current_lng DECIMAL(9,6),
+    current_region VARCHAR(100),
+    current_country VARCHAR(100),
+    current_timezone VARCHAR(50),
     
     -- Настройки
     notification_enabled BOOLEAN DEFAULT TRUE,
@@ -276,6 +282,17 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 -- Индексы
 CREATE INDEX IF NOT EXISTS idx_profiles_birth_date ON user_profiles(birth_date);
 CREATE INDEX IF NOT EXISTS idx_profiles_birth_city_trgm ON user_profiles USING GIN(birth_city gin_trgm_ops);
+-- Индекс для поиска по региону
+CREATE INDEX IF NOT EXISTS idx_profiles_birth_region_trgm 
+ON user_profiles USING GIN(birth_region gin_trgm_ops);
+
+-- Индекс для поиска по полному названию
+CREATE INDEX IF NOT EXISTS idx_profiles_birth_display_name_trgm 
+ON user_profiles USING GIN(birth_display_name gin_trgm_ops);
+
+-- Составной индекс для геопоиска
+CREATE INDEX IF NOT EXISTS idx_profiles_geo_lookup 
+ON user_profiles(birth_city, birth_region, birth_country_code);
 
 
 
@@ -293,6 +310,9 @@ CREATE TABLE IF NOT EXISTS natal_charts (
     calculation_time_ms INTEGER,
 
     -- Географические данные
+    region_name VARCHAR(100),
+    country_name VARCHAR(100),
+    display_name VARCHAR(100),
     city_name VARCHAR(100) NOT NULL,
     birth_lat DECIMAL(9,6) NOT NULL,
     birth_lng DECIMAL(9,6) NOT NULL,
@@ -301,7 +321,7 @@ CREATE TABLE IF NOT EXISTS natal_charts (
     system_language VARCHAR(10) DEFAULT 'ru',
     geocoder_cache_key VARCHAR(64),
     geocoder_source VARCHAR(20) DEFAULT 'manual'
-        CHECK (geocoder_source IN ('manual','memory_cache','db_cache','api','nominatim','google','yandex')),
+        CHECK (geocoder_source IN ('manual','memory_cache','db_cache','api','nominatim','google','yandex','structured','transliteration','major_city'))
 
     -- Временные метки рождения
     birth_datetime_local TIMESTAMPTZ,
@@ -386,6 +406,17 @@ CREATE INDEX IF NOT EXISTS idx_natal_aspect_qualities_gin ON natal_charts USING 
 CREATE INDEX IF NOT EXISTS idx_natal_patterns_gin ON natal_charts USING GIN(patterns);
 CREATE INDEX IF NOT EXISTS idx_natal_star_interpretations_gin ON natal_charts USING GIN(star_interpretations);
 CREATE INDEX IF NOT EXISTS idx_natal_arabic_connections_gin ON natal_charts USING GIN(arabic_connections);
+-- Индекс для поиска по региону
+CREATE INDEX IF NOT EXISTS idx_natal_region_name_trgm 
+ON natal_charts USING GIN(region_name gin_trgm_ops);
+
+-- Индекс для поиска по стране
+CREATE INDEX IF NOT EXISTS idx_natal_country_name_trgm 
+ON natal_charts USING GIN(country_name gin_trgm_ops);
+
+-- Индекс для поиска по полному названию
+CREATE INDEX IF NOT EXISTS idx_natal_display_name_trgm 
+ON natal_charts USING GIN(display_name gin_trgm_ops);
 -- ============================================
 -- 8. ПСИХОМАТРИЦЫ 
 -- ============================================

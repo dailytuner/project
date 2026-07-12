@@ -191,6 +191,9 @@ class UserProfile(Base):
     timezone = Column(String(50), default='Europe/Moscow', nullable=False)
 
     # geocoder поля
+    birth_region = Column(String(100), nullable=True)
+    birth_display_name = Column(String(100), nullable=True)
+    birth_geocoder_data = Column(JSONB, nullable=True, default={})
     birth_country_code = Column(
         String(2),
         default='RU',
@@ -223,6 +226,9 @@ class UserProfile(Base):
     job_position = Column(String(100), nullable=True)
 
     # Текущее местоположение
+    current_region = Column(String(100), nullable=True)
+    current_country = Column(String(100), nullable=True)
+    current_timezone = Column(String(50), nullable=True)
     current_city = Column(String(100), nullable=True)
     current_lat = Column(DECIMAL(9, 6), nullable=True)
     current_lng = Column(DECIMAL(9, 6), nullable=True)
@@ -256,7 +262,17 @@ class UserProfile(Base):
         ),
         Index('idx_profiles_birth_date', 'birth_date'),
         Index('idx_profiles_birth_city_trgm', 'birth_city', postgresql_using='gin',
-              postgresql_ops={'birth_city': 'gin_trgm_ops'})
+              postgresql_ops={'birth_city': 'gin_trgm_ops'}),
+        # Индекс для поиска по региону
+        Index('idx_profiles_birth_region_trgm', 'birth_region',
+              postgresql_using='gin', postgresql_ops={'birth_region': 'gin_trgm_ops'}),
+
+        # Индекс для поиска по полному названию
+        Index('idx_profiles_birth_display_name_trgm', 'birth_display_name',
+              postgresql_using='gin', postgresql_ops={'birth_display_name': 'gin_trgm_ops'}),
+
+        # Составной индекс для геопоиска
+        Index('idx_profiles_geo_lookup', 'birth_city', 'birth_region', 'birth_country_code'),
     )
 
     # Relationship
@@ -288,6 +304,9 @@ class NatalChart(Base):
     calculation_time_ms = Column(Integer, nullable=True)
 
     # Географические данные
+    region_name = Column(String(100), nullable=True)
+    country_name = Column(String(100), nullable=True)
+    display_name = Column(String(100), nullable=True)
     city_name = Column(String(100), nullable=False)
     birth_lat = Column(DECIMAL(9, 6), nullable=False)
     birth_lng = Column(DECIMAL(9, 6), nullable=False)
@@ -382,7 +401,7 @@ class NatalChart(Base):
             name='ck_natal_status'
         ),
         CheckConstraint(
-            "geocoder_source IN ('manual','memory_cache','db_cache','api','nominatim','google','yandex')",
+            "geocoder_source IN ('manual','memory_cache','db_cache','api','nominatim','google','yandex','structured','transliteration','major_city')",
             name='ck_natal_geocoder_source'
         ),
         CheckConstraint(
@@ -391,6 +410,17 @@ class NatalChart(Base):
         ),
 
         # Индексы
+        # Индекс для поиска по региону
+        Index('idx_natal_region_name_trgm', 'region_name',
+              postgresql_using='gin', postgresql_ops={'region_name': 'gin_trgm_ops'}),
+
+        # Индекс для поиска по стране
+        Index('idx_natal_country_name_trgm', 'country_name',
+              postgresql_using='gin', postgresql_ops={'country_name': 'gin_trgm_ops'}),
+
+        # Индекс для поиска по полному названию
+        Index('idx_natal_display_name_trgm', 'display_name',
+              postgresql_using='gin', postgresql_ops={'display_name': 'gin_trgm_ops'}),
         Index('idx_natal_planets_gin', 'planets', postgresql_using='gin'),
         Index('idx_natal_panchanga_gin', 'panchanga', postgresql_using='gin'),
         Index('idx_natal_arabic_parts_gin', 'arabic_parts', postgresql_using='gin'),

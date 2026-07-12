@@ -309,6 +309,133 @@
             flex: 1;
             border-bottom: 1px solid #e0e0e0;
         }
+        /* ===== СОГЛАСИЕ НА ПЕРСОНАЛЬНЫЕ ДАННЫЕ ===== */
+        .consent-block {
+            margin: 20px 0 15px;
+            padding: 16px 20px;
+            background: #f8f9fc;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+            text-align: left;
+            width: 100%;
+            transition: background 0.3s ease;
+        }
+
+        .consent-block:hover {
+            background: #f0f3ff;
+        }
+
+        .consent-checkbox {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #1a1a2e;
+        }
+
+        .consent-checkbox input[type="checkbox"] {
+            display: none;
+        }
+
+        .checkmark {
+            min-width: 20px;
+            height: 20px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 6px;
+            display: inline-block;
+            position: relative;
+            margin-top: 2px;
+            transition: 0.2s;
+            flex-shrink: 0;
+        }
+
+        .consent-checkbox input:checked + .checkmark {
+            background: #667eea;
+            border-color: #667eea;
+        }
+
+        .consent-checkbox input:checked + .checkmark::after {
+            content: "✓";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .consent-text {
+            color: #2d2d44;
+            font-size: 13px;
+        }
+
+        .consent-text a {
+            color: #667eea;
+            text-decoration: underline;
+            font-weight: 500;
+        }
+
+        .consent-text a:hover {
+            color: #5a6fd6;
+        }
+
+        .consent-text small {
+            display: block;
+            margin-top: 6px;
+            color: #6b6b83;
+            font-size: 12px;
+        }
+
+        /* Кнопка Яндекс в disabled состоянии */
+        .yandex-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .yandex-btn:not(:disabled):hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(252, 63, 29, 0.3);
+        }
+
+        /* Юридическая заметка */
+        .legal-note {
+            font-size: 12px;
+            color: #6b6b83;
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .legal-note a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        .legal-note a:hover {
+            text-decoration: underline;
+        }
+
+        /* Анимация появления */
+        .consent-block {
+            animation: fadeInUp 0.4s ease;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
     </style>
     {% endblock %}
 </head>

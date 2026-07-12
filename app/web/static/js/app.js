@@ -895,6 +895,71 @@ if (document.readyState === 'loading') {
     initApp();
 }
 
+// ========== СОГЛАСИЕ НА ПЕРСОНАЛЬНЫЕ ДАННЫЕ ==========
+
+function initConsentCheckbox() {
+    const checkbox = document.getElementById('consent-checkbox');
+    const loginBtn = document.getElementById('yandex-login-btn');
+
+    if (!checkbox || !loginBtn) {
+        console.warn('Consent elements not found');
+        return;
+    }
+
+    // Восстановление состояния из localStorage
+    const consentGiven = localStorage.getItem('consent_given') === 'true';
+    if (consentGiven) {
+        checkbox.checked = true;
+        loginBtn.disabled = false;
+    }
+
+    // Обработчик изменения чекбокса
+    checkbox.addEventListener('change', function() {
+        const isChecked = this.checked;
+        loginBtn.disabled = !isChecked;
+        
+        if (isChecked) {
+            localStorage.setItem('consent_given', 'true');
+            showToast('✅ Согласие принято', 'success');
+        } else {
+            localStorage.removeItem('consent_given');
+            showToast('⚠️ Согласие отозвано', 'warning');
+        }
+    });
+
+    // Блокировка клика по неактивной кнопке
+    loginBtn.addEventListener('click', function(e) {
+        if (this.disabled) {
+            e.preventDefault();
+            e.stopPropagation();
+            showToast('Пожалуйста, дайте согласие на обработку персональных данных', 'warning');
+            checkbox.focus();
+            
+            // Визуальная подсветка блока
+            const block = document.querySelector('.consent-block');
+            if (block) {
+                block.style.borderLeftColor = '#ff6b6b';
+                block.style.transition = 'border-left-color 0.3s ease';
+                setTimeout(() => {
+                    block.style.borderLeftColor = '#667eea';
+                }, 1500);
+            }
+            return false;
+        }
+        return true;
+    }, true);
+
+    console.log('✅ Consent checkbox initialized');
+}
+
+// Инициализация после загрузки DOM
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(initConsentCheckbox, 100);
+});
+
+// Экспорт для использования в других местах
+window.initConsentCheckbox = initConsentCheckbox;
+
 // Экспортируем функции для использования в HTML
 window.showToast = showToast;
 window.toggleAuthType = toggleAuthType;

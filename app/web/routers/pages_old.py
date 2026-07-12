@@ -1,3 +1,4 @@
+# web/routers/pages.py
 import os
 import logging
 from fastapi import APIRouter, Request
@@ -13,11 +14,24 @@ templates = Jinja2Templates(directory="web/templates")
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Главная страница"""
+    #logger.info("=" * 60)
+    #logger.info("🔵 PAGE: INDEX")
+    #logger.info(f"📥 Request cookies: {request.cookies}")
+    #logger.info(f"📥 Request headers: {dict(request.headers)}")
+
     user_authenticated = request.cookies.get("user_authenticated") == "true"
     user_platform = request.cookies.get("user_platform")
     user_platform_id = request.cookies.get("user_platform_id")
     user_name = request.cookies.get("user_name")
     user_email = request.cookies.get("user_email")
+
+    #logger.info(f"📊 Cookies parsed:")
+    #logger.info(f"   - user_authenticated: {user_authenticated}")
+    #logger.info(f"   - user_platform: {user_platform}")
+    #logger.info(f"   - user_platform_id: {user_platform_id}")
+    #logger.info(f"   - user_name: {user_name}")
+    #logger.info(f"   - user_email: {user_email}")
+    #logger.info("=" * 60)
 
     # Определяем отображаемое имя
     display_name = user_name
@@ -46,25 +60,14 @@ async def index(request: Request):
 
 @router.get("/health")
 async def health():
-    """Проверка здоровья сервиса"""
     return {"status": "ok"}
-
-
-# ========== СТРАНИЦЫ ПОЛИТИКИ И УСЛОВИЙ ==========
-
-@router.get("/privacy-policy", response_class=HTMLResponse)
-async def privacy_policy(request: Request):
+    
+@app.route('/privacy-policy')
+def privacy_policy():
     """Страница политики конфиденциальности"""
-    context = {
-        "request": request,
-    }
-    return templates.TemplateResponse("privacy_policy.html", context)
+    return render_template('privacy_policy.html')
 
-
-@router.get("/terms", response_class=HTMLResponse)
-async def terms(request: Request):
+@app.route('/terms')
+def terms():
     """Страница условий использования"""
-    context = {
-        "request": request,
-    }
-    return templates.TemplateResponse("terms.html", context)
+    return render_template('terms.html')

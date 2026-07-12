@@ -62,12 +62,57 @@ app.add_middleware(
 # Pydantic модели
 class UserProfileCreate(BaseModel):
     model_config = ConfigDict(repr=False)
-    birth_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    birth_time: str = Field(..., pattern=r"^\d{2}:\d{2}$")
-    birth_city: str
-    current_city: Optional[str] = None
-    profession: Optional[str] = None
-    job_position: Optional[str] = None
+
+    birth_date: str = Field(
+        ...,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Дата рождения в формате YYYY-MM-DD"
+    )
+    birth_time: str = Field(
+        ...,
+        pattern=r"^\d{2}:\d{2}$",
+        description="Время рождения в формате HH:MM"
+    )
+    birth_city: str = Field(
+        ...,
+        max_length=100,
+        description="Город рождения"
+    )
+    birth_region: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Регион/область рождения"
+    )
+    birth_country: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Страна рождения"
+    )
+    current_city: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Текущий город"
+    )
+    current_region: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Текущий регион"
+    )
+    current_country: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Текущая страна"
+    )
+    profession: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Профессия"
+    )
+    job_position: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Должность"
+    )
 
 class PlatformUserRequest(BaseModel):
     model_config = ConfigDict(repr=False)

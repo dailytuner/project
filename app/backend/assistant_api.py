@@ -342,7 +342,9 @@ async def save_user_profile(
     created, user, user_profile = await user_service.create_or_update_full_profile(
         platform=request.platform, platform_user_id=request.platform_user_id,
         birth_date=profile.birth_date, birth_time=profile.birth_time,
-        birth_city=profile.birth_city, current_city=profile.current_city,
+        birth_region=profile.birth_region, birth_country=profile.birth_country,
+        birth_city=profile.birth_city, current_region=profile.current_region,
+        current_country=profile.current_country, current_city=profile.current_city,
         profession=profile.profession, job_position=profile.job_position
     )
     

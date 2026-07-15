@@ -74,14 +74,17 @@ class UserService:
 
     async def create_or_update_full_profile(
             self,
-            platform: AuthPlatform,  # ✅ AuthPlatform
+            platform: AuthPlatform,
             platform_user_id: str,
             birth_date: str,
             birth_time: str,
             birth_city: str,
-            birth_country: str = "Russia",
-            profession: Optional[str] = None,
+            birth_region: Optional[str] = None,
+            birth_country: Optional[str] = None,
             current_city: Optional[str] = None,
+            current_region: Optional[str] = None,
+            current_country: Optional[str] = None,
+            profession: Optional[str] = None,
             job_position: Optional[str] = None,
             session: Optional[AsyncSession] = None
     ) -> Tuple[bool, User, UserProfile]:
@@ -105,9 +108,12 @@ class UserService:
                 profile.birth_date = birth_date_obj
                 profile.birth_time = birth_time_obj
                 profile.birth_city = birth_city
-                profile.birth_country = birth_country
-                profile.profession = profession or profile.profession
+                profile.birth_region = birth_region or profile.birth_region
+                profile.birth_country = birth_country or profile.birth_country
                 profile.current_city = current_city or profile.current_city
+                profile.current_region = current_region or profile.current_region
+                profile.current_country = current_country or profile.current_country
+                profile.profession = profession or profile.profession
                 profile.job_position = job_position or profile.job_position
                 #profile.updated_at = datetime.utcnow()
                 profile.updated_at = datetime.now(timezone.utc)
@@ -119,52 +125,136 @@ class UserService:
                     birth_date=birth_date_obj,
                     birth_time=birth_time_obj,
                     birth_city=birth_city,
-                    birth_country=birth_country,
-                    profession=profession,
+                    birth_region=birth_region,
+                    birth_country=birth_country or "Russia",
                     current_city=current_city,
+                    current_region=current_region,
+                    current_country=current_country,
+                    profession=profession,
                     job_position=job_position
                 )
                 db_session.add(profile)
                 created = True
 
             # Геокодирование
-            if created or not profile.birth_lat:
-                await self._geocode_and_update_profile(profile, db_session)
+            # Геокодирование места рождения
+            city_changed = (
+                    created or
+                    profile.birth_city != birth_city or
+                    profile.birth_region != birth_region or
+                    profile.birth_country != birth_country
+            )
 
-            #logger.info(f"{'🆕 Создан' if created else '📝 Обновлен'} профиль {platform}:{platform_user_id}")
+            if city_changed and birth_city:
+                await self._geocode_and_update_profile(
+                    profile,
+                    city=birth_city,
+                    region=birth_region,
+                    country=birth_country
+                )
+
+            # Геокодирование текущего местоположения
+            if current_city and (created or profile.current_city != current_city):
+                await self._geocode_and_update_current_location(
+                    profile,
+                    city=current_city,
+                    region=current_region,
+                    country=current_country
+                )
+
+            logger.info(f"{'🆕 Создан' if created else '📝 Обновлен'} профиль {platform}:{platform_user_id}")
             await db_session.commit()
             return (created, user, profile)
 
     async def _geocode_and_update_profile(
-        self,
-        profile: UserProfile,
-        session: AsyncSession
-    ):
-        """Геокодирование города и обновление координат"""
-        try:
-            if not profile.birth_city or not self.geocoder:
-                return
-            
-            coords = await self.geocoder.geocode(
-                profile.birth_city,
-                country_code=profile.birth_country_code
-            )
-            
-            if coords:
-                profile.birth_lat = float(coords.lat) if coords.lat else None
-                profile.birth_lng = float(coords.lon) if coords.lon else None
-                profile.birth_timezone = coords.timezone
-                profile.birth_country_code = coords.country_code
-                
-                logger.info(
-                    f"Геокодирован город {profile.birth_city}: "
-                    f"lat={profile.birth_lat}, lng={profile.birth_lng}"
-                )
-            else:
-                logger.warning(f"Не удалось геокодировать город: {profile.birth_city}")
-                
-        except Exception as e:
-            logger.error(f"Ошибка геокодирования для {profile.birth_city}: {e}")
+            self,
+            profile: UserProfile,
+            city: str,
+            region: Optional[str] = None,
+            country: Optional[str] = None
+    ) -> None:
+        """Геокодирование с использованием структурированного поиска"""
+
+        if not city:
+            return
+
+        # Структурированный поиск
+        coords = await self.geocoder.geocode(
+            city=city,
+            region=region,
+            country=country
+        )
+
+        # Fallback: если не найдено, пробуем только город
+        if not coords:
+            coords = await self.geocoder.geocode(city=city)
+
+        if coords:
+            # Сохраняем все данные
+            profile.birth_lat = coords.lat
+            profile.birth_lng = coords.lon
+            profile.birth_timezone = coords.timezone
+            profile.birth_country_code = coords.country_code
+
+            # Дополнительные поля
+            if not profile.birth_country and coords.country_code:
+                # Безопасное извлечение страны из display_name
+                parts = coords.display_name.split(',')
+                profile.birth_country = parts[-1].strip() if parts else coords.country_code
+
+            if coords.region:
+                profile.birth_region = coords.region
+
+            profile.birth_display_name = coords.display_name
+            profile.birth_geocoder_data = {
+                'importance': coords.importance,
+                'display_name': coords.display_name,
+                'country_code': coords.country_code,
+                'timezone': coords.timezone,
+                'region': coords.region,
+                'city': coords.city,
+                'lat': coords.lat,
+                'lon': coords.lon,
+                'source': 'geocoder_api'
+            }
+
+            logger.info(f"✅ Геокодирован: {city} → {coords.lat:.4f}, {coords.lon:.4f}")
+        else:
+            logger.warning(f"❌ Не удалось найти координаты для: {city}")
+
+    async def _geocode_and_update_current_location(
+            self,
+            profile: UserProfile,
+            city: str,
+            region: Optional[str] = None,
+            country: Optional[str] = None,
+            session: Optional[AsyncSession] = None
+    ) -> None:
+        """Геокодирование текущего местоположения"""
+
+        if not city:
+            return
+
+        coords = await self.geocoder.geocode(
+            city=city,
+            region=region,
+            country=country
+        )
+
+        if coords:
+            profile.current_lat = coords.lat
+            profile.current_lng = coords.lon
+            profile.current_timezone = coords.timezone
+
+            if not profile.current_country and coords.country_code:
+                profile.current_country = coords.display_name.split(',')[-1].strip()
+
+            if coords.region:
+                profile.current_region = coords.region
+
+            logger.info(f"✅ Текущее местоположение: {city} → {coords.lat:.4f}, {coords.lon:.4f}")
+        else:
+            logger.warning(f"❌ Не удалось найти текущее местоположение: {city}")
 
     async def validate_user_profile(
         self,
@@ -298,6 +388,12 @@ class UserService:
                         'system_language': profile.system_language,
                         'current_lat': float(profile.current_lat) if profile.current_lat else None,
                         'current_lng': float(profile.current_lng) if profile.current_lng else None,
+                        'birth_region': profile.birth_region,
+                        'birth_display_name': profile.birth_display_name,
+                        'birth_geocoder_data': profile.birth_geocoder_data,
+                        'current_region': profile.current_region,
+                        'current_country': profile.current_country,
+                        'current_timezone': profile.current_timezone,
                     })
 
                 return data
@@ -426,6 +522,12 @@ class UserService:
                         'system_language': profile.system_language,
                         'current_lat': float(profile.current_lat) if profile.current_lat else None,
                         'current_lng': float(profile.current_lng) if profile.current_lng else None,
+                        'birth_region': profile.birth_region,
+                        'birth_display_name': profile.birth_display_name,
+                        'birth_geocoder_data': profile.birth_geocoder_data,
+                        'current_region': profile.current_region,
+                        'current_country': profile.current_country,
+                        'current_timezone': profile.current_timezone,
                     })
 
                 return data

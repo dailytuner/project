@@ -9,13 +9,12 @@ from typing import Dict, List, Tuple, Any, Optional
 import json
 from .ephemeris_base import PlanetPosition, Aspect
 from .ephemeris_base import (
-    EphemerisCalculator, 
+    EphemerisCalculator,
     RawEphemeris,
     GeoCoordinates,
     get_ephemeris_calculator,
     ZODIAC_SIGNS
 )
-from .geocoder import AsyncCityGeocoder
 
 logger = logging.getLogger(__name__)
 
@@ -24,100 +23,35 @@ class NatalChartCalculator:
     """
     Калькулятор натальной карты, использующий EphemerisCalculator
     """
-    
+
     def __init__(
-        self,
-        ephemeris_calculator: Optional[EphemerisCalculator] = None,
-        geocoder: Optional[AsyncCityGeocoder] = None
+            self,
+            ephemeris_calculator: Optional[EphemerisCalculator] = None
     ):
         """
         Инициализация калькулятора
-        
+
         Args:
             ephemeris_calculator: Экземпляр EphemerisCalculator
-            geocoder: Экземпляр AsyncCityGeocoder
         """
         self.ephemeris = ephemeris_calculator
-        self.geocoder = geocoder
-        
-        # Кэш координат
-        self.coordinates_cache: Dict[str, GeoCoordinates] = {}
-        
+
         # ML-фичи будут рассчитываться на лету
         self.ml_features_enabled = True
-        
+
         logger.info("✅ NatalChartCalculator создан")
-    
+
     async def ensure_initialized(self):
         """Проверка инициализации компонентов"""
         if self.ephemeris is None:
             self.ephemeris = await get_ephemeris_calculator()
-        
-        if self.geocoder is None:
-            self.geocoder = AsyncCityGeocoder(
-                user_agent="NatalBot/1.0",
-                cache_db_path="/tmp/geocoder_cache.db"
-            )
-            await self.geocoder.initialize()
-    
-    async def get_city_coordinates(self, city_name: str) -> GeoCoordinates:
-        """
-        Получение координат города через геокодер
-        
-        Args:
-            city_name: Название города
-            
-        Returns:
-            GeoCoordinates с координатами
-        """
-        await self.ensure_initialized()
-        
-        cache_key = city_name.lower().strip()
-        
-        # Проверка кэша
-        if cache_key in self.coordinates_cache:
-            logger.debug(f"✅ Координаты из кэша: {city_name}")
-            return self.coordinates_cache[cache_key]
-        
-        try:
-            # Геокодирование
-            coords = await self.geocoder.geocode(city_name, country_code="ru")
-            
-            if coords and coords.lat is not None and coords.lon is not None:
-                geo = GeoCoordinates(
-                    lat=coords.lat,
-                    lon=coords.lon,
-                    timezone=coords.timezone,
-                    city=city_name,
-                    country=coords.country_code
-                )
-                
-                # Сохраняем в кэш
-                self.coordinates_cache[cache_key] = geo
-                logger.info(f"✅ Геокодирован: {city_name} → {coords.lat:.4f}, {coords.lon:.4f}")
-                return geo
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка геокодирования {city_name}: {e}")
-        
-        # Fallback на Москву
-        logger.warning(f"🗺️ Fallback Москва для {city_name}")
-        geo = GeoCoordinates(
-            lat=55.7558,
-            lon=37.6173,
-            timezone="Europe/Moscow",
-            city="Moscow",
-            country="RU"
-        )
-        self.coordinates_cache[cache_key] = geo
-        return geo
-    
+
     def _get_weekday(self, dt: datetime) -> str:
         """Получить день недели"""
-        weekdays = ['Monday', 'Tuesday', 'Wednesday', 
+        weekdays = ['Monday', 'Tuesday', 'Wednesday',
                     'Thursday', 'Friday', 'Saturday', 'Sunday']
         return weekdays[dt.weekday()]
-    
+
     def _get_weekday_ruler(self, weekday: str) -> str:
         """Получить управителя дня"""
         rulers = {
@@ -237,44 +171,10 @@ class NatalChartCalculator:
             'has_yod': bool(chart.patterns and chart.patterns.get('yod')) if chart.patterns else False,
             'has_t_square': bool(chart.patterns and chart.patterns.get('t_square')) if chart.patterns else False,
             'has_grand_trine': bool(chart.patterns and chart.patterns.get('grand_trine')) if chart.patterns else False,
-            'planet_strengths': planet_strengths,      # Новое
-            'retrograde_planets': retrograde_planets,  # Новое
+            'planet_strengths': planet_strengths,
+            'retrograde_planets': retrograde_planets,
             'avg_planet_strength': round(sum(planet_strengths.values()) / max(1, len(planet_strengths)), 4)
         }
-
-    async def calculate_batch_with_progress(
-            self,
-            charts_data: List[Tuple[str, datetime, Optional[str]]],
-            house_system: str = 'P',
-            include_heavy: bool = False,
-            progress_callback=None
-    ) -> List[Optional[Dict]]:
-        """
-        Пакетный расчет с прогрессом
-        """
-        results = []
-        total = len(charts_data)
-
-        for i, (city_name, dt, tz) in enumerate(charts_data):
-            try:
-                chart = await self.calculate_natal_chart(
-                    city_name=city_name,
-                    birth_datetime_local=dt,
-                    timezone_str=tz,
-                    house_system=house_system,
-                    include_all=True,
-                    include_heavy=include_heavy
-                )
-                results.append(chart)
-
-                if progress_callback:
-                    await progress_callback(i + 1, total, city_name)
-
-            except Exception as e:
-                logger.error(f"Batch error for {city_name}: {e}")
-                results.append(None)
-
-        return results
 
     def _calculate_planet_strength(self, planet) -> float:
         """
@@ -336,6 +236,7 @@ class NatalChartCalculator:
         return min(0.9, total_strength / len(planets_in_house))
 
     def _format_houses_for_db(self, chart: RawEphemeris) -> Dict:
+        """Форматирование домов для сохранения в БД"""
         # Предварительный расчет сил домов
         house_strengths = {}
         for num in range(1, 13):
@@ -384,11 +285,9 @@ class NatalChartCalculator:
         strength = 1.0 - min(1.0, orb / max_orb)
 
         return max(0.1, min(0.9, strength))
-    
+
     def _format_arabic_parts_for_db(self, chart: RawEphemeris) -> Dict:
-        """
-        Форматирование арабских частей для сохранения в БД
-        """
+        """Форматирование арабских частей для сохранения в БД"""
         parts = {}
         for name, part in chart.arabic_parts.items():
             parts[name] = {
@@ -397,11 +296,9 @@ class NatalChartCalculator:
                 'interpretation': part.interpretation
             }
         return parts
-    
+
     def _format_fixed_stars_for_db(self, chart: RawEphemeris) -> List[Dict]:
-        """
-        Форматирование неподвижных звезд для сохранения в БД
-        """
+        """Форматирование неподвижных звезд для сохранения в БД"""
         stars = []
         for star in chart.fixed_stars:
             star_data = {
@@ -412,23 +309,21 @@ class NatalChartCalculator:
                 'constellation': star.constellation,
                 'conjunctions': []
             }
-            
+
             for asp in star.aspects:
                 star_data['conjunctions'].append({
                     'planet': asp['planet'],
                     'orb': asp['orb']
                 })
-            
+
             stars.append(star_data)
         return stars
-    
+
     def _format_panchanga_for_db(self, chart: RawEphemeris) -> Dict:
-        """
-        Форматирование Panchanga для сохранения в БД
-        """
+        """Форматирование Panchanga для сохранения в БД"""
         if not chart.panchanga:
             return {}
-        
+
         return {
             'tithi': chart.panchanga.tithi,
             'tithi_name': chart.panchanga.tithi_name,
@@ -440,14 +335,12 @@ class NatalChartCalculator:
             'karana': chart.panchanga.karana,
             'karana_name': chart.panchanga.karana_name
         }
-    
+
     def _format_dasha_for_db(self, chart: RawEphemeris) -> Dict:
-        """
-        Форматирование Даши для сохранения в БД
-        """
+        """Форматирование Даши для сохранения в БД"""
         if not chart.dasha:
             return {}
-        
+
         def format_dasha_period(period):
             return {
                 'planet': period.planet,
@@ -456,54 +349,74 @@ class NatalChartCalculator:
                 'end_date': period.end_date.isoformat(),
                 'sub_periods': [format_dasha_period(sp) for sp in period.sub_periods]
             }
-        
+
         return format_dasha_period(chart.dasha)
 
     async def calculate_natal_chart(
             self,
-            city_name: str,
+            lat: float,
+            lon: float,
             birth_datetime_local: datetime,
-            timezone_str: Optional[str] = None,
+            timezone_str: str = 'Europe/Moscow',
+            city_name: Optional[str] = None,
+            country_code: Optional[str] = None,
+            region: Optional[str] = None,
             house_system: str = 'P',
-            include_all: bool = True,
-            include_heavy: bool = True  # ✅ Добавлен параметр
+            include_all: bool = False,
+            include_heavy: bool = False
     ) -> Dict[str, Any]:
-        """Основной метод расчета натальной карты"""
+        """
+        Расчет натальной карты по готовым координатам
+
+        Args:
+            lat: Широта (из профиля пользователя)
+            lon: Долгота (из профиля пользователя)
+            birth_datetime_local: Дата и время рождения (локальное)
+            timezone_str: Часовой пояс
+            city_name: Название города (только для информации)
+            country_code: Код страны (только для информации)
+            region: Регион (только для информации)
+            house_system: Система домов
+            include_all: Включить все расчеты
+            include_heavy: Включить тяжелые расчеты
+
+        Returns:
+            Словарь с данными натальной карты
+        """
         try:
-            logger.info(f"🔮 Расчет натальной карты для {city_name}")
+            logger.info(f"🔮 Расчет натальной карты для {city_name or f'({lat}, {lon})'}")
 
             # 1. Инициализация
             await self.ensure_initialized()
 
-            # 2. Получаем координаты
-            geo = await self.get_city_coordinates(city_name)
+            # 2. Проверка координат
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                raise ValueError(f"Invalid coordinates: lat={lat}, lon={lon}")
 
-            # 3. Используем переданную таймзону или из геоданных
-            tz = timezone_str or geo.timezone
-
-            # 4. Расчет эфемерид
+            # 3. Расчет эфемерид
             chart = await self.ephemeris.calculate(
                 dt=birth_datetime_local,
-                lat=geo.lat,
-                lon=geo.lon,
-                timezone=tz,
+                lat=lat,
+                lon=lon,
+                timezone=timezone_str,
                 hsys=house_system,
                 include_all=include_all,
                 include_heavy=include_heavy
             )
 
-            # 5. Определяем день недели и управителя
+            # 4. Определяем день недели и управителя
             weekday = self._get_weekday(birth_datetime_local)
             weekday_ruler = self._get_weekday_ruler(weekday)
 
-            # 6. Формируем результат для БД
+            # 5. Формируем результат для БД
             result = {
                 # Основные поля
                 'city_name': city_name,
-                'birth_lat': round(geo.lat, 6),
-                'birth_lng': round(geo.lon, 6),
-                'birth_timezone': tz,
-                'birth_country_code': geo.country,
+                'birth_lat': round(lat, 6),
+                'birth_lng': round(lon, 6),
+                'birth_timezone': timezone_str,
+                'birth_country_code': country_code,
+                'birth_region': region,  # ✅ Добавлен регион
                 'system_language': 'ru',
                 'geocoder_source': 'nominatim',
 
@@ -535,7 +448,7 @@ class NatalChartCalculator:
                 'calculation_status': 'success'
             }
 
-            # 7. Дополнительные данные (если запрошены)
+            # 6. Дополнительные данные (если запрошены)
             if include_all:
                 if chart.panchanga:
                     result['panchanga'] = self._format_panchanga_for_db(chart)
@@ -568,7 +481,7 @@ class NatalChartCalculator:
                 result['ml_features'] = self._calculate_ml_features(chart)
 
             logger.info(
-                f"✅ Натальная карта рассчитана: {city_name}, "
+                f"✅ Натальная карта рассчитана: {city_name or f'({lat}, {lon})'}, "
                 f"планет={len(chart.planets)}, аспектов={len(chart.aspects)}, "
                 f"время={chart.calculation_time:.2f}с"
             )
@@ -576,7 +489,7 @@ class NatalChartCalculator:
             return result
 
         except Exception as e:
-            logger.error(f"❌ Ошибка расчета натальной карты для {city_name}: {e}")
+            logger.error(f"❌ Ошибка расчета натальной карты: {e}")
             return {
                 'city_name': city_name,
                 'calculation_status': 'failed',
@@ -585,38 +498,55 @@ class NatalChartCalculator:
 
     async def calculate_jyotish_chart(
             self,
-            city_name: str,
+            lat: float,
+            lon: float,
             birth_datetime_local: datetime,
-            timezone_str: Optional[str] = None,
+            timezone_str: str = 'Europe/Moscow',
+            city_name: Optional[str] = None,
+            country_code: Optional[str] = None,
+            region: Optional[str] = None,
             house_system: str = 'P',
             include_heavy: bool = True
     ) -> Dict[str, Any]:
         """
         Расчет натальной карты в джйотиш системе (сидерической)
+
+        Args:
+            lat: Широта (из профиля пользователя)
+            lon: Долгота (из профиля пользователя)
+            birth_datetime_local: Дата и время рождения (локальное)
+            timezone_str: Часовой пояс
+            city_name: Название города (только для информации)
+            country_code: Код страны (только для информации)
+            region: Регион (только для информации)
+            house_system: Система домов
+            include_heavy: Включить тяжелые расчеты
         """
         try:
-            logger.info(f"🔮 Расчет джйотиш карты для {city_name}")
+            logger.info(f"🔮 Расчет джйотиш карты для {city_name or f'({lat}, {lon})'}")
 
             await self.ensure_initialized()
-            geo = await self.get_city_coordinates(city_name)
-            tz = timezone_str or geo.timezone
 
-            # Используем специальный метод для джйотиш с передачей include_heavy
+            # Используем специальный метод для джйотиш
             chart = await self.ephemeris.calculate_jyotish(
                 dt=birth_datetime_local,
-                lat=geo.lat,
-                lon=geo.lon,
-                timezone=tz,
+                lat=lat,
+                lon=lon,
+                timezone=timezone_str,
                 hsys=house_system,
                 include_all=True,
-                include_heavy=include_heavy  # ✅ Добавлено!
+                include_heavy=include_heavy
             )
 
-            # Формируем результат (аналогично обычной карте)
+            # Формируем результат (используем тот же метод, но с координатами)
             result = await self.calculate_natal_chart(
-                city_name=city_name,
+                lat=lat,
+                lon=lon,
                 birth_datetime_local=birth_datetime_local,
                 timezone_str=timezone_str,
+                city_name=city_name,
+                country_code=country_code,
+                region=region,
                 house_system=house_system,
                 include_all=True,
                 include_heavy=include_heavy
@@ -635,44 +565,85 @@ class NatalChartCalculator:
                 'calculation_status': 'failed',
                 'error_message': str(e)
             }
-            
-    
+
     async def calculate_batch(
-        self,
-        charts_data: List[Tuple[str, datetime, Optional[str]]],
-        house_system: str = 'P',
-        include_heavy: bool = False  # Для batch лучше выключить тяжелые расчеты
+            self,
+            charts_data: List[Tuple[float, float, datetime, Optional[str]]],
+            house_system: str = 'P',
+            include_heavy: bool = False
     ) -> List[Optional[Dict]]:
         """
         Пакетный расчет нескольких карт
-        
+
         Args:
-            charts_data: Список (city_name, datetime, timezone)
+            charts_data: Список (lat, lon, datetime, timezone)
             house_system: Система домов
             include_heavy: Включить тяжелые расчеты
-            
+
         Returns:
             Список результатов (None для ошибок)
         """
         results = []
-        
-        for city_name, dt, tz in charts_data:
+
+        for lat, lon, dt, tz in charts_data:
             try:
                 chart = await self.calculate_natal_chart(
-                    city_name=city_name,
+                    lat=lat,
+                    lon=lon,
                     birth_datetime_local=dt,
-                    timezone_str=tz,
+                    timezone_str=tz or 'Europe/Moscow',
                     house_system=house_system,
                     include_all=True,
                     include_heavy=include_heavy
                 )
                 results.append(chart)
             except Exception as e:
-                logger.error(f"Batch error for {city_name}: {e}")
+                logger.error(f"Batch error for ({lat}, {lon}): {e}")
                 results.append(None)
-        
+
         return results
-    
+
+    async def calculate_batch_with_progress(
+            self,
+            charts_data: List[Tuple[float, float, datetime, Optional[str]]],
+            house_system: str = 'P',
+            include_heavy: bool = False,
+            progress_callback=None
+    ) -> List[Optional[Dict]]:
+        """
+        Пакетный расчет с прогрессом
+
+        Args:
+            charts_data: Список (lat, lon, datetime, timezone)
+            house_system: Система домов
+            include_heavy: Включить тяжелые расчеты
+            progress_callback: Функция обратного вызова (completed, total, label)
+        """
+        results = []
+        total = len(charts_data)
+
+        for i, (lat, lon, dt, tz) in enumerate(charts_data):
+            try:
+                chart = await self.calculate_natal_chart(
+                    lat=lat,
+                    lon=lon,
+                    birth_datetime_local=dt,
+                    timezone_str=tz or 'Europe/Moscow',
+                    house_system=house_system,
+                    include_all=True,
+                    include_heavy=include_heavy
+                )
+                results.append(chart)
+
+                if progress_callback:
+                    await progress_callback(i + 1, total, f"({lat:.4f}, {lon:.4f})")
+
+            except Exception as e:
+                logger.error(f"Batch error for ({lat}, {lon}): {e}")
+                results.append(None)
+
+        return results
+
     def save_to_json(self, chart: Dict, filename: str) -> None:
         """
         Сохранение карты в JSON файл
@@ -683,24 +654,22 @@ class NatalChartCalculator:
             logger.info(f"💾 Карта сохранена в {filename}")
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения: {e}")
-    
+
     async def clear_cache(self):
         """Очистка кэшей"""
-        self.coordinates_cache.clear()
         if self.ephemeris:
             await self.ephemeris.cache.clear()
         logger.info("🧹 Кэши очищены")
-    
+
     async def get_metrics(self) -> Dict:
         """Получение метрик"""
         metrics = {
-            'coordinates_cache_size': len(self.coordinates_cache),
             'ml_features_enabled': self.ml_features_enabled
         }
-        
+
         if self.ephemeris:
             metrics['ephemeris'] = await self.ephemeris.get_metrics()
-        
+
         return metrics
 
 
@@ -710,39 +679,34 @@ _calculator_instance: Optional[NatalChartCalculator] = None
 
 
 async def get_natal_calculator(
-    ephemeris_calculator: Optional[EphemerisCalculator] = None,
-    geocoder: Optional[AsyncCityGeocoder] = None
+        ephemeris_calculator: Optional[EphemerisCalculator] = None
 ) -> NatalChartCalculator:
     """
     Получение глобального экземпляра калькулятора
-    
+
     Args:
         ephemeris_calculator: Экземпляр EphemerisCalculator
-        geocoder: Экземпляр AsyncCityGeocoder
-        
+
     Returns:
         Инициализированный NatalChartCalculator
     """
     global _calculator_instance
-    
+
     if _calculator_instance is None:
         _calculator_instance = NatalChartCalculator(
-            ephemeris_calculator=ephemeris_calculator,
-            geocoder=geocoder
+            ephemeris_calculator=ephemeris_calculator
         )
         await _calculator_instance.ensure_initialized()
         logger.info("✅ Глобальный экземпляр NatalChartCalculator создан")
-    
+
     return _calculator_instance
 
 
 async def cleanup_natal_calculator():
     """Очистка глобального экземпляра"""
     global _calculator_instance
-    
+
     if _calculator_instance:
         await _calculator_instance.clear_cache()
         _calculator_instance = None
         logger.info("✅ Глобальный экземпляр очищен")
-
-

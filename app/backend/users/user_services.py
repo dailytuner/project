@@ -12,10 +12,57 @@ from .users_queries import get_user_data_for_profile
 
 from ..database.core import async_session
 from ..database.models import User, UserProfile
-from ..calculators.geocoder import AsyncCityGeocoder
+from ..calculators.geocoder import AsyncCityGeocoder, HAS_TRANSLIT
 
 logger = logging.getLogger(__name__)
 
+COUNTRY_CODE_MAP = {
+    'Russia': 'RU',
+    'Россия': 'RU',
+    'Russian Federation': 'RU',
+    'Belarus': 'BY',
+    'Беларусь': 'BY',
+    'Belorussia': 'BY',
+    'Ukraine': 'UA',
+    'Украина': 'UA',
+    'Kazakhstan': 'KZ',
+    'Казахстан': 'KZ',
+    'Kazakstan': 'KZ',
+    'Kyrgyzstan': 'KG',
+    'Кыргызстан': 'KG',
+    'Kyrgyz Republic': 'KG',
+    'Armenia': 'AM',
+    'Армения': 'AM',
+    'Azerbaijan': 'AZ',
+    'Азербайджан': 'AZ',
+    'Georgia': 'GE',
+    'Грузия': 'GE',
+    'Moldova': 'MD',
+    'Молдова': 'MD',
+    'Tajikistan': 'TJ',
+    'Таджикистан': 'TJ',
+    'Turkmenistan': 'TM',
+    'Туркменистан': 'TM',
+    'Uzbekistan': 'UZ',
+    'Узбекистан': 'UZ',
+    # Европа
+    'Germany': 'DE',
+    'Германия': 'DE',
+    'Poland': 'PL',
+    'Польша': 'PL',
+    'France': 'FR',
+    'Франция': 'FR',
+    'Italy': 'IT',
+    'Италия': 'IT',
+    'Spain': 'ES',
+    'Испания': 'ES',
+    'United Kingdom': 'GB',
+    'Великобритания': 'GB',
+    'USA': 'US',
+    'США': 'US',
+    'United States': 'US',
+    # ... добавить другие страны по необходимости
+}
 
 class UserService:
     """Сервис для управления пользователями с полным циклом"""
@@ -74,12 +121,13 @@ class UserService:
 
     async def create_or_update_full_profile(
             self,
-            platform: AuthPlatform,  # ✅ AuthPlatform
+            platform: AuthPlatform,
             platform_user_id: str,
             birth_date: str,
             birth_time: str,
             birth_city: str,
             birth_country: str = "Russia",
+            birth_region: Optional[str] = None,
             profession: Optional[str] = None,
             current_city: Optional[str] = None,
             job_position: Optional[str] = None,
@@ -94,6 +142,17 @@ class UserService:
             # Получаем или создаем пользователя
             user = await self.get_or_create_user(platform, platform_user_id, db_session)
 
+            # ✅ Определяем country_code из birth_country
+            country_code = COUNTRY_CODE_MAP.get(birth_country)
+            if not country_code:
+                # Пробуем найти по частичному совпадению
+                for name, code in COUNTRY_CODE_MAP.items():
+                    if birth_country.lower() in name.lower() or name.lower() in birth_country.lower():
+                        country_code = code
+                        break
+                if not country_code:
+                    country_code = 'RU'  # Fallback
+
             # Получаем или создаем профиль
             result = await db_session.execute(
                 select(UserProfile).where(UserProfile.user_id == user.id)
@@ -105,11 +164,12 @@ class UserService:
                 profile.birth_date = birth_date_obj
                 profile.birth_time = birth_time_obj
                 profile.birth_city = birth_city
+                profile.birth_region = birth_region or profile.birth_region
                 profile.birth_country = birth_country
+                profile.birth_country_code = country_code  # ✅ Устанавливаем код
                 profile.profession = profession or profile.profession
                 profile.current_city = current_city or profile.current_city
                 profile.job_position = job_position or profile.job_position
-                #profile.updated_at = datetime.utcnow()
                 profile.updated_at = datetime.now(timezone.utc)
                 created = False
             else:
@@ -119,7 +179,9 @@ class UserService:
                     birth_date=birth_date_obj,
                     birth_time=birth_time_obj,
                     birth_city=birth_city,
+                    birth_region=birth_region,
                     birth_country=birth_country,
+                    birth_country_code=country_code,  # ✅ Устанавливаем код
                     profession=profession,
                     current_city=current_city,
                     job_position=job_position
@@ -127,44 +189,121 @@ class UserService:
                 db_session.add(profile)
                 created = True
 
-            # Геокодирование
+            # Геокодирование (теперь с правильным country_code)
             if created or not profile.birth_lat:
                 await self._geocode_and_update_profile(profile, db_session)
 
-            #logger.info(f"{'🆕 Создан' if created else '📝 Обновлен'} профиль {platform}:{platform_user_id}")
             await db_session.commit()
             return (created, user, profile)
-
     async def _geocode_and_update_profile(
-        self,
-        profile: UserProfile,
-        session: AsyncSession
+            self,
+            profile: UserProfile,
+            session: AsyncSession
     ):
-        """Геокодирование города и обновление координат"""
+        """Геокодирование с поддержкой региона и правильным определением страны"""
         try:
             if not profile.birth_city or not self.geocoder:
                 return
-            
-            coords = await self.geocoder.geocode(
-                profile.birth_city,
-                country_code=profile.birth_country_code
+
+            # ✅ 1. Определяем country_code
+            country_code = profile.birth_country_code
+
+            # ✅ 2. Если country_code не установлен - определяем по birth_country
+            if not country_code and profile.birth_country:
+                country_code = COUNTRY_CODE_MAP.get(profile.birth_country)
+                if country_code:
+                    profile.birth_country_code = country_code
+                    logger.info(f"📍 Определен country_code для '{profile.birth_country}': {country_code}")
+
+            # ✅ 3. Если все еще нет - используем RU как fallback
+            if not country_code:
+                country_code = 'RU'
+                profile.birth_country_code = 'RU'
+                logger.warning(f"⚠️ Не удалось определить country_code, используем RU по умолчанию")
+
+            # ✅ 4. Логируем запрос
+            logger.info(
+                f"🌍 Геокодирование: {profile.birth_city}, "
+                f"регион={profile.birth_region}, страна={country_code}"
             )
-            
-            if coords:
-                profile.birth_lat = float(coords.lat) if coords.lat else None
-                profile.birth_lng = float(coords.lon) if coords.lon else None
-                profile.birth_timezone = coords.timezone
-                profile.birth_country_code = coords.country_code
-                
-                logger.info(
-                    f"Геокодирован город {profile.birth_city}: "
-                    f"lat={profile.birth_lat}, lng={profile.birth_lng}"
+
+            # ✅ 5. Пробуем геокодировать с учетом региона и страны
+            coords = await self.geocoder.geocode(
+                city_name=profile.birth_city,
+                country_code=country_code,
+                region=profile.birth_region
+            )
+
+            # ✅ 6. Если не удалось - пробуем транслитерацию
+            if not coords and HAS_TRANSLIT:
+                try:
+                    from transliterate import translit
+                    translit_city = translit(profile.birth_city, 'ru', reversed=True)
+                    if translit_city != profile.birth_city:
+                        logger.info(f"🔄 Пробуем транслитерацию: {translit_city}")
+                        coords = await self.geocoder.geocode(
+                            city_name=translit_city,
+                            country_code=country_code,
+                            region=profile.birth_region
+                        )
+                except Exception as e:
+                    logger.debug(f"Транслитерация не удалась: {e}")
+
+            # ✅ 7. Если все еще не удалось - пробуем без региона
+            if not coords and profile.birth_region:
+                logger.info(f"🔄 Пробуем без региона: {profile.birth_city}")
+                coords = await self.geocoder.geocode(
+                    city_name=profile.birth_city,
+                    country_code=country_code,
+                    region=None
                 )
+
+            # ✅ 8. Сохраняем результат
+            if coords:
+                # Проверяем совпадение страны
+                if coords.country_code != country_code:
+                    logger.warning(
+                        f"⚠️ Страна не совпадает: ожидалась {country_code}, получена {coords.country_code}"
+                    )
+
+                    # Если страна не совпала, пробуем найти правильный вариант
+                    logger.info(f"🔄 Пробуем найти в правильной стране {country_code}")
+                    coords_correct = await self.geocoder.geocode(
+                        city_name=profile.birth_city,
+                        country_code=country_code,
+                        region=profile.birth_region,
+                        retry_attempts=3
+                    )
+                    if coords_correct:
+                        coords = coords_correct
+                        logger.info(f"✅ Найден правильный вариант в {country_code}")
+
+                if coords:
+                    profile.birth_lat = float(coords.lat)
+                    profile.birth_lng = float(coords.lon)
+                    profile.birth_timezone = coords.timezone
+                    profile.birth_country_code = coords.country_code
+
+                    # Сохраняем дополнительную информацию
+                    profile.geocoder_query = profile.birth_city
+                    profile.geocoder_full_name = coords.display_name
+                    profile.geocoder_source = 'nominatim'
+
+                    if hasattr(coords, 'region') and coords.region:
+                        profile.birth_region = coords.region
+
+                    logger.info(
+                        f"✅ Геокодирован {profile.birth_city}: "
+                        f"lat={profile.birth_lat:.6f}, lng={profile.birth_lng:.6f}, "
+                        f"страна={coords.country_code}, таймзона={coords.timezone}"
+                    )
+                else:
+                    logger.error(f"❌ Не удалось геокодировать {profile.birth_city} в стране {country_code}")
             else:
-                logger.warning(f"Не удалось геокодировать город: {profile.birth_city}")
-                
+                logger.warning(f"⚠️ Не удалось геокодировать: {profile.birth_city}")
+
         except Exception as e:
-            logger.error(f"Ошибка геокодирования для {profile.birth_city}: {e}")
+            logger.error(f"❌ Ошибка геокодирования: {e}", exc_info=True)
 
     async def validate_user_profile(
         self,

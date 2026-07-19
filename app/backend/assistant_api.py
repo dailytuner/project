@@ -65,6 +65,8 @@ class UserProfileCreate(BaseModel):
     birth_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     birth_time: str = Field(..., pattern=r"^\d{2}:\d{2}$")
     birth_city: str
+    birth_region: Optional[str] = None
+    birth_country: str = "Russia"
     current_city: Optional[str] = None
     profession: Optional[str] = None
     job_position: Optional[str] = None
@@ -298,6 +300,8 @@ async def save_user_profile(
         platform=request.platform, platform_user_id=request.platform_user_id,
         birth_date=profile.birth_date, birth_time=profile.birth_time,
         birth_city=profile.birth_city, current_city=profile.current_city,
+        birth_region=profile.birth_region,
+        birth_country=profile.birth_country,
         profession=profile.profession, job_position=profile.job_position
     )
     
@@ -357,39 +361,52 @@ async def _verify_calculations(user_id: int):
                 logger.error(f"❌ Пользователь {user_id} не найден")
                 return
 
-            #logger.info("=" * 60)
-            #logger.info(f"🔍 ПРОВЕРКА ДАННЫХ ДЛЯ user_id={user_id}")
+            logger.info("=" * 60)
+            logger.info(f"🔍 ПРОВЕРКА ДАННЫХ ДЛЯ user_id={user_id}")
 
-            # ✅ PsyhoMatrix (УЖЕ ПРАВИЛЬНО)
+            # ✅ Проверяем профиль и геоданные
+            profile = await session.get(UserProfile, user_id)
+            if profile:
+                logger.info(f"📋 Профиль: {profile.birth_city}, {profile.birth_date}")
+                logger.info(f"📍 Геоданные: lat={profile.birth_lat}, lng={profile.birth_lng}")
+                logger.info(f"📍 Регион: {profile.birth_region}")
+                logger.info(f"📍 Источник: {profile.geocoder_source}")
+            else:
+                logger.warning("⚠️ Профиль не найден")
+
+            # ✅ PsyhoMatrix
             matrix_result = await session.execute(
                 select(PsyhoMatrix).where(PsyhoMatrix.user_id == user_id)
             )
             matrix = matrix_result.scalars().first()
-            #logger.info(f"📊 PsyhoMatrix: {'✅ Есть' if matrix else '❌ НЕТ'}")
+            logger.info(f"📊 PsyhoMatrix: {'✅ Есть' if matrix else '❌ НЕТ'}")
             if matrix:
                 logger.info(f"   - first_number: {matrix.first_number}")
 
-            # ✅ BIORHYTHMS (ИСПРАВЛЕНО)
+            # ✅ BIORHYTHMS
             biorhythm_result = await session.execute(
                 select(Biorhythm).where(Biorhythm.user_id == user_id)
                 .order_by(Biorhythm.calculation_date.desc()).limit(1)
             )
-            biorhythm = biorhythm_result.scalars().first()  # ← ФИКС!
+            biorhythm = biorhythm_result.scalars().first()
             logger.info(f"🔄 Biorhythms: {'✅ Есть' if biorhythm else '❌ НЕТ'}")
             if biorhythm:
                 logger.info(f"   - date: {biorhythm.calculation_date}")
 
-            # ✅ NATAL CHART (ИСПРАВЛЕНО)
+            # ✅ NATAL CHART
             natal_result = await session.execute(
                 select(NatalChart).where(NatalChart.user_id == user_id)
                 .order_by(NatalChart.calculation_date.desc()).limit(1)
             )
-            natal = natal_result.scalars().first()  # ← ФИКС!
+            natal = natal_result.scalars().first()
             logger.info(f"🌟 Natal Chart: {'✅ Есть' if natal else '❌ НЕТ'}")
             if natal:
                 logger.info(f"   - date: {natal.calculation_date}")
+                logger.info(f"   - city: {natal.city_name}")
+                logger.info(f"   - region: {natal.birth_region}")
+                logger.info(f"   - source: {natal.geocoder_source}")
 
-            # ✅ MagicProfile (УЖЕ ПРАВИЛЬНО)
+            # ✅ MagicProfile
             magic_result = await session.execute(
                 select(MagicProfile).where(MagicProfile.user_id == user_id)
             )
@@ -397,9 +414,10 @@ async def _verify_calculations(user_id: int):
             magic = magic_row[0] if magic_row else None
             logger.info(f"✨ Magic Profile: {'✅ Есть' if magic else '❌ НЕТ'}")
 
+            logger.info("=" * 60)
+
     except Exception as e:
         logger.error(f"❌ Ошибка при проверке расчетов: {e}")
-
 
 
 async def _run_calculations(user_id: int):
@@ -418,7 +436,31 @@ async def _run_calculations(user_id: int):
                 logger.error(f"❌ Нет данных профиля для user_id={user_id}")
                 return
 
-            logger.info(f"📋 Профиль: {profile.birth_city}, {profile.birth_date}")
+            # ✅ Проверяем наличие геоданных
+            if not profile.birth_lat or not profile.birth_lng:
+                logger.error(
+                    f"❌ Нет геоданных для user_id={user_id}. "
+                    f"Город: {profile.birth_city}"
+                )
+                # Пробуем геокодировать заново
+                try:
+                    logger.info(f"🔄 Пробуем геокодировать {profile.birth_city}...")
+                    await user_service._geocode_and_update_profile(profile, session)
+                    await session.commit()
+                    # Перезагружаем профиль
+                    await session.refresh(profile)
+
+                    if not profile.birth_lat or not profile.birth_lng:
+                        logger.error(f"❌ Геокодирование не помогло для user_id={user_id}")
+                        return
+                except Exception as e:
+                    logger.error(f"❌ Ошибка геокодирования: {e}")
+                    return
+
+            logger.info(
+                f"📍 Геоданные: {profile.birth_city} "
+                f"({profile.birth_lat:.4f}, {profile.birth_lng:.4f})"
+            )
 
             # Подготавливаем задачи
             tasks = [
@@ -426,15 +468,15 @@ async def _run_calculations(user_id: int):
                 get_user_biorhythm_profile(user_id=user_id),
             ]
 
-            # Добавляем натальную карту, если есть время
+            # ✅ Добавляем натальную карту с координатами из профиля
             if profile.birth_time:
                 birth_datetime = datetime.combine(profile.birth_date, profile.birth_time)
                 tasks.append(
                     create_and_save_natal_chart(
                         user_id=user_id,
-                        city=profile.birth_city,
                         birth_datetime=birth_datetime,
                         timezone=profile.birth_timezone or 'Europe/Kaliningrad'
+                        # ✅ city больше не передаем - берется из профиля
                     )
                 )
 

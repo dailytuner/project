@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     -- Данные для расчётов
     birth_date DATE NOT NULL,
     birth_time TIME NOT NULL,
+    birth_region VARCHAR(100),
     birth_city VARCHAR(100) NOT NULL,
     birth_country VARCHAR(100) DEFAULT 'Russia',
     birth_lat DECIMAL(9,6),
@@ -294,6 +295,8 @@ CREATE TABLE IF NOT EXISTS natal_charts (
 
     -- Географические данные
     city_name VARCHAR(100) NOT NULL,
+    geocoder_query VARCHAR(200),
+    geocoder_full_name VARCHAR(255),
     birth_lat DECIMAL(9,6) NOT NULL,
     birth_lng DECIMAL(9,6) NOT NULL,
     birth_timezone VARCHAR(50) NOT NULL,

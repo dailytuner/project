@@ -97,9 +97,86 @@
 
         <label>⏰ Время рождения *</label>
         <input type="time" id="birth_time" required>
-
+        
+        <label>🌏 Страна</label>
+        <select id="birth_country">
+            <option value="">-- Выберите страну --</option>
+            <option value="Russia">Россия</option>
+            <option value="Ukraine">Украина</option>
+            <option value="Kazakhstan">Казахстан</option>
+            <option value="Belarus">Беларусь</option>
+            <option value="Georgia">Грузия</option>
+            <option value="Armenia">Армения</option>
+            <option value="Azerbaijan">Азербайджан</option>
+            <option value="Moldova">Молдова</option>
+            <option value="Kyrgyzstan">Кыргызстан</option>
+            <option value="Tajikistan">Таджикистан</option>
+            <option value="Turkmenistan">Туркменистан</option>
+            <option value="Uzbekistan">Узбекистан</option>
+            <option value="Turkey">Турция</option>
+            <option value="Germany">Германия</option>
+            <option value="USA">США</option>
+            <option value="United Kingdom">Великобритания</option>
+            <option value="France">Франция</option>
+            <option value="Italy">Италия</option>
+            <option value="Spain">Испания</option>
+            <option value="Portugal">Португалия</option>
+            <option value="Netherlands">Нидерланды</option>
+            <option value="Belgium">Бельгия</option>
+            <option value="Switzerland">Швейцария</option>
+            <option value="Austria">Австрия</option>
+            <option value="Sweden">Швеция</option>
+            <option value="Norway">Норвегия</option>
+            <option value="Denmark">Дания</option>
+            <option value="Finland">Финляндия</option>
+            <option value="Poland">Польша</option>
+            <option value="Czech Republic">Чехия</option>
+            <option value="Slovakia">Словакия</option>
+            <option value="Hungary">Венгрия</option>
+            <option value="Romania">Румыния</option>
+            <option value="Bulgaria">Болгария</option>
+            <option value="Greece">Греция</option>
+            <option value="Cyprus">Кипр</option>
+            <option value="Israel">Израиль</option>
+            <option value="UAE">ОАЭ</option>
+            <option value="Saudi Arabia">Саудовская Аравия</option>
+            <option value="India">Индия</option>
+            <option value="China">Китай</option>
+            <option value="Japan">Япония</option>
+            <option value="South Korea">Южная Корея</option>
+            <option value="Thailand">Таиланд</option>
+            <option value="Vietnam">Вьетнам</option>
+            <option value="Indonesia">Индонезия</option>
+            <option value="Australia">Австралия</option>
+            <option value="New Zealand">Новая Зеландия</option>
+            <option value="Canada">Канада</option>
+            <option value="Mexico">Мексика</option>
+            <option value="Brazil">Бразилия</option>
+            <option value="Argentina">Аргентина</option>
+            <option value="Chile">Чили</option>
+            <option value="Colombia">Колумбия</option>
+            <option value="Peru">Перу</option>
+            <option value="South Africa">ЮАР</option>
+            <option value="Egypt">Египет</option>
+            <option value="Morocco">Марокко</option>
+            <option value="Tunisia">Тунис</option>
+            <option value="Algeria">Алжир</option>
+            <option value="Nigeria">Нигерия</option>
+            <option value="Kenya">Кения</option>
+            <option value="Other">Другая</option>
+        </select>
+        
+        <label>🏛️ Регион/Область</label>
+        <input type="text" id="birth_region" placeholder="Например: Московская область или Moscow Oblast">
+        <small style="color: #666; font-size: 12px; display: block; margin-top: -15px; margin-bottom: 10px;">
+            Для точности поиска
+        </small>
+        
         <label>🌍 Город рождения *</label>
-        <input type="text" id="birth_city" placeholder="Например: Moscow" value="Moscow" required>
+        <input type="text" id="birth_city" placeholder="Например: Moscow или Москва" value="Moscow" required>
+        <small style="color: #666; font-size: 12px; display: block; margin-top: -15px; margin-bottom: 10px;">
+            Поддерживается кириллица и латиница
+        </small>
 
         <label>🏙️ Текущий город</label>
         <input type="text" id="current_city" placeholder="Необязательно">

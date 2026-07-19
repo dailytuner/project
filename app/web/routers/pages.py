@@ -39,6 +39,8 @@ async def index(request: Request):
         "user_platform_id": user_platform_id,
         "user_name": display_name,
         "yandex_oauth_enabled": yandex_oauth_enabled,
+        "user_birth_region": request.cookies.get("user_birth_region"),
+        "user_birth_country": request.cookies.get("user_birth_country"),
     }
 
     return templates.TemplateResponse("index.html", context)

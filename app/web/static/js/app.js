@@ -457,33 +457,59 @@ async function changePassword() {
  */
 async function loadProfile() {
     try {
-        // ✅ Сначала получаем значения
         const platform = currentPlatform || window.userPlatform;
         const userId = currentUserId || window.userPlatformId;
 
-        // ✅ Проверяем ДО запроса
         if (!platform || !userId) {
             console.warn('No platform or userId for loadProfile');
             return;
         }
 
-        // ✅ Теперь отправляем запрос с правильными значениями
         const response = await fetch(`/api/profile?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
         const result = await response.json();
 
         if (result.success && result.profile) {
             const p = result.profile;
+
+            // Основные поля
             const birthDateInput = document.getElementById('birth_date');
             const birthTimeInput = document.getElementById('birth_time');
             const birthCityInput = document.getElementById('birth_city');
             const currentCityInput = document.getElementById('current_city');
             const professionInput = document.getElementById('profession');
 
+            // Новые поля
+            const birthRegionInput = document.getElementById('birth_region');
+            const birthCountryInput = document.getElementById('birth_country');
+
             if (p.birth_date && birthDateInput) birthDateInput.value = p.birth_date;
             if (p.birth_time && birthTimeInput) birthTimeInput.value = p.birth_time.slice(0, 5);
             if (p.birth_city && birthCityInput) birthCityInput.value = p.birth_city;
             if (p.current_city && currentCityInput) currentCityInput.value = p.current_city;
             if (p.profession && professionInput) professionInput.value = p.profession;
+
+            if (p.birth_region && birthRegionInput) birthRegionInput.value = p.birth_region;
+            if (p.birth_country && birthCountryInput) {
+                // Находим нужную опцию по значению
+                const options = birthCountryInput.options;
+                let found = false;
+                for (let i = 0; i < options.length; i++) {
+                    if (options[i].value === p.birth_country) {
+                        birthCountryInput.selectedIndex = i;
+                        found = true;
+                        break;
+                    }
+                }
+                // Если не найдено, выбираем "Other"
+                if (!found) {
+                    for (let i = 0; i < options.length; i++) {
+                        if (options[i].value === 'Other') {
+                            birthCountryInput.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     } catch(e) {
         console.error('Load profile error:', e);
@@ -495,11 +521,9 @@ async function loadProfile() {
  * Сохранить профиль
  */
 async function saveProfile() {
-    // ✅ Сначала получаем значения
     const platform = currentPlatform || window.userPlatform;
     const userId = currentUserId || window.userPlatformId;
 
-    // ✅ Проверяем ДО запроса
     if (!platform || !userId) {
         showToast('Ошибка: пользователь не авторизован', 'error');
         return;
@@ -508,9 +532,15 @@ async function saveProfile() {
     const birthDate = document.getElementById('birth_date').value;
     const birthTime = document.getElementById('birth_time').value;
     const birthCity = document.getElementById('birth_city').value;
+    const birthCountry = document.getElementById('birth_country').value;
 
     if (!birthDate || !birthTime || !birthCity) {
         showToast('Заполните все обязательные поля', 'error');
+        return;
+    }
+
+    if (!birthCountry) {
+        showToast('Выберите страну рождения', 'error');
         return;
     }
 
@@ -521,6 +551,8 @@ async function saveProfile() {
         birth_date: birthDate,
         birth_time: birthTime,
         birth_city: birthCity,
+        birth_country: birthCountry,  // ← передаем код страны
+        birth_region: document.getElementById('birth_region').value || null,
         current_city: document.getElementById('current_city').value || null,
         profession: document.getElementById('profession').value || null
     };
@@ -544,8 +576,10 @@ async function saveProfile() {
         if (result.success) {
             resultDiv.innerHTML = '<div class="success">✅ Профиль сохранен! Расчеты запущены в фоне.</div>';
             showToast('Профиль успешно сохранен', 'success');
-            setTimeout(() => {
-                if (resultDiv) resultDiv.innerHTML = '';
+
+            setTimeout(async () => {
+                await loadProfile();
+                resultDiv.innerHTML = '';
             }, 3000);
         } else {
             const errorMsg = result.error || 'Неизвестная ошибка';

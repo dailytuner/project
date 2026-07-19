@@ -1,0 +1,348 @@
+Отличный вопрос! Вы абсолютно правы - есть дублирование логики, и это действительно может привести к путанице. Давайте разберемся, почему так сложилось и что с этим делать.
+
+## 🔍 Анализ дублирования вызовов geocoder
+
+### 1. **Где и когда вызывается geocoder**
+
+#### 1.1 В `user_services.py` (при создании/обновлении профиля)
+```python
+async def create_or_update_full_profile(...):
+    # ...
+    # Геокодирование при создании или обновлении профиля
+    if created or not profile.birth_lat:
+        await self._geocode_and_update_profile(profile, db_session)
+```
+
+**Когда:** При создании нового профиля или обновлении города
+**Цель:** Заполнить `UserProfile.birth_lat`, `birth_lng`, `birth_timezone`
+
+#### 1.2 В `natal_chart.py` (при расчете натальной карты)
+```python
+async def calculate_natal_chart(
+    self,
+    city_name: str,
+    birth_datetime_local: datetime,
+    timezone_str: str = 'Europe/Moscow',
+    ...
+):
+    # ...
+    coords = await self.geocoder.geocode(city_name, country_code="ru")
+```
+
+**Когда:** При расчете натальной карты
+**Цель:** Получить координаты для астрономических расчетов
+
+---
+
+### 2. **Почему так получилось (исторически)**
+
+Это классическая проблема "разрастания" в процессе разработки:
+
+1. **Изначально** - геокодер вызывался только в `natal_chart.py` для астрономических расчетов
+2. **Потом** - добавили `UserProfile` и решили хранить координаты в профиле
+3. **Но** - старый код в `natal_chart.py` остался "как резервный вариант"
+
+**Проблема:** 
+- Дублирование логики
+- Риск несоответствия данных
+- Лишние запросы к API
+- Сложность поддержки
+
+---
+
+### 3. **Текущая архитектура (неоптимальная)**
+
+```
+Пользователь создает профиль
+    ↓
+user_services.py → geocoder → сохраняет в UserProfile
+    ↓
+Пользователь запрашивает натальную карту
+    ↓
+natal_chart.py → geocoder (СНОВА!) → использует для расчетов
+```
+
+**Что не так:**
+- ✅ Координаты уже есть в `UserProfile`
+- ❌ Но `natal_chart.py` их не использует
+- ❌ Делает второй запрос к геокодеру
+
+---
+
+### 4. **Правильная архитектура (рекомендуемая)**
+
+```
+Пользователь создает профиль
+    ↓
+user_services.py → geocoder → сохраняет в UserProfile
+    ↓
+Пользователь запрашивает натальную карту
+    ↓
+natal_chart.py → читает координаты из UserProfile → использует для расчетов
+    ↓
+(НИКАКОГО ПОВТОРНОГО ГЕОКОДИРОВАНИЯ!)
+```
+
+---
+
+### 5. **Что нужно исправить**
+
+#### 5.1 Модифицировать `natal_chart.py`
+
+**Сейчас:**
+```python
+async def calculate_natal_chart(
+    self,
+    city_name: str,  # ❌ Не нужно
+    birth_datetime_local: datetime,
+    timezone_str: str = 'Europe/Moscow',
+    ...
+):
+    # ❌ Повторный геокодинг
+    coords = await self.geocoder.geocode(city_name, country_code="ru")
+    lat = coords.lat
+    lon = coords.lon
+```
+
+**Должно быть:**
+```python
+async def calculate_natal_chart(
+    self,
+    lat: float,  # ✅ Уже готовые координаты
+    lon: float,  # ✅ Уже готовые координаты
+    birth_datetime_local: datetime,
+    timezone_str: str = 'Europe/Moscow',
+    ...
+):
+    # Используем готовые координаты для расчетов
+    # Никакого геокодинга здесь!
+```
+
+#### 5.2 Модифицировать `natal_chart_service.py`
+
+**Сейчас:**
+```python
+async def create_and_save_natal_chart(
+    user_id: int,
+    city: str,  # ❌
+    birth_datetime: datetime,
+    timezone: str = 'Europe/Moscow',
+    ...
+):
+    natal_data = await calculator.calculate_natal_chart(
+        city_name=city,  # ❌
+        ...
+    )
+```
+
+**Должно быть:**
+```python
+async def create_and_save_natal_chart(
+    user_id: int,
+    birth_datetime: datetime,
+    session: AsyncSession,  # ✅ Чтобы читать профиль
+    ...
+):
+    # 1. Получаем профиль пользователя
+    profile = await session.get(UserProfile, user_id)
+    if not profile or not profile.birth_lat:
+        raise ValueError("No geodata for user")
+    
+    # 2. Используем готовые координаты
+    natal_data = await calculator.calculate_natal_chart(
+        lat=float(profile.birth_lat),  # ✅
+        lon=float(profile.birth_lng),  # ✅
+        timezone=profile.birth_timezone,
+        city_name=profile.birth_city,  # Для информации
+        ...
+    )
+```
+
+---
+
+### 6. **Полный план рефакторинга**
+
+#### 6.1 Изменить сигнатуру `calculate_natal_chart`
+
+```python
+# В calculators/natal_chart.py
+async def calculate_natal_chart(
+    self,
+    lat: float,              # ✅ Вместо city_name
+    lon: float,              # ✅ Вместо city_name
+    birth_datetime_local: datetime,
+    timezone_str: str = 'Europe/Moscow',
+    city_name: Optional[str] = None,  # Только для информации
+    country_code: Optional[str] = None,
+    house_system: str = 'P',
+    include_all: bool = False,
+    include_heavy: bool = False
+) -> Dict[str, Any]:
+    """
+    Расчет натальной карты по готовым координатам
+    """
+    # Проверка координат
+    if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+        raise ValueError(f"Invalid coordinates: {lat}, {lon}")
+    
+    # Астрономические расчеты с использованием lat/lon
+    # НЕТ ГЕОКОДИНГА!
+```
+
+#### 6.2 Изменить вызов в `natal_chart_service.py`
+
+```python
+# В services/chart_services.py
+async def create_and_save_natal_chart(
+    user_id: int,
+    birth_datetime: datetime,
+    timezone: Optional[str] = None,
+    house_system: str = 'P'
+) -> NatalChart:
+    """Создание натальной карты из данных профиля"""
+    
+    async with async_session() as session:
+        # 1. Получаем профиль
+        profile = await session.get(UserProfile, user_id)
+        if not profile:
+            raise ValueError(f"Profile not found for user {user_id}")
+        
+        # 2. Проверяем наличие геоданных
+        if not profile.birth_lat or not profile.birth_lng:
+            raise ValueError(f"No geodata for user {user_id}. Run geocoding first.")
+        
+        # 3. Используем координаты из профиля
+        calculator = await get_natal_calculator()
+        natal_data = await calculator.calculate_natal_chart(
+            lat=float(profile.birth_lat),
+            lon=float(profile.birth_lng),
+            birth_datetime_local=birth_datetime,
+            timezone_str=timezone or profile.birth_timezone or 'Europe/Moscow',
+            city_name=profile.birth_city,
+            country_code=profile.birth_country_code,
+            house_system=house_system,
+            include_all=True,
+            include_heavy=True
+        )
+        
+        # 4. Сохраняем карту
+        chart = NatalChart(user_id=user_id)
+        chart.birth_lat = profile.birth_lat
+        chart.birth_lng = profile.birth_lng
+        chart.birth_timezone = profile.birth_timezone
+        chart.birth_country_code = profile.birth_country_code
+        # ... остальное заполнение
+```
+
+#### 6.3 Добавить валидацию перед расчетом
+
+```python
+# Добавить метод в UserService
+async def ensure_geodata(
+    self,
+    user_id: int,
+    session: AsyncSession
+) -> bool:
+    """Проверка и принудительное обновление геоданных"""
+    profile = await session.get(UserProfile, user_id)
+    if not profile:
+        return False
+    
+    if not profile.birth_lat or not profile.birth_lng:
+        # Пробуем геокодировать заново
+        await self._geocode_and_update_profile(profile, session)
+        await session.commit()
+    
+    return bool(profile.birth_lat and profile.birth_lng)
+```
+
+#### 6.4 Обновить `_run_calculations` в `assistant_api.py`
+
+```python
+async def _run_calculations(user_id: int):
+    try:
+        async with async_session() as session:
+            # 1. Сначала проверяем геоданные
+            profile = await session.get(UserProfile, user_id)
+            if not profile or not profile.birth_lat:
+                logger.error(f"❌ Нет геоданных для user_id={user_id}")
+                return
+            
+            # 2. Теперь можно считать
+            tasks = [
+                calculate_and_save_psyho_matrix(user_id=user_id),
+                get_user_biorhythm_profile(user_id=user_id),
+            ]
+            
+            # 3. Натальная карта с использованием координат из профиля
+            if profile.birth_time:
+                birth_datetime = datetime.combine(profile.birth_date, profile.birth_time)
+                tasks.append(
+                    create_and_save_natal_chart(
+                        user_id=user_id,
+                        birth_datetime=birth_datetime,
+                        timezone=profile.birth_timezone or 'Europe/Kaliningrad'
+                    )
+                )
+            
+            await asyncio.gather(*tasks)
+```
+
+---
+
+### 7. **Преимущества рефакторинга**
+
+| Аспект | До | После |
+|--------|----|-----|
+| **Запросы к API** | 2 (профиль + карта) | 1 (только профиль) |
+| **Скорость** | Медленнее | Быстрее |
+| **Надежность** | Может быть рассинхрон | Всегда согласованы |
+| **Код** | Дублирование | DRY |
+| **Поддержка** | Сложнее | Проще |
+
+---
+
+### 8. **Миграционный план (поэтапно)**
+
+#### Этап 1: Подготовка (без изменения логики)
+- [ ] Добавить проверку наличия геоданных в `natal_chart`
+- [ ] Если нет - геокодировать, если есть - использовать
+
+#### Этап 2: Рефакторинг
+- [ ] Изменить сигнатуру `calculate_natal_chart`
+- [ ] Обновить `natal_chart_service.py`
+- [ ] Убрать вызов `geocoder` из `natal_chart.py`
+
+#### Этап 3: Очистка
+- [ ] Удалить неиспользуемые параметры
+- [ ] Обновить тесты
+- [ ] Обновить документацию
+
+---
+
+### 9. **Рекомендация**
+
+**Ваше наблюдение абсолютно верно.** Дублирование вызовов geocoder - это технический долг, который нужно исправить.
+
+**Предлагаю:**
+
+1. **Сначала** - внести изменения в геокодер (добавить регион, транслитерацию)
+2. **Потом** - провести рефакторинг, убрав дублирование
+3. **В итоге** - геокодер вызывается ТОЛЬКО в `user_services.py`, а `natal_chart.py` использует готовые координаты из БД
+
+Это сделает систему чище, быстрее и надежнее.
+
+---
+
+### 10. **Обновленный чеклист с учетом рефакторинга**
+
+Добавить пункты:
+
+- [ ] Изменить `calculate_natal_chart` - принимать координаты вместо города
+- [ ] Обновить `natal_chart_service.py` - читать координаты из профиля
+- [ ] Убрать `geocoder` из `natal_chart.py`
+- [ ] Добавить валидацию геоданных перед расчетом
+- [ ] Обновить тесты на новый интерфейс
+- [ ] Обновить документацию
+
+Это позволит избежать путаницы и сделает код более предсказуемым.

@@ -108,14 +108,22 @@ services:
     volumes:
       - ./scripts/backup-db.sh:/backup.sh:ro
       - ./backups:/backups
+      - ./logs:/var/log
     environment:
-      PGPASSWORD_FILE: /run/secrets/postgrespassword
+      - PGPASSWORD_FILE=/run/secrets/postgrespassword
     secrets:
       - postgrespassword
     networks:
       - pa-net
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-h", "postgres", "-U", "postgres" ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:

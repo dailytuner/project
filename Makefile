@@ -77,17 +77,98 @@ down:
 backup:
 	@echo "${GREEN}💾 Creating database backup...${RESET}"
 	mkdir -p backups
-	docker run --rm --network=container:pa-postgres \
-		-v $$(pwd)/backups:/backups \
-		postgres:15-alpine sh -c "
-			PGPASSWORD_FILE=/run/secrets/postgrespassword \
-			pg_dumpall -h localhost -U postgres --clean | gzip > /backups/full-$$(date +%Y%m%d).sql.gz &&
-			pg_dump -h localhost -U postgres personalassistant | gzip > /backups/personalassistant-$$(date +%Y%m%d).sql.gz &&
-			find /backups -name '*.sql.gz' -mtime +7 -delete
-		"
+	@docker exec pa-backup /backup.sh
 	@echo "${GREEN}✅ Backup completed:${RESET}"
 	@ls -lh backups/ | tail -3
 
+backup-force:
+	@echo "${GREEN}💾 Force backup with rotation check...${RESET}"
+	@docker exec pa-backup sh -c "/backup.sh && echo '✅ Force backup done'"
+	@ls -lh backups/*.sql.gz | tail -5
+
+check-backup:
+	@echo "${YELLOW}📊 Backup status:${RESET}"
+	@ls -lh backups/*.sql.gz | tail -5
+	@echo ""
+	@echo "${GREEN}💾 Backup sizes:${RESET}"
+	@du -sh backups/
+	@echo ""
+	@echo "${YELLOW}🗑️ Old backups (will be deleted):${RESET}"
+	@find backups -name "*.sql.gz" -mtime +7 -ls
+
+verify-backup:
+	@echo "${YELLOW}🔍 Verifying latest backup...${RESET}"
+	@LATEST=$$(ls -t backups/*.sql.gz | head -1); \
+	echo "Checking: $$LATEST"; \
+	gunzip -c $$LATEST | head -20 | grep -q "CREATE TABLE" && echo "${GREEN}✅ Backup valid${RESET}" || echo "${RED}❌ Backup corrupt${RESET}"
+
+# ============================================
+# ВОССТАНОВЛЕНИЕ
+# ============================================
+restore-list:
+	@echo "${YELLOW}📋 Available backups:${RESET}"
+	@ls -lh backups/*.sql.gz | awk '{print $9, "("$5")"}'
+
+restore-latest:
+	@echo "${YELLOW}🔄 Restoring latest backup...${RESET}"
+	@echo "⚠️  This will DROP all existing data!"
+	@read -p "Continue? (y/N): " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		LATEST=$$(ls -t backups/*.sql.gz | head -1); \
+		echo "Restoring from: $$LATEST"; \
+		PGPASSWORD=$$(cat docker-secrets/postgrespassword.txt) gunzip -c $$LATEST | \
+		docker exec -i pa-postgres psql -U postgres -d personalassistant; \
+		echo "${GREEN}✅ Restore completed${RESET}"; \
+	else \
+		echo "${RED}❌ Restore cancelled${RESET}"; \
+	fi
+
+restore-file:
+	@echo "${YELLOW}🔄 Restoring from specific backup...${RESET}"
+	@echo "Available backups:"
+	@ls -1 backups/*.sql.gz | nl
+	@read -p "Enter number: " num; \
+	FILE=$$(ls -1 backups/*.sql.gz | sed -n "$${num}p"); \
+	if [ -n "$$FILE" ]; then \
+		echo "Restoring from: $$FILE"; \
+		read -p "Continue? (y/N): " confirm; \
+		if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+			PGPASSWORD=$$(cat docker-secrets/postgrespassword.txt) gunzip -c $$FILE | \
+			docker exec -i pa-postgres psql -U postgres -d personalassistant; \
+			echo "${GREEN}✅ Restore completed${RESET}"; \
+		else \
+			echo "${RED}❌ Restore cancelled${RESET}"; \
+		fi; \
+	else \
+		echo "${RED}❌ Invalid selection${RESET}"; \
+	fi
+
+# Проверки
+validate:
+	@echo "${YELLOW}🔍 Validating infrastructure...${RESET}"
+	@docker compose ps --format "table {{.Names}}	{{.Status}}" || echo "${RED}❌ Services not running${RESET}"
+	@PGPASSWORD=$$(cat docker-secrets/postgrespassword.txt) psql -h localhost -U postgres -d personalassistant -tAc "SELECT COUNT(*) FROM pg_tables WHERE schemaname='public';" | grep -q "16" && echo "${GREEN}✅ 16+ tables OK${RESET}" || echo "${RED}❌ Tables missing${RESET}"
+	# Проверка бэкап-сервиса
+	@docker exec pa-backup pg_isready -h postgres -U postgres > /dev/null 2>&1 && echo "${GREEN}✅ Backup service connected${RESET}" || echo "${RED}❌ Backup service offline${RESET}"
+	# Проверка наличия бэкапов
+	@[ -f backups/$$(ls -t backups/*.sql.gz 2>/dev/null | head -1) ] && echo "${GREEN}✅ Recent backup found${RESET}" || echo "${YELLOW}⚠️  No backups found${RESET}"
+	@docker compose ps grafana | grep -q "Up" && echo "${GREEN}✅ Grafana: localhost:3000${RESET}" || echo "${YELLOW}⚠️  Grafana not ready${RESET}"
+	@curl -s http://localhost:8000/docs > /dev/null && echo "${GREEN}✅ FastAPI: localhost:8000${RESET}" || echo "${YELLOW}⚠️  FastAPI not ready${RESET}"
+monitor-backup:
+	@./scripts/backup-monitor.sh
+	@tail -5 logs/backup-monitor.log
+
+# ============================================
+# ПРОВЕРКА БЭКАПОВ
+# ============================================
+check-backup-system:
+	@echo "${GREEN}🧪 Running complete backup system check...${RESET}"
+	@./scripts/check-backup-system.sh
+
+check-backup-quick:
+	@echo "${GREEN}🧪 Quick backup check...${RESET}"
+	@./scripts/check-backup-system.sh 2>&1 | grep -E "(PASSED|FAILED|WARNING|ВСЕ ПРОВЕРКИ)"
+	
 # ============================================
 # 6. РОТАЦИЯ ПАРОЛЕЙ (еженедельно)
 # ============================================
@@ -107,7 +188,7 @@ rotate-secrets:
 	chmod 600 docker-secrets/*
 	
 	# Restart dependent services
-	docker compose restart postgres backend-api bot  # ← Обновить имя сервиса
+	docker compose restart postgres backend-api web-ui cron-backup  # ← Обновить имя сервиса
 	@echo "${GREEN}✅ Secrets rotated${RESET}"
 
 
@@ -200,3 +281,5 @@ help:
 	@echo "${YELLOW}Production schedule:${RESET}"
 	@echo "  03:00 daily  → make backup"
 	@echo "  04:00 Sunday → make rotate-secrets"
+	@echo "  restore    🔄 Restore from backup (select file)"
+	@echo "  restore-latest 🔄 Restore from latest backup"

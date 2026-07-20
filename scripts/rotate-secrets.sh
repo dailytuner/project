@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash rotate-secrets.sh
 echo "🔄 Rotating secrets..."
 
 # 1. Генерируем новый пароль

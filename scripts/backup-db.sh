@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh backup-db.sh
 DATE=$(date +%Y%m%d)
 BACKUP_DIR=/backups
 

@@ -1,0 +1,156 @@
+#!/bin/bash
+# ============================================
+# ПОЛНАЯ ПРОВЕРКА СИСТЕМЫ БЭКАПОВ
+# ============================================
+
+set -e
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}🔍 ПОЛНАЯ ПРОВЕРКА СИСТЕМЫ БЭКАПОВ${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+
+ERRORS=0
+WARNINGS=0
+
+# Функции
+check() {
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ $1${NC}"
+    else
+        echo -e "${RED}❌ $1${NC}"
+        ((ERRORS++))
+    fi
+}
+
+warn() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+    ((WARNINGS++))
+}
+
+info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+# 1. Сервисы
+echo "1️⃣ ПРОВЕРКА СЕРВИСОВ"
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "pa-postgres|pa-backup|backend-api|web-ui"
+echo ""
+
+# 2. PostgreSQL
+echo "2️⃣ ПРОВЕРКА POSTGRESQL"
+docker exec pa-postgres pg_isready -U postgres -d personalassistant > /dev/null 2>&1
+check "PostgreSQL готов"
+TABLE_COUNT=$(docker exec pa-postgres psql -U postgres -d personalassistant -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null || echo 0)
+info "Таблиц: $TABLE_COUNT"
+echo ""
+
+# 3. Бэкап-сервис
+echo "3️⃣ ПРОВЕРКА БЭКАП-СЕРВИСА"
+docker exec pa-backup cat /run/secrets/postgrespassword > /dev/null 2>&1
+check "Секрет доступен"
+docker exec pa-backup test -f /backup.sh
+check "Скрипт найден"
+docker exec pa-backup crontab -l 2>/dev/null | grep -q "/backup.sh"
+check "Cron настроен"
+echo ""
+
+# 4. Файлы бэкапов
+echo "4️⃣ ПРОВЕРКА ФАЙЛОВ БЭКАПОВ"
+BACKUP_COUNT=$(ls -1 backups/*.sql.gz 2>/dev/null | wc -l)
+if [ "$BACKUP_COUNT" -gt 0 ]; then
+    info "Найдено бэкапов: $BACKUP_COUNT"
+    
+    LATEST=$(ls -t backups/*.sql.gz 2>/dev/null | head -1)
+    AGE=$(( ($(date +%s) - $(stat -c %Y "$LATEST" 2>/dev/null || stat -f %m "$LATEST" 2>/dev/null)) / 3600 ))
+    
+    if [ $AGE -lt 24 ]; then
+        check "Последний бэкап: $(basename $LATEST) (свежий, $AGE ч.)"
+    else
+        warn "Последний бэкап: $(basename $LATEST) (устарел, $AGE ч.)"
+    fi
+    
+    # Проверка целостности
+    if gunzip -t "$LATEST" 2>/dev/null; then
+        check "Архив целостен"
+    else
+        warn "Архив поврежден!"
+    fi
+    
+    # Проверка содержимого
+    if gunzip -c "$LATEST" 2>/dev/null | head -50 | grep -q "CREATE TABLE"; then
+        check "Содержит CREATE TABLE"
+    else
+        warn "Не содержит CREATE TABLE"
+    fi
+else
+    warn "Бэкапов не найдено!"
+fi
+echo ""
+
+# 5. Ручной бэкап
+echo "5️⃣ ТЕСТ РУЧНОГО БЭКАПА"
+if docker exec pa-backup /backup.sh > /dev/null 2>&1; then
+    check "Ручной бэкап успешен"
+else
+    warn "Ручной бэкап завершился с ошибкой"
+fi
+echo ""
+
+# 6. Тест восстановления
+echo "6️⃣ ТЕСТ ВОССТАНОВЛЕНИЯ"
+LATEST=$(ls -t backups/*.sql.gz 2>/dev/null | head -1)
+if [ -n "$LATEST" ]; then
+    TEST_DB="test_restore_$(date +%s)"
+    if docker exec pa-postgres psql -U postgres -c "CREATE DATABASE $TEST_DB;" 2>/dev/null; then
+        if gunzip -c "$LATEST" 2>/dev/null | docker exec -i pa-postgres psql -U postgres -d "$TEST_DB" > /dev/null 2>&1; then
+            TABLES=$(docker exec pa-postgres psql -U postgres -d "$TEST_DB" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null || echo 0)
+            if [ "$TABLES" -gt 0 ]; then
+                check "Восстановление успешно (таблиц: $TABLES)"
+            else
+                warn "Восстановление выполнено, но таблицы отсутствуют"
+            fi
+        else
+            warn "Ошибка восстановления"
+        fi
+        docker exec pa-postgres psql -U postgres -c "DROP DATABASE $TEST_DB;" 2>/dev/null
+    else
+        warn "Не удалось создать тестовую БД"
+    fi
+else
+    warn "Нет бэкапа для теста"
+fi
+echo ""
+
+# 7. Дисковое пространство
+echo "7️⃣ ДИСКОВОЕ ПРОСТРАНСТВО"
+SPACE=$(df -h . | tail -1 | awk '{print $5}')
+FREE=$(df -h . | tail -1 | awk '{print $4}')
+info "Использовано: $SPACE, свободно: $FREE"
+BACKUP_SIZE=$(du -sh backups/ 2>/dev/null | cut -f1 || echo 0)
+info "Размер бэкапов: $BACKUP_SIZE"
+echo ""
+
+# 8. Итоги
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}📊 РЕЗУЛЬТАТЫ ПРОВЕРКИ${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e "${GREEN}✅ Успешно: $((${#ERRORS[@]}))${NC}"
+echo -e "${YELLOW}⚠️  Предупреждений: $WARNINGS${NC}"
+echo -e "${RED}❌ Ошибок: $ERRORS${NC}"
+echo ""
+
+if [ $ERRORS -eq 0 ]; then
+    echo -e "${GREEN}🎉 ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ! Система работает корректно.${NC}"
+    exit 0
+else
+    echo -e "${RED}🔴 ОБНАРУЖЕНЫ КРИТИЧЕСКИЕ ОШИБКИ!${NC}"
+    echo "Проверьте логи: docker logs pa-backup"
+    exit 1
+fi

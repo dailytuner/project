@@ -36,6 +36,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-restore:
+        condition: service_completed_successfully
     environment:
       - DATABASE_URL_FILE=/run/secrets/db-url  
     networks:

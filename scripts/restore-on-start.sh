@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash restore-on-start.sh
 # ============================================
 # АВТОМАТИЧЕСКОЕ ВОССТАНОВЛЕНИЕ БД ПРИ ЗАПУСКЕ
 # ============================================
@@ -217,7 +217,9 @@ echo -e "${BLUE}🔍 Проверка актуальности структур�
 # Проверяем наличие всех таблиц из init_db.sql
 if [ -f "$INIT_SCRIPT" ]; then
     # Извлекаем имена таблиц из init_db.sql
-    TABLES_IN_INIT=$(grep -i "CREATE TABLE IF NOT EXISTS" "$INIT_SCRIPT" | grep -oP 'CREATE TABLE IF NOT EXISTS \K\w+' | tr '\n' ' ')
+    #TABLES_IN_INIT=$(grep -i "CREATE TABLE IF NOT EXISTS" "$INIT_SCRIPT" | grep -oP 'CREATE TABLE IF NOT EXISTS \K\w+' | tr '\n' ' ')
+
+    TABLES_IN_INIT=$(grep -i "CREATE TABLE" "$INIT_SCRIPT" | sed -n 's/.*CREATE TABLE IF NOT EXISTS \([a-zA-Z0-9_]*\).*/\1/p' | tr '\n' ' ')
 
     NEED_UPDATE=false
     for TABLE in $TABLES_IN_INIT; do

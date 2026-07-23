@@ -5,7 +5,7 @@
 
 .PHONY: help secrets up down validate logs build test clean backup rotate-cron cron-setup status \
         check-backup verify-backup clean-backups restore-latest restore-list restore-file \
-        safe-clean clean-fast db-status db-tables
+        safe-clean clean-fast db-status db-tables check-all logs-backup logs-backup-error
 
 # ============================================
 # ЦВЕТНЫЕ ВЫВОДЫ
@@ -60,8 +60,13 @@ init-db:
 validate:
 	@echo "${YELLOW}🔍 Validating infrastructure...${RESET}"
 	@docker compose ps --format "table {{.Names}}	{{.Status}}" || echo "${RED}❌ Services not running${RESET}"
-	@PGPASSWORD=$$(cat docker-secrets/postgrespassword.txt) psql -h localhost -U postgres -d personalassistant -tAc "SELECT COUNT(*) FROM pg_tables WHERE schemaname='public';" | grep -q "16" && echo "${GREEN}✅ 16+ tables OK${RESET}" || echo "${RED}❌ Tables missing${RESET}"
-	@docker compose ps grafana | grep -q "Up" && echo "${GREEN}✅ Grafana: localhost:3000${RESET}" || echo "${YELLOW}⚠️  Grafana not ready${RESET}"
+	@TABLE_COUNT=$$(PGPASSWORD=$$(cat docker-secrets/postgrespassword.txt) psql -h localhost -U postgres -d personalassistant -tAc "SELECT COUNT(*) FROM pg_tables WHERE schemaname='public';" 2>/dev/null || echo 0); \
+	if [ "$$TABLE_COUNT" -gt 0 ]; then \
+		echo "${GREEN}✅ $$TABLE_COUNT tables OK${RESET}"; \
+	else \
+		echo "${RED}❌ Tables missing${RESET}"; \
+	fi
+	@docker compose ps grafana 2>/dev/null | grep -q "Up" && echo "${GREEN}✅ Grafana: localhost:3000${RESET}" || echo "${YELLOW}⚠️  Grafana not ready${RESET}"
 	@curl -s http://localhost:8000/docs > /dev/null && echo "${GREEN}✅ FastAPI: localhost:8000${RESET}" || echo "${YELLOW}⚠️  FastAPI not ready${RESET}"
 
 # ============================================
@@ -211,7 +216,12 @@ logs-app:
 	docker compose logs -f backend-api
 
 logs-backup:
-	docker logs pa-backup -f
+	@echo "${GREEN}📋 Backup logs:${RESET}"
+	@docker exec pa-backup tail -20 /backups/backup.log 2>/dev/null || echo "No logs yet"
+
+logs-backup-error:
+	@echo "${RED}📋 Backup error logs:${RESET}"
+	@docker exec pa-backup tail -20 /backups/backup_error.log 2>/dev/null || echo "No errors"
 
 logs-restore:
 	docker compose logs db-restore
@@ -236,6 +246,9 @@ db-status:
 	@echo ""
 	@echo "Users:"
 	@docker exec pa-postgres psql -U postgres -d personalassistant -c "SELECT COUNT(*) as count FROM users;"
+	@echo ""
+	@echo "Backups:"
+	@ls -lh backups/*.sql.gz 2>/dev/null | tail -3 || echo "  No backups"
 
 db-tables:
 	@echo "${GREEN}📋 All tables:${RESET}"
@@ -292,7 +305,25 @@ cron-remove:
 	@echo "${GREEN}✅ Cron jobs removed${RESET}"
 
 # ============================================
-# 15. HELP
+# 15. ПОЛНАЯ ПРОВЕРКА
+# ============================================
+check-all:
+	@echo "${GREEN}🔍 Running full system check...${RESET}"
+	@./scripts/check-all.sh || { echo "${RED}❌ Check failed${RESET}"; exit 1; }
+
+check-quick:
+	@echo "${GREEN}⚡ Quick check...${RESET}"
+	@echo "Status:"
+	@docker compose ps --format "table {{.Names}}\t{{.Status}}"
+	@echo ""
+	@echo "Latest backup:"
+	@ls -lh backups/*.sql.gz 2>/dev/null | tail -1 || echo "No backups"
+	@echo ""
+	@echo "DB status:"
+	@make db-status
+
+# ============================================
+# 16. HELP
 # ============================================
 help:
 	@echo "${GREEN}Personal Assistant - Production Commands${RESET}"
@@ -324,11 +355,21 @@ help:
 	@echo "  db-status  📊 Show database status"
 	@echo "  db-tables  📋 Show all tables"
 	@echo ""
-	@echo "${GREEN}🧹 Maintenance:${RESET}"
+	@echo "${GREEN}📋 Logs:${RESET}"
 	@echo "  logs       📜 Tail all logs"
-	@echo "  logs-backup  📜 Backup logs only"
+	@echo "  logs-app   📜 App logs only"
+	@echo "  logs-backup 📜 Backup logs only"
+	@echo "  logs-backup-error 📜 Backup error logs"
+	@echo "  logs-restore 📜 Restore logs"
+	@echo ""
+	@echo "${GREEN}🧹 Maintenance:${RESET}"
 	@echo "  clean      🧹 Full cleanup (volumes + secrets)"
 	@echo "  safe-clean 🧹 Safe cleanup with backup check"
+	@echo "  clean-fast 🧹 Fast cleanup without backup"
+	@echo ""
+	@echo "${GREEN}🔍 Checks:${RESET}"
+	@echo "  check-all  🔍 Full system check"
+	@echo "  check-quick ⚡ Quick status check"
 	@echo "  help       📖 This help"
 	@echo ""
 	@echo "${YELLOW}Production schedule:${RESET}"

@@ -130,6 +130,37 @@ services:
           cpus: '0.2'
           memory: 128M
 
+
+  db-restore:
+    image: postgres:15-alpine
+    container_name: pa-db-restore
+    command: >
+      sh -c "
+        echo '⏳ Waiting for postgres...' &&
+        sleep 10 &&
+        echo '🔄 Starting restore...' &&
+        sh /restore-on-start.sh
+      "
+    volumes:
+      - ./scripts/restore-on-start.sh:/restore-on-start.sh:ro
+      - ./initscripts:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups:ro
+    environment:
+      - PGPASSWORD_FILE=/run/secrets/postgrespassword
+    secrets:
+      - postgrespassword
+    networks:
+      - pa-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 volumes:
   pgdata: {}
   grafana_data: {}

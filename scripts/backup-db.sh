@@ -1,4 +1,6 @@
 #!/bin/sh
+LOG_DIR="/var/log/backup"
+mkdir -p $LOG_DIR
 exec 1> >(tee -a /backups/backup.log)
 exec 2> >(tee -a /backups/backup_error.log >&2)
 

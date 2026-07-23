@@ -110,7 +110,7 @@ services:
     volumes:
       - ./scripts/backup-db.sh:/backup.sh:ro
       - ./backups:/backups
-      - ./logs:/var/log
+      - ./logs:/var/log/backup
     environment:
       - PGPASSWORD_FILE=/run/secrets/postgrespassword
     secrets:

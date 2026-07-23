@@ -11,8 +11,8 @@ data/
 bot/.env
 
 # Резервные копии
-*.backup
-backup/
+*.backups
+backups/
 
 # Временные файлы
 tmp/

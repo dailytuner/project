@@ -217,11 +217,11 @@ logs-app:
 
 logs-backup:
 	@echo "${GREEN}📋 Backup logs:${RESET}"
-	@docker exec pa-backup tail -20 /backups/backup.log 2>/dev/null || echo "No logs yet"
+	@docker exec pa-backup tail -20 /logs/backup.log 2>/dev/null || echo "No logs yet"
 
 logs-backup-error:
 	@echo "${RED}📋 Backup error logs:${RESET}"
-	@docker exec pa-backup tail -20 /backups/backup_error.log 2>/dev/null || echo "No errors"
+	@docker exec pa-backup tail -20 /logs/backup_error.log 2>/dev/null || echo "No errors"
 
 logs-restore:
 	docker compose logs db-restore

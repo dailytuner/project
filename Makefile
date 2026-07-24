@@ -106,7 +106,7 @@ verify-backup:
 	@LATEST=$$(ls -t backups/*.sql.gz 2>/dev/null | head -1); \
 	if [ -n "$$LATEST" ]; then \
 		echo "Checking: $$LATEST"; \
-		if gunzip -c $$LATEST 2>/dev/null | head -50 | grep -q "CREATE TABLE"; then \
+		if gunzip -c $$LATEST 2>/dev/null | grep -q "CREATE TABLE"; then \
 			echo "${GREEN}✅ Backup is valid (contains CREATE TABLE)${RESET}"; \
 			COUNT=$$(gunzip -c $$LATEST 2>/dev/null | grep -c "CREATE TABLE" || echo 0); \
 			echo "Found $$COUNT tables in backup"; \
@@ -129,7 +129,17 @@ clean-backups:
 	else \
 		echo "${RED}❌ Cleanup cancelled${RESET}"; \
 	fi
-
+# Добавить
+check-backup-quick:
+	@echo "${GREEN}⚡ Quick backup check...${RESET}"
+	@echo "Status:"
+	@docker compose ps --format "table {{.Names}}\t{{.Status}}"
+	@echo ""
+	@echo "Latest backup:"
+	@ls -lh backups/*.sql.gz 2>/dev/null | tail -1 || echo "No backups"
+	@echo ""
+	@echo "DB status:"
+	@make db-status
 # ============================================
 # 7. ВОССТАНОВЛЕНИЕ
 # ============================================

@@ -333,6 +333,30 @@ check-quick:
 	@make db-status
 
 # ============================================
+# MONITORING
+# ============================================
+monitoring-up:
+	@echo "${GREEN}📊 Starting monitoring stack...${RESET}"
+	@docker compose up -d prometheus postgres-exporter grafana
+	@sleep 5
+	@echo "${GREEN}✅ Monitoring started${RESET}"
+	@echo "   Grafana: http://localhost:3001"
+	@echo "   Prometheus: http://localhost:9090"
+	@echo "   Password: $$(cat docker-secrets/grafana-password.txt)"
+
+monitoring-down:
+	@echo "${YELLOW}🛑 Stopping monitoring stack...${RESET}"
+	@docker compose stop prometheus postgres-exporter grafana
+	@echo "${GREEN}✅ Monitoring stopped${RESET}"
+
+monitoring-logs:
+	@docker compose logs -f prometheus postgres-exporter grafana
+
+grafana-pass:
+	@echo "${GREEN}🔐 Grafana password:${RESET}"
+	@cat docker-secrets/grafana-password.txt
+
+# ============================================
 # 16. HELP
 # ============================================
 help:

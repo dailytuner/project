@@ -184,6 +184,11 @@ services:
       - pa-net
     ports:
       - "127.0.0.1:9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cron-backup:
+        condition: service_started
     restart: unless-stopped
     deploy:
       resources:
@@ -206,6 +211,8 @@ services:
       postgres:
         condition: service_healthy
       prometheus:
+        condition: service_started
+      cron-backup:
         condition: service_started
     restart: unless-stopped
     deploy:

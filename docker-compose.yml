@@ -163,9 +163,95 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # PROMETHEUS - локальное хранение метрик
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: pa-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - pa-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
+  # PGWATCH2 - агент (в локальный Prometheus)
+  pgwatch2:
+    image: cybertec/pgwatch2:latest
+    container_name: pa-pgwatch2
+    environment:
+      - PW2_DB_HOST=postgres
+      - PW2_DB_PORT=5432
+      - PW2_DB_NAME=personalassistant
+      - PW2_DB_USER=postgres
+      - PW2_DB_PASSWORD_FILE=/run/secrets/postgrespassword
+
+      # Отправка в локальный Prometheus (не на десктоп!)
+      - PW2_USE_PUSH=1
+      - PW2_PUSH_URL=http://prometheus:9090/metrics/job/pgwatch2/instance/vps
+      - PW2_PUSH_INTERVAL=60
+
+      - PW2_PG_METRICS.cache_hit_ratio=5m
+      - PW2_PG_METRICS.table_bloat=15m
+      - PW2_PG_METRICS.index_bloat=15m
+      - PW2_PG_METRICS.slow_queries=5m
+      - PW2_PG_METRICS.stat_statements=1m
+      - PW2_PG_METRICS.connections=1m
+      - PW2_PG_METRICS.transactions=1m
+      - PW2_PG_METRICS.db_size=5m
+
+      - PW2_LOG_LEVEL=error
+    networks:
+      - pa-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - postgrespassword
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: pa-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana-password
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SERVER_HTTP_PORT=3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    secrets:
+      - grafana-password
+    networks:
+      - pa-net
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
 volumes:
   pgdata: {}
   grafana_data: {}
+  prometheus_data: {}
 
 secrets:
   postgrespassword:
@@ -186,6 +272,8 @@ secrets:
     file: ./docker-secrets/yandex-redirect-uri
   jwt-secret:
     file: ./docker-secrets/jwt-secret
+  grafana-password:
+    file: ./docker-secrets/grafana-password.txt
 
 networks:
   pa-net:

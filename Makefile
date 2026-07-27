@@ -25,12 +25,14 @@ secrets:
 	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24 > docker-secrets/postgrespassword.txt
 	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24 > docker-secrets/app_password.txt
 	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32 > docker-secrets/backend-api-key.txt
+	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 16 > docker-secrets/grafana-password.txt
 	PASS=$$(cat docker-secrets/postgrespassword.txt) && echo "postgresql+asyncpg://postgres:$${PASS}@postgres:5432/personalassistant" > docker-secrets/db-url.txt
 	chmod 600 docker-secrets/*
 	@echo "${GREEN}✅ Secrets created:${RESET}"
 	@echo "   Postgres: $$(cat docker-secrets/postgrespassword.txt | cut -c1-8)... "
 	@echo "   App role: $$(cat docker-secrets/app_password.txt | cut -c1-8)... "
-	@echo "   API Key:  $$(cat docker-secrets/backend-api-key.txt | cut -c1-8)... " 
+	@echo "   API Key:  $$(cat docker-secrets/backend-api-key.txt | cut -c1-8)... "
+	@echo "   Grafana:  $$(cat docker-secrets/grafana-password.txt | cut -c1-8)... "
 	@echo "   DB URL: $$(cat docker-secrets/db-url.txt | cut -c1-30)... "
 	
 # ============================================

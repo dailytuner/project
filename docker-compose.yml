@@ -163,9 +163,87 @@ services:
           cpus: '0.5'
           memory: 256M
 
+# ============================================
+# MONITORING
+# ============================================
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: pa-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--storage.tsdb.retention.size=2GB'
+      - '--web.enable-lifecycle'
+      - '--web.listen-address=0.0.0.0:9090'
+    volumes:
+      - ./config/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    networks:
+      - pa-net
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: pa-postgres-exporter
+    entrypoint: [ "/entrypoint.sh" ]
+    volumes:
+      - ./scripts/postgres-exporter-entrypoint.sh:/entrypoint.sh:ro
+    secrets:
+      - postgrespassword
+    networks:
+      - pa-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: pa-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana-password
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    secrets:
+      - grafana-password
+    networks:
+      - pa-net
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
 volumes:
   pgdata: {}
   grafana_data: {}
+  prometheus_data: {}
 
 secrets:
   postgrespassword:
@@ -186,6 +264,8 @@ secrets:
     file: ./docker-secrets/yandex-redirect-uri
   jwt-secret:
     file: ./docker-secrets/jwt-secret
+  grafana-password:
+    file: ./docker-secrets/grafana-password.txt
 
 networks:
   pa-net:

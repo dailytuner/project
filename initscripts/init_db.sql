@@ -249,12 +249,18 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     -- Данные для расчётов
     birth_date DATE NOT NULL,
     birth_time TIME NOT NULL,
+    birth_region VARCHAR(100),
     birth_city VARCHAR(100) NOT NULL,
     birth_country VARCHAR(100) DEFAULT 'Russia',
     birth_lat DECIMAL(9,6),
     birth_lng DECIMAL(9,6),
     profession VARCHAR(100), 
-    job_position VARCHAR(100), 
+    job_position VARCHAR(100),
+
+    -- geocoder for fix
+    geocoder_query VARCHAR(200),
+    geocoder_full_name VARCHAR(255),
+    geocoder_source VARCHAR(20),
     
     -- Текущее местоположение
     current_city VARCHAR(100),
@@ -276,7 +282,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 -- Индексы
 CREATE INDEX IF NOT EXISTS idx_profiles_birth_date ON user_profiles(birth_date);
 CREATE INDEX IF NOT EXISTS idx_profiles_birth_city_trgm ON user_profiles USING GIN(birth_city gin_trgm_ops);
-
+CREATE INDEX IF NOT EXISTS idx_profiles_birth_region_trgm ON user_profiles USING GIN(birth_region gin_trgm_ops);
 
 
 -- ============================================
@@ -294,6 +300,9 @@ CREATE TABLE IF NOT EXISTS natal_charts (
 
     -- Географические данные
     city_name VARCHAR(100) NOT NULL,
+    birth_region VARCHAR(100),
+    geocoder_query VARCHAR(200),
+    geocoder_full_name VARCHAR(255),
     birth_lat DECIMAL(9,6) NOT NULL,
     birth_lng DECIMAL(9,6) NOT NULL,
     birth_timezone VARCHAR(50) NOT NULL,

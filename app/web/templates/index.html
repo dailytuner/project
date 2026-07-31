@@ -1,11 +1,10 @@
-<!-- web/templates/index.html -->
-<!-- ЗАКОММЕНИРОВАН ВХОД E_MAIL PHONE -->
+<!-- app/web/templates/index.html -->
 {% extends "base.html" %}
 
 {% block title %}Daily Tuner - Персональные рекомендации{% endblock %}
 
 {% block content %}
-    <!-- Навигация -->
+    <!-- Навигационное меню -->
     <div class="nav">
         <button class="nav-btn" onclick="showPage('profile')">📝 Профиль</button>
         <button class="nav-btn" onclick="showPage('activities')">⭐ Рекомендации</button>
@@ -23,13 +22,13 @@
     </div>
     {% endif %}
 
-    <!-- Регистрация/Вход -->
+    <!-- Страница входа и регистрации -->
     <div id="auth-page" class="card {% if user_authenticated %}hidden{% endif %}">
         <h1>🔐 Добро пожаловать в Daily Tuner</h1>
         <div class="subtitle">Персональные рекомендации на основе вашей натальной карты</div>
 
         {% if yandex_oauth_enabled %}
-        <!-- 1️⃣ СНАЧАЛА БЛОК СОГЛАСИЯ -->
+        <!-- Блок согласия на обработку персональных данных -->
         <div class="consent-block">
             <label class="consent-checkbox">
                 <input type="checkbox" id="consent-checkbox">
@@ -45,7 +44,7 @@
             </label>
         </div>
 
-        <!-- 2️⃣ ПОТОМ КНОПКА -->
+        <!-- Кнопка входа через Яндекс -->
         <button class="yandex-btn" id="yandex-login-btn" disabled onclick="window.location='/auth/yandex'">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
                 <path d="M11.9 22.5C6.1 22.5 1.4 17.8 1.4 12 1.4 6.2 6.1 1.5 11.9 1.5 17.7 1.5 22.4 6.2 22.4 12 22.4 17.8 17.7 22.5 11.9 22.5ZM11.9 2.5C6.7 2.5 2.4 6.8 2.4 12 2.4 17.2 6.7 21.5 11.9 21.5 17.1 21.5 21.4 17.2 21.4 12 21.4 6.8 17.1 2.5 11.9 2.5Z"/>
@@ -55,7 +54,7 @@
             Войти через Яндекс
         </button>
 
-        <!-- 3️⃣ И В КОНЦЕ ЮРИДИЧЕСКАЯ ЗАМЕТКА -->
+        <!-- Юридическая заметка -->
         <p class="legal-note">
             Нажимая «Войти», вы принимаете
             <a href="/terms" target="_blank">Условия использования</a>
@@ -63,43 +62,111 @@
         </p>
         {% endif %}
     </div>
-        <!--
-        <div class="auth-type">
-            <label>
-                <input type="radio" name="auth_type" value="email" checked onchange="toggleAuthType()">
-                📧 Email
-            </label>
-            <label>
-                <input type="radio" name="auth_type" value="phone" onchange="toggleAuthType()">
-                📱 Телефон
-            </label>
-        </div>
 
-        <div id="email_container">
-            <input type="email" id="email_input" placeholder="example@mail.com" autocomplete="email">
-        </div>
-        <div id="phone_container" style="display:none">
-            <input type="tel" id="phone_input" placeholder="+7 (999) 123-45-67" autocomplete="tel">
-        </div>
-
-        <button onclick="login()" id="login-btn">Продолжить</button>
-        <div id="auth-result"></div>
-    </div>
-    -->
-
-    <!-- Профиль -->
+    <!-- Страница профиля -->
     <div id="profile-page" class="card {% if not user_authenticated %}hidden{% endif %}">
         <h1>📝 Личные данные</h1>
         <div class="subtitle" id="profile-user-id">👤 {{ user_platform_id or 'Не указан' }}</div>
 
+        <!-- Контейнер для 3D аватара -->
+        <div id="avatar-container"></div>
+
+        <!-- Индикатор энергии -->
+        <div class="energy-container">
+            <span class="energy-label">⚡ Энергия:</span>
+            <div id="energy-indicator">
+                <div id="energy-fill"></div>
+            </div>
+            <span id="energy-text">50%</span>
+        </div>
+        <div class="energy-hint">👆 Кликните на аватар для обновления</div>
+
+        <!-- Поля профиля -->
         <label>📅 Дата рождения *</label>
         <input type="date" id="birth_date" required>
 
         <label>⏰ Время рождения *</label>
         <input type="time" id="birth_time" required>
-
+        
+        <label>🌏 Страна</label>
+        <select id="birth_country">
+            <option value="">-- Выберите страну --</option>
+            <option value="Russia">Россия</option>
+            <option value="Ukraine">Украина</option>
+            <option value="Kazakhstan">Казахстан</option>
+            <option value="Belarus">Беларусь</option>
+            <option value="Georgia">Грузия</option>
+            <option value="Armenia">Армения</option>
+            <option value="Azerbaijan">Азербайджан</option>
+            <option value="Moldova">Молдова</option>
+            <option value="Kyrgyzstan">Кыргызстан</option>
+            <option value="Tajikistan">Таджикистан</option>
+            <option value="Turkmenistan">Туркменистан</option>
+            <option value="Uzbekistan">Узбекистан</option>
+            <option value="Turkey">Турция</option>
+            <option value="Germany">Германия</option>
+            <option value="USA">США</option>
+            <option value="United Kingdom">Великобритания</option>
+            <option value="France">Франция</option>
+            <option value="Italy">Италия</option>
+            <option value="Spain">Испания</option>
+            <option value="Portugal">Португалия</option>
+            <option value="Netherlands">Нидерланды</option>
+            <option value="Belgium">Бельгия</option>
+            <option value="Switzerland">Швейцария</option>
+            <option value="Austria">Австрия</option>
+            <option value="Sweden">Швеция</option>
+            <option value="Norway">Норвегия</option>
+            <option value="Denmark">Дания</option>
+            <option value="Finland">Финляндия</option>
+            <option value="Poland">Польша</option>
+            <option value="Czech Republic">Чехия</option>
+            <option value="Slovakia">Словакия</option>
+            <option value="Hungary">Венгрия</option>
+            <option value="Romania">Румыния</option>
+            <option value="Bulgaria">Болгария</option>
+            <option value="Greece">Греция</option>
+            <option value="Cyprus">Кипр</option>
+            <option value="Israel">Израиль</option>
+            <option value="UAE">ОАЭ</option>
+            <option value="Saudi Arabia">Саудовская Аравия</option>
+            <option value="India">Индия</option>
+            <option value="China">Китай</option>
+            <option value="Japan">Япония</option>
+            <option value="South Korea">Южная Корея</option>
+            <option value="Thailand">Таиланд</option>
+            <option value="Vietnam">Вьетнам</option>
+            <option value="Indonesia">Индонезия</option>
+            <option value="Australia">Австралия</option>
+            <option value="New Zealand">Новая Зеландия</option>
+            <option value="Canada">Канада</option>
+            <option value="Mexico">Мексика</option>
+            <option value="Brazil">Бразилия</option>
+            <option value="Argentina">Аргентина</option>
+            <option value="Chile">Чили</option>
+            <option value="Colombia">Колумбия</option>
+            <option value="Peru">Перу</option>
+            <option value="South Africa">ЮАР</option>
+            <option value="Egypt">Египет</option>
+            <option value="Morocco">Марокко</option>
+            <option value="Tunisia">Тунис</option>
+            <option value="Algeria">Алжир</option>
+            <option value="Nigeria">Нигерия</option>
+            <option value="Kenya">Кения</option>
+            <option value="Other">Другая</option>
+        </select>
+        
+        <label>🏛️ Регион и область</label>
+        <input type="text" id="birth_region" placeholder="Например: Московская область или Moscow Oblast">
+        <small style="color: #666; font-size: 12px; display: block; margin-top: -15px; margin-bottom: 10px;">
+            Для точности поиска
+        </small>
+        
         <label>🌍 Город рождения *</label>
-        <input type="text" id="birth_city" placeholder="Например: Moscow" value="Moscow" required>
+        <input type="text" id="birth_city" placeholder="Например: Moscow или Москва" value="Moscow" required>
+        <small style="color: #666; font-size: 12px; display: block; margin-top: -15px; margin-bottom: 10px;">
+            Поддерживается кириллица и латиница
+        </small>
 
         <label>🏙️ Текущий город</label>
         <input type="text" id="current_city" placeholder="Необязательно">
@@ -114,33 +181,11 @@
 
         <hr>
         
-        <!--
-
-        <div id="password-section">
-            <h3>🔒 Безопасность</h3>
-            <div id="has-password-info" style="display: none;">
-                <div class="info">🔐 Пароль установлен</div>
-                <button onclick="showChangePassword()" style="background: #6c757d; margin-top: 10px;">🔄 Сменить пароль</button>
-            </div>
-
-            <div id="no-password-info" style="display: none;">
-                <div class="warning">⚠️ Пароль не установлен</div>
-                <button onclick="showSetPasswordForm()" style="background: #2196f3; margin-top: 10px;">🔒 Установить пароль</button>
-            </div>
-
-            <div id="change-password-form" style="display: none;">
-                <input type="password" id="new-password" placeholder="Новый пароль (мин. 6 символов)">
-                <input type="password" id="new-password-confirm" placeholder="Подтвердите пароль">
-                <button onclick="changePassword()">💾 Сохранить новый пароль</button>
-                <button onclick="cancelChangePassword()" style="background: #6c757d">Отмена</button>
-            </div>
-        </div>
-        -->
-
+        <!-- Результат операций с профилем -->
         <div id="profile-result"></div>
     </div>
 
-    <!-- Рекомендации -->
+    <!-- Страница рекомендаций -->
     <div id="activities-page" class="card {% if not user_authenticated %}hidden{% endif %}">
         <h1>⭐ Рекомендации на день</h1>
         <div class="subtitle">Активности, которые принесут максимальную пользу</div>
@@ -152,7 +197,7 @@
         <div id="activities-result"></div>
     </div>
 
-    <!-- Прогноз -->
+    <!-- Страница прогноза -->
     <div id="forecast-page" class="card {% if not user_authenticated %}hidden{% endif %}">
         <h1>📊 Энергетический прогноз</h1>
         <div class="subtitle">Ваше состояние на ближайшие дни</div>
@@ -173,8 +218,11 @@
 {% endblock %}
 
 {% block scripts %}
-    <!-- Подключаем внешний JavaScript файл -->
+    <!-- Подключаем основной JavaScript файл -->
     <script src="/static/js/app.js"></script>
+    
+    <!-- Подключаем 3D аватар -->
+    <script src="/static/js/avatar.js"></script>
 
     <!-- Дополнительный JavaScript для инициализации с данными из контекста -->
     <script>
@@ -187,22 +235,25 @@
             window.userName = {{ user_name|tojson }};
             window.yandexOauthEnabled = {{ yandex_oauth_enabled|tojson }};
 
-            // Если пользователь уже аутентифицирован, обновляем UI
+            // Если пользователь уже аутентифицирован, обновляем интерфейс
             if (window.userAuthenticated) {
                 // Показываем профиль, скрываем форму входа
-                const authPage = document.getElementById('auth-page');
-                const profilePage = document.getElementById('profile-page');
+                var authPage = document.getElementById('auth-page');
+                var profilePage = document.getElementById('profile-page');
 
-                if (authPage) authPage.classList.add('hidden');
+                if (authPage) {
+                    authPage.classList.add('hidden');
+                }
+                
                 if (profilePage) {
                     profilePage.classList.remove('hidden');
-                    const profileUserId = document.getElementById('profile-user-id');
+                    var profileUserId = document.getElementById('profile-user-id');
                     if (profileUserId) {
                         profileUserId.innerHTML = '👤 ' + (window.userName || window.userPlatformId);
                     }
                 }
 
-                // Загружаем профиль и проверяем пароль
+                // Загружаем профиль и проверяем пароль после загрузки страницы
                 setTimeout(function() {
                     if (typeof loadProfile === 'function') {
                         loadProfile();
@@ -213,8 +264,8 @@
                 }, 100);
             }
 
-            // Инициализация после загрузки app.js
-            console.log('Daily Tuner initialized with context:', {
+            // Выводим информацию в консоль для отладки
+            console.log('Daily Tuner инициализирован с контекстом:', {
                 authenticated: window.userAuthenticated,
                 platform: window.userPlatform,
                 platformId: window.userPlatformId,

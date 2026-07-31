@@ -12,14 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ✅ 2. SwissEph файлы (НЕ libswe2.0!)
-RUN mkdir -p /usr/share/swisseph && \
-    cd /usr/share/swisseph && \
-    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/seas_18.se1 && \
-    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/semo_18.se1 && \
-    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/sepl_18.se1 && \
-    wget -q https://github.com/aloistr/swisseph/raw/master/ephe/sefstars.txt && \
-    echo "✅ Ephemeris files OK" && \
-    ls -la
+COPY ephe/ /usr/share/swisseph/
+RUN ls -la /usr/share/swisseph/ && echo "✅ Ephemeris files OK"
 
 WORKDIR /app
 

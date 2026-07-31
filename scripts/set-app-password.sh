@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash set-app-password.sh
 echo "🔐 Setting app password..."
 
 # Создать секрет (один файл!)

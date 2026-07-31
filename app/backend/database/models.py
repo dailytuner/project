@@ -212,7 +212,12 @@ class UserProfile(Base):
     birth_date = Column(Date, nullable=False)
     birth_time = Column(Time, nullable=False)
     birth_city = Column(String(100), nullable=False)
+    birth_region = Column(String(100), nullable=True)
     birth_country = Column(String(100), default='Russia', nullable=False)
+    # Для отладки
+    geocoder_query = Column(String(200), nullable=True)
+    geocoder_full_name = Column(String(255), nullable=True)
+    geocoder_source = Column(String(20), nullable=True)
 
     # Координаты
     birth_lat = Column(DECIMAL(9, 6), nullable=True)
@@ -256,7 +261,9 @@ class UserProfile(Base):
         ),
         Index('idx_profiles_birth_date', 'birth_date'),
         Index('idx_profiles_birth_city_trgm', 'birth_city', postgresql_using='gin',
-              postgresql_ops={'birth_city': 'gin_trgm_ops'})
+              postgresql_ops={'birth_city': 'gin_trgm_ops'}),
+        Index('idx_profiles_birth_region_trgm', 'birth_region', postgresql_using='gin',
+              postgresql_ops={'birth_region': 'gin_trgm_ops'})
     )
 
     # Relationship
@@ -295,7 +302,10 @@ class NatalChart(Base):
 
     # geocoder поля
     birth_country_code = Column(String(2), nullable=True)
+    birth_region = Column(String(100), nullable=True)
     system_language = Column(String(10), default='ru', nullable=True)
+    geocoder_query = Column(String(200), nullable=True)
+    geocoder_full_name = Column(String(255), nullable=True)
     geocoder_cache_key = Column(String(64), nullable=True)
     geocoder_source = Column(
         String(20),

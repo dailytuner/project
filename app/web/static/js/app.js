@@ -1,19 +1,26 @@
-// web/static/js/app.js
+// ============================================
 // Daily Tuner - Основной JavaScript код
+// ============================================
 
 // ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
-let currentPlatform = null;
-let currentUserId = null;
-let pendingUserId = null;
-let pendingPlatform = null;
+var currentPlatform = null;
+var currentUserId = null;
+var pendingUserId = null;
+var pendingPlatform = null;
 
 // ========== УТИЛИТЫ ==========
 
 /**
  * Показать всплывающее сообщение
+ * @param {string} message - Текст сообщения
+ * @param {string} type - Тип сообщения: 'info', 'success', 'warning', 'error'
  */
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
+function showToast(message, type) {
+    if (type === undefined) {
+        type = 'info';
+    }
+    
+    var toast = document.createElement('div');
     toast.className = 'toast';
     toast.textContent = message;
 
@@ -30,7 +37,8 @@ function showToast(message, type = 'info') {
     }
 
     document.body.appendChild(toast);
-    setTimeout(() => {
+    
+    setTimeout(function() {
         if (toast.parentNode) {
             toast.remove();
         }
@@ -39,16 +47,26 @@ function showToast(message, type = 'info') {
 
 /**
  * Форматирование номера телефона
+ * @param {HTMLElement} input - Поле ввода телефона
  */
 function formatPhoneNumber(input) {
-    let value = input.value.replace(/\D/g, '');
+    var value = input.value.replace(/\D/g, '');
+    
     if (value.startsWith('7') || value.startsWith('8')) {
         if (value.length > 1) {
-            let formatted = '+7';
-            if (value.length > 1) formatted += ' (' + value.substring(1, 4);
-            if (value.length > 4) formatted += ') ' + value.substring(4, 7);
-            if (value.length > 7) formatted += '-' + value.substring(7, 9);
-            if (value.length > 9) formatted += '-' + value.substring(9, 11);
+            var formatted = '+7';
+            if (value.length > 1) {
+                formatted += ' (' + value.substring(1, 4);
+            }
+            if (value.length > 4) {
+                formatted += ') ' + value.substring(4, 7);
+            }
+            if (value.length > 7) {
+                formatted += '-' + value.substring(7, 9);
+            }
+            if (value.length > 9) {
+                formatted += '-' + value.substring(9, 11);
+            }
             input.value = formatted;
         } else if (value.length === 1) {
             input.value = '+7';
@@ -58,10 +76,15 @@ function formatPhoneNumber(input) {
 
 /**
  * Парсинг даты из строки
+ * @param {string} dateStr - Строка с датой в формате YYYY-MM-DD
+ * @returns {Date|null} - Объект Date или null
  */
 function parseDate(dateStr) {
-    if (!dateStr) return null;
-    const parts = dateStr.split('-');
+    if (!dateStr) {
+        return null;
+    }
+    
+    var parts = dateStr.split('-');
     if (parts.length === 3) {
         return new Date(parts[0], parts[1] - 1, parts[2]);
     }
@@ -70,11 +93,19 @@ function parseDate(dateStr) {
 
 /**
  * Форматирование даты для отображения
+ * @param {string} dateStr - Строка с датой в формате YYYY-MM-DD
+ * @returns {string} - Отформатированная дата
  */
 function formatDateDisplay(dateStr) {
-    if (!dateStr) return '';
-    const date = parseDate(dateStr);
-    if (!date) return dateStr;
+    if (!dateStr) {
+        return '';
+    }
+    
+    var date = parseDate(dateStr);
+    if (!date) {
+        return dateStr;
+    }
+    
     return date.toLocaleDateString('ru-RU', {
         day: 'numeric',
         month: 'long',
@@ -88,15 +119,24 @@ function formatDateDisplay(dateStr) {
  * Переключение между email и телефоном
  */
 function toggleAuthType() {
-    const isEmail = document.querySelector('input[name="auth_type"]:checked').value === 'email';
-    const emailContainer = document.getElementById('email_container');
-    const phoneContainer = document.getElementById('phone_container');
+    var isEmail = document.querySelector('input[name="auth_type"]:checked').value === 'email';
+    var emailContainer = document.getElementById('email_container');
+    var phoneContainer = document.getElementById('phone_container');
 
     if (emailContainer) {
-        emailContainer.style.display = isEmail ? 'block' : 'none';
+        if (isEmail) {
+            emailContainer.style.display = 'block';
+        } else {
+            emailContainer.style.display = 'none';
+        }
     }
+    
     if (phoneContainer) {
-        phoneContainer.style.display = isEmail ? 'none' : 'block';
+        if (isEmail) {
+            phoneContainer.style.display = 'none';
+        } else {
+            phoneContainer.style.display = 'block';
+        }
     }
 }
 
@@ -104,11 +144,15 @@ function toggleAuthType() {
  * Вход или регистрация пользователя
  */
 async function login() {
-    const isEmail = document.querySelector('input[name="auth_type"]:checked').value === 'email';
-    const platform = isEmail ? 'email' : 'phone';
-    let userId = isEmail
-        ? document.getElementById('email_input').value
-        : document.getElementById('phone_input').value;
+    var isEmail = document.querySelector('input[name="auth_type"]:checked').value === 'email';
+    var platform = isEmail ? 'email' : 'phone';
+    var userId = '';
+    
+    if (isEmail) {
+        userId = document.getElementById('email_input').value;
+    } else {
+        userId = document.getElementById('phone_input').value;
+    }
 
     if (!userId || userId.trim() === '') {
         showToast('Введите email или телефон', 'error');
@@ -118,58 +162,73 @@ async function login() {
     // Нормализация телефона
     if (!isEmail) {
         userId = userId.replace(/\D/g, '');
-        if (userId.startsWith('8')) userId = '7' + userId.substring(1);
-        if (!userId.startsWith('7')) userId = '7' + userId;
+        if (userId.startsWith('8')) {
+            userId = '7' + userId.substring(1);
+        }
+        if (!userId.startsWith('7')) {
+            userId = '7' + userId;
+        }
     }
 
-    const resultDiv = document.getElementById('auth-result');
-    const loginBtn = document.getElementById('login-btn');
+    var resultDiv = document.getElementById('auth-result');
+    var loginBtn = document.getElementById('login-btn');
 
     loginBtn.disabled = true;
     loginBtn.textContent = '⏳ Проверка...';
-    resultDiv.innerHTML = '<div class="loading">⏳ Проверка...</div>';
+    
+    if (resultDiv) {
+        resultDiv.innerHTML = '<div class="loading">⏳ Проверка...</div>';
+    }
 
     try {
-        const response = await fetch(`/api/validate?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
-        const result = await response.json();
+        var response = await fetch('/api/validate?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId));
+        var result = await response.json();
 
         if (result.success) {
             // Пользователь существует - проверяем пароль
-            const statusResponse = await fetch(`/api/auth/status?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
-            const status = await statusResponse.json();
+            var statusResponse = await fetch('/api/auth/status?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId));
+            var status = await statusResponse.json();
 
             if (status.has_password) {
                 // Требуем пароль
                 pendingPlatform = platform;
                 pendingUserId = userId;
-                resultDiv.innerHTML = '';
+                if (resultDiv) {
+                    resultDiv.innerHTML = '';
+                }
                 showPasswordModal(userId);
             } else {
                 // Нет пароля - сразу входим
                 authenticateUser(platform, userId);
-                resultDiv.innerHTML = '';
+                if (resultDiv) {
+                    resultDiv.innerHTML = '';
+                }
                 showToast('Добро пожаловать!', 'success');
                 await loadProfile();
                 await checkPasswordStatus();
 
                 // Предлагаем установить пароль
-                setTimeout(() => {
+                setTimeout(function() {
                     showSetPasswordModal();
                 }, 500);
             }
         } else {
             // Новый пользователь
             authenticateUser(platform, userId);
-            resultDiv.innerHTML = '';
+            if (resultDiv) {
+                resultDiv.innerHTML = '';
+            }
             showToast('Добро пожаловать! Установите пароль для защиты профиля', 'info');
 
             // Предлагаем установить пароль
-            setTimeout(() => {
+            setTimeout(function() {
                 showSetPasswordModal();
             }, 500);
         }
-    } catch(e) {
-        resultDiv.innerHTML = `<div class="error">❌ Ошибка: ${e.message}</div>`;
+    } catch(error) {
+        if (resultDiv) {
+            resultDiv.innerHTML = '<div class="error">❌ Ошибка: ' + error.message + '</div>';
+        }
         showToast('Ошибка подключения', 'error');
     } finally {
         loginBtn.disabled = false;
@@ -179,22 +238,34 @@ async function login() {
 
 /**
  * Аутентификация пользователя (установка сессии)
+ * @param {string} platform - Платформа ('email', 'phone', 'yandex')
+ * @param {string} userId - Идентификатор пользователя
  */
 function authenticateUser(platform, userId) {
     currentPlatform = platform;
     currentUserId = userId;
 
     // Сохраняем в cookies
-    document.cookie = `user_platform=${platform}; path=/; max-age=604800`;
-    document.cookie = `user_platform_id=${encodeURIComponent(userId)}; path=/; max-age=604800`;
-    document.cookie = `user_authenticated=true; path=/; max-age=604800`;
+    document.cookie = 'user_platform=' + platform + '; path=/; max-age=604800';
+    document.cookie = 'user_platform_id=' + encodeURIComponent(userId) + '; path=/; max-age=604800';
+    document.cookie = 'user_authenticated=true; path=/; max-age=604800';
 
     // Скрываем форму входа
-    document.getElementById('auth-page').classList.add('hidden');
+    var authPage = document.getElementById('auth-page');
+    if (authPage) {
+        authPage.classList.add('hidden');
+    }
 
     // Показываем профиль
-    document.getElementById('profile-page').classList.remove('hidden');
-    document.getElementById('profile-user-id').innerHTML = `👤 ${userId}`;
+    var profilePage = document.getElementById('profile-page');
+    if (profilePage) {
+        profilePage.classList.remove('hidden');
+    }
+    
+    var profileUserId = document.getElementById('profile-user-id');
+    if (profileUserId) {
+        profileUserId.innerHTML = '👤 ' + userId;
+    }
 }
 
 /**
@@ -211,16 +282,33 @@ function logout() {
     currentUserId = null;
 
     // Скрываем все страницы
-    document.getElementById('profile-page').classList.add('hidden');
-    document.getElementById('activities-page').classList.add('hidden');
-    document.getElementById('forecast-page').classList.add('hidden');
+    var profilePage = document.getElementById('profile-page');
+    var activitiesPage = document.getElementById('activities-page');
+    var forecastPage = document.getElementById('forecast-page');
+    
+    if (profilePage) {
+        profilePage.classList.add('hidden');
+    }
+    if (activitiesPage) {
+        activitiesPage.classList.add('hidden');
+    }
+    if (forecastPage) {
+        forecastPage.classList.add('hidden');
+    }
 
     // Показываем форму входа
-    document.getElementById('auth-page').classList.remove('hidden');
+    var authPage = document.getElementById('auth-page');
+    if (authPage) {
+        authPage.classList.remove('hidden');
+    }
 
     // Очищаем поля
-    document.getElementById('email_input').value = '';
-    const phoneInput = document.getElementById('phone_input');
+    var emailInput = document.getElementById('email_input');
+    if (emailInput) {
+        emailInput.value = '';
+    }
+    
+    var phoneInput = document.getElementById('phone_input');
     if (phoneInput) {
         phoneInput.value = '';
     }
@@ -232,24 +320,40 @@ function logout() {
 
 /**
  * Показать модальное окно для ввода пароля
+ * @param {string} userId - Идентификатор пользователя
  */
 function showPasswordModal(userId) {
-    const modal = document.getElementById('password-modal');
-    const userInfo = document.getElementById('password-modal-user');
+    var modal = document.getElementById('password-modal');
+    var userInfo = document.getElementById('password-modal-user');
+    
     if (userInfo) {
-        userInfo.textContent = `Пользователь: ${userId}`;
+        userInfo.textContent = 'Пользователь: ' + userId;
     }
-    modal.style.display = 'flex';
-    document.getElementById('modal-password').value = '';
-    document.getElementById('modal-error').innerHTML = '';
-    document.getElementById('modal-password').focus();
+    
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+    
+    var passwordInput = document.getElementById('modal-password');
+    if (passwordInput) {
+        passwordInput.value = '';
+        passwordInput.focus();
+    }
+    
+    var errorDiv = document.getElementById('modal-error');
+    if (errorDiv) {
+        errorDiv.innerHTML = '';
+    }
 }
 
 /**
  * Закрыть модальное окно пароля
  */
 function closePasswordModal() {
-    document.getElementById('password-modal').style.display = 'none';
+    var modal = document.getElementById('password-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
     pendingUserId = null;
     pendingPlatform = null;
 }
@@ -258,51 +362,83 @@ function closePasswordModal() {
  * Показать модальное окно для установки пароля
  */
 function showSetPasswordModal() {
-    const modal = document.getElementById('set-password-modal');
-    modal.style.display = 'flex';
-    document.getElementById('set-password').value = '';
-    document.getElementById('confirm-password').value = '';
-    document.getElementById('set-password-error').innerHTML = '';
-    document.getElementById('set-password').focus();
+    var modal = document.getElementById('set-password-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+    
+    var passwordInput = document.getElementById('set-password');
+    if (passwordInput) {
+        passwordInput.value = '';
+        passwordInput.focus();
+    }
+    
+    var confirmInput = document.getElementById('confirm-password');
+    if (confirmInput) {
+        confirmInput.value = '';
+    }
+    
+    var errorDiv = document.getElementById('set-password-error');
+    if (errorDiv) {
+        errorDiv.innerHTML = '';
+    }
 }
 
 /**
  * Закрыть модальное окно установки пароля
  */
 function closeSetPasswordModal() {
-    document.getElementById('set-password-modal').style.display = 'none';
+    var modal = document.getElementById('set-password-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
 }
 
 /**
  * Отправить пароль для входа
  */
 async function submitPassword() {
-    const password = document.getElementById('modal-password').value;
+    var password = document.getElementById('modal-password').value;
+    
     if (!password) {
-        document.getElementById('modal-error').innerHTML = '<div class="error">Введите пароль</div>';
+        var errorDiv = document.getElementById('modal-error');
+        if (errorDiv) {
+            errorDiv.innerHTML = '<div class="error">Введите пароль</div>';
+        }
         return;
     }
 
-    const btn = document.getElementById('modal-submit-btn');
+    var btn = document.getElementById('modal-submit-btn');
     btn.disabled = true;
     btn.textContent = '⏳ Проверка...';
 
     try {
-        const response = await fetch(`/api/validate?platform=${pendingPlatform}&platform_user_id=${encodeURIComponent(pendingUserId)}&password=${encodeURIComponent(password)}`);
-        const result = await response.json();
+        var response = await fetch('/api/validate?platform=' + pendingPlatform + '&platform_user_id=' + encodeURIComponent(pendingUserId) + '&password=' + encodeURIComponent(password));
+        var result = await response.json();
 
         if (result.success) {
             closePasswordModal();
             authenticateUser(pendingPlatform, pendingUserId);
-            document.getElementById('auth-result').innerHTML = '';
+            
+            var resultDiv = document.getElementById('auth-result');
+            if (resultDiv) {
+                resultDiv.innerHTML = '';
+            }
+            
             showToast('Вход выполнен успешно', 'success');
             await loadProfile();
             await checkPasswordStatus();
         } else {
-            document.getElementById('modal-error').innerHTML = '<div class="error">Неверный пароль</div>';
+            var errorDiv = document.getElementById('modal-error');
+            if (errorDiv) {
+                errorDiv.innerHTML = '<div class="error">Неверный пароль</div>';
+            }
         }
-    } catch(e) {
-        document.getElementById('modal-error').innerHTML = `<div class="error">Ошибка: ${e.message}</div>`;
+    } catch(error) {
+        var errorDiv = document.getElementById('modal-error');
+        if (errorDiv) {
+            errorDiv.innerHTML = '<div class="error">Ошибка: ' + error.message + '</div>';
+        }
     } finally {
         btn.disabled = false;
         btn.textContent = 'Войти';
@@ -313,44 +449,58 @@ async function submitPassword() {
  * Установить новый пароль
  */
 async function submitSetPassword() {
-    const password = document.getElementById('set-password').value;
-    const confirm = document.getElementById('confirm-password').value;
+    var password = document.getElementById('set-password').value;
+    var confirm = document.getElementById('confirm-password').value;
 
     if (password !== confirm) {
-        document.getElementById('set-password-error').innerHTML = '<div class="error">Пароли не совпадают</div>';
+        var errorDiv = document.getElementById('set-password-error');
+        if (errorDiv) {
+            errorDiv.innerHTML = '<div class="error">Пароли не совпадают</div>';
+        }
         return;
     }
 
     if (password.length < 6) {
-        document.getElementById('set-password-error').innerHTML = '<div class="error">Пароль должен быть минимум 6 символов</div>';
+        var errorDiv = document.getElementById('set-password-error');
+        if (errorDiv) {
+            errorDiv.innerHTML = '<div class="error">Пароль должен быть минимум 6 символов</div>';
+        }
         return;
     }
 
-    const btn = document.getElementById('set-password-btn');
+    var btn = document.getElementById('set-password-btn');
     btn.disabled = true;
     btn.textContent = '⏳ Установка...';
 
     try {
-        const response = await fetch('/api/auth/set-password', {
+        var response = await fetch('/api/auth/set-password', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({
                 platform: currentPlatform,
                 platform_user_id: currentUserId,
                 password: password
             })
         });
-        const result = await response.json();
+        var result = await response.json();
 
         if (result.success) {
             closeSetPasswordModal();
             showToast('Пароль успешно установлен', 'success');
             await checkPasswordStatus();
         } else {
-            document.getElementById('set-password-error').innerHTML = `<div class="error">${result.error || 'Ошибка установки пароля'}</div>`;
+            var errorDiv = document.getElementById('set-password-error');
+            if (errorDiv) {
+                errorDiv.innerHTML = '<div class="error">' + (result.error || 'Ошибка установки пароля') + '</div>';
+            }
         }
-    } catch(e) {
-        document.getElementById('set-password-error').innerHTML = `<div class="error">Ошибка: ${e.message}</div>`;
+    } catch(error) {
+        var errorDiv = document.getElementById('set-password-error');
+        if (errorDiv) {
+            errorDiv.innerHTML = '<div class="error">Ошибка: ' + error.message + '</div>';
+        }
     } finally {
         btn.disabled = false;
         btn.textContent = 'Установить пароль';
@@ -362,32 +512,37 @@ async function submitSetPassword() {
  */
 async function checkPasswordStatus() {
     try {
-        // ✅ Сначала получаем значения
-        const platform = currentPlatform || window.userPlatform;
-        const userId = currentUserId || window.userPlatformId;
+        var platform = currentPlatform || window.userPlatform;
+        var userId = currentUserId || window.userPlatformId;
 
-        // ✅ Проверяем ДО запроса
         if (!platform || !userId) {
-            console.warn('No platform or userId for checkPasswordStatus');
+            console.warn('Нет platform или userId для checkPasswordStatus');
             return;
         }
 
-        // ✅ Теперь отправляем запрос с правильными значениями
-        const response = await fetch(`/api/auth/status?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
-        const result = await response.json();
+        var response = await fetch('/api/auth/status?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId));
+        var result = await response.json();
 
-        const hasPasswordInfo = document.getElementById('has-password-info');
-        const noPasswordInfo = document.getElementById('no-password-info');
+        var hasPasswordInfo = document.getElementById('has-password-info');
+        var noPasswordInfo = document.getElementById('no-password-info');
 
         if (result.has_password) {
-            if (hasPasswordInfo) hasPasswordInfo.style.display = 'block';
-            if (noPasswordInfo) noPasswordInfo.style.display = 'none';
+            if (hasPasswordInfo) {
+                hasPasswordInfo.style.display = 'block';
+            }
+            if (noPasswordInfo) {
+                noPasswordInfo.style.display = 'none';
+            }
         } else {
-            if (hasPasswordInfo) hasPasswordInfo.style.display = 'none';
-            if (noPasswordInfo) noPasswordInfo.style.display = 'block';
+            if (hasPasswordInfo) {
+                hasPasswordInfo.style.display = 'none';
+            }
+            if (noPasswordInfo) {
+                noPasswordInfo.style.display = 'block';
+            }
         }
-    } catch(e) {
-        console.error('Check password status error:', e);
+    } catch(error) {
+        console.error('Ошибка проверки статуса пароля:', error);
     }
 }
 
@@ -395,15 +550,25 @@ async function checkPasswordStatus() {
  * Показать форму смены пароля
  */
 function showChangePassword() {
-    document.getElementById('change-password-form').style.display = 'block';
-    document.getElementById('has-password-info').style.display = 'none';
+    var form = document.getElementById('change-password-form');
+    if (form) {
+        form.style.display = 'block';
+    }
+    
+    var info = document.getElementById('has-password-info');
+    if (info) {
+        info.style.display = 'none';
+    }
 }
 
 /**
  * Отменить смену пароля
  */
 function cancelChangePassword() {
-    document.getElementById('change-password-form').style.display = 'none';
+    var form = document.getElementById('change-password-form');
+    if (form) {
+        form.style.display = 'none';
+    }
     checkPasswordStatus();
 }
 
@@ -411,8 +576,8 @@ function cancelChangePassword() {
  * Сменить пароль
  */
 async function changePassword() {
-    const password = document.getElementById('new-password').value;
-    const confirm = document.getElementById('new-password-confirm').value;
+    var password = document.getElementById('new-password').value;
+    var confirm = document.getElementById('new-password-confirm').value;
 
     if (password !== confirm) {
         showToast('Пароли не совпадают', 'error');
@@ -425,28 +590,39 @@ async function changePassword() {
     }
 
     try {
-        const response = await fetch('/api/auth/set-password', {
+        var response = await fetch('/api/auth/set-password', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({
                 platform: currentPlatform,
                 platform_user_id: currentUserId,
                 password: password
             })
         });
-        const result = await response.json();
+        var result = await response.json();
 
         if (result.success) {
             showToast('Пароль успешно изменен', 'success');
             cancelChangePassword();
-            document.getElementById('new-password').value = '';
-            document.getElementById('new-password-confirm').value = '';
+            
+            var newPasswordInput = document.getElementById('new-password');
+            if (newPasswordInput) {
+                newPasswordInput.value = '';
+            }
+            
+            var confirmInput = document.getElementById('new-password-confirm');
+            if (confirmInput) {
+                confirmInput.value = '';
+            }
+            
             await checkPasswordStatus();
         } else {
             showToast(result.error || 'Ошибка изменения пароля', 'error');
         }
-    } catch(e) {
-        showToast('Ошибка: ' + e.message, 'error');
+    } catch(error) {
+        showToast('Ошибка: ' + error.message, 'error');
     }
 }
 
@@ -457,36 +633,77 @@ async function changePassword() {
  */
 async function loadProfile() {
     try {
-        // ✅ Сначала получаем значения
-        const platform = currentPlatform || window.userPlatform;
-        const userId = currentUserId || window.userPlatformId;
+        var platform = currentPlatform || window.userPlatform;
+        var userId = currentUserId || window.userPlatformId;
 
-        // ✅ Проверяем ДО запроса
         if (!platform || !userId) {
-            console.warn('No platform or userId for loadProfile');
+            console.warn('Нет platform или userId для loadProfile');
             return;
         }
 
-        // ✅ Теперь отправляем запрос с правильными значениями
-        const response = await fetch(`/api/profile?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
-        const result = await response.json();
+        var response = await fetch('/api/profile?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId));
+        var result = await response.json();
 
         if (result.success && result.profile) {
-            const p = result.profile;
-            const birthDateInput = document.getElementById('birth_date');
-            const birthTimeInput = document.getElementById('birth_time');
-            const birthCityInput = document.getElementById('birth_city');
-            const currentCityInput = document.getElementById('current_city');
-            const professionInput = document.getElementById('profession');
+            var profile = result.profile;
 
-            if (p.birth_date && birthDateInput) birthDateInput.value = p.birth_date;
-            if (p.birth_time && birthTimeInput) birthTimeInput.value = p.birth_time.slice(0, 5);
-            if (p.birth_city && birthCityInput) birthCityInput.value = p.birth_city;
-            if (p.current_city && currentCityInput) currentCityInput.value = p.current_city;
-            if (p.profession && professionInput) professionInput.value = p.profession;
+            // Основные поля
+            var birthDateInput = document.getElementById('birth_date');
+            var birthTimeInput = document.getElementById('birth_time');
+            var birthCityInput = document.getElementById('birth_city');
+            var currentCityInput = document.getElementById('current_city');
+            var professionInput = document.getElementById('profession');
+            var birthRegionInput = document.getElementById('birth_region');
+            var birthCountryInput = document.getElementById('birth_country');
+
+            if (profile.birth_date && birthDateInput) {
+                birthDateInput.value = profile.birth_date;
+            }
+            
+            if (profile.birth_time && birthTimeInput) {
+                birthTimeInput.value = profile.birth_time.slice(0, 5);
+            }
+            
+            if (profile.birth_city && birthCityInput) {
+                birthCityInput.value = profile.birth_city;
+            }
+            
+            if (profile.current_city && currentCityInput) {
+                currentCityInput.value = profile.current_city;
+            }
+            
+            if (profile.profession && professionInput) {
+                professionInput.value = profile.profession;
+            }
+
+            if (profile.birth_region && birthRegionInput) {
+                birthRegionInput.value = profile.birth_region;
+            }
+            
+            if (profile.birth_country && birthCountryInput) {
+                var options = birthCountryInput.options;
+                var found = false;
+                
+                for (var i = 0; i < options.length; i++) {
+                    if (options[i].value === profile.birth_country) {
+                        birthCountryInput.selectedIndex = i;
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (!found) {
+                    for (var i = 0; i < options.length; i++) {
+                        if (options[i].value === 'Other') {
+                            birthCountryInput.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+            }
         }
-    } catch(e) {
-        console.error('Load profile error:', e);
+    } catch(error) {
+        console.error('Ошибка загрузки профиля:', error);
         showToast('Ошибка загрузки профиля', 'error');
     }
 }
@@ -495,37 +712,45 @@ async function loadProfile() {
  * Сохранить профиль
  */
 async function saveProfile() {
-    // ✅ Сначала получаем значения
-    const platform = currentPlatform || window.userPlatform;
-    const userId = currentUserId || window.userPlatformId;
+    var platform = currentPlatform || window.userPlatform;
+    var userId = currentUserId || window.userPlatformId;
 
-    // ✅ Проверяем ДО запроса
     if (!platform || !userId) {
         showToast('Ошибка: пользователь не авторизован', 'error');
         return;
     }
 
-    const birthDate = document.getElementById('birth_date').value;
-    const birthTime = document.getElementById('birth_time').value;
-    const birthCity = document.getElementById('birth_city').value;
+    var birthDate = document.getElementById('birth_date').value;
+    var birthTime = document.getElementById('birth_time').value;
+    var birthCity = document.getElementById('birth_city').value;
+    var birthCountry = document.getElementById('birth_country').value;
 
     if (!birthDate || !birthTime || !birthCity) {
         showToast('Заполните все обязательные поля', 'error');
         return;
     }
 
-    const resultDiv = document.getElementById('profile-result');
-    resultDiv.innerHTML = '<div class="loading">⏳ Сохранение...</div>';
+    if (!birthCountry) {
+        showToast('Выберите страну рождения', 'error');
+        return;
+    }
 
-    const profile = {
+    var resultDiv = document.getElementById('profile-result');
+    if (resultDiv) {
+        resultDiv.innerHTML = '<div class="loading">⏳ Сохранение...</div>';
+    }
+
+    var profile = {
         birth_date: birthDate,
         birth_time: birthTime,
         birth_city: birthCity,
+        birth_country: birthCountry,
+        birth_region: document.getElementById('birth_region').value || null,
         current_city: document.getElementById('current_city').value || null,
         profession: document.getElementById('profession').value || null
     };
 
-    const requestData = {
+    var requestData = {
         request: {
             platform: platform,
             platform_user_id: userId
@@ -534,26 +759,38 @@ async function saveProfile() {
     };
 
     try {
-        const response = await fetch('/api/profile', {
+        var response = await fetch('/api/profile', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify(requestData)
         });
-        const result = await response.json();
+        var result = await response.json();
 
         if (result.success) {
-            resultDiv.innerHTML = '<div class="success">✅ Профиль сохранен! Расчеты запущены в фоне.</div>';
+            if (resultDiv) {
+                resultDiv.innerHTML = '<div class="success">✅ Профиль сохранен! Расчеты запущены в фоне.</div>';
+            }
             showToast('Профиль успешно сохранен', 'success');
-            setTimeout(() => {
-                if (resultDiv) resultDiv.innerHTML = '';
+
+            setTimeout(async function() {
+                await loadProfile();
+                if (resultDiv) {
+                    resultDiv.innerHTML = '';
+                }
             }, 3000);
         } else {
-            const errorMsg = result.error || 'Неизвестная ошибка';
-            resultDiv.innerHTML = `<div class="error">❌ Ошибка: ${errorMsg}</div>`;
+            var errorMsg = result.error || 'Неизвестная ошибка';
+            if (resultDiv) {
+                resultDiv.innerHTML = '<div class="error">❌ Ошибка: ' + errorMsg + '</div>';
+            }
             showToast('Ошибка сохранения профиля', 'error');
         }
-    } catch(e) {
-        resultDiv.innerHTML = `<div class="error">❌ Ошибка: ${e.message}</div>`;
+    } catch(error) {
+        if (resultDiv) {
+            resultDiv.innerHTML = '<div class="error">❌ Ошибка: ' + error.message + '</div>';
+        }
         showToast('Ошибка сохранения профиля', 'error');
     }
 }
@@ -562,25 +799,25 @@ async function saveProfile() {
  * Проверить заполненность профиля
  */
 async function checkProfile() {
-    // ✅ Сначала получаем значения
-    const platform = currentPlatform || window.userPlatform;
-    const userId = currentUserId || window.userPlatformId;
+    var platform = currentPlatform || window.userPlatform;
+    var userId = currentUserId || window.userPlatformId;
 
-    // ✅ Проверяем ДО запроса
     if (!platform || !userId) {
         showToast('Ошибка: пользователь не авторизован', 'error');
         return;
     }
 
-    const resultDiv = document.getElementById('profile-result');
-    resultDiv.innerHTML = '<div class="loading">🔍 Проверка...</div>';
+    var resultDiv = document.getElementById('profile-result');
+    if (resultDiv) {
+        resultDiv.innerHTML = '<div class="loading">🔍 Проверка...</div>';
+    }
 
     try {
-        const response = await fetch(`/api/validate?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}`);
-        const result = await response.json();
+        var response = await fetch('/api/validate?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId));
+        var result = await response.json();
 
         if (result.success) {
-            let html = '<div class="result">';
+            var html = '<div class="result">';
             html += '<strong>📊 Статус профиля</strong><br><br>';
 
             if (result.has_complete_data) {
@@ -591,16 +828,57 @@ async function checkProfile() {
 
             if (result.missing_fields && result.missing_fields.length) {
                 html += '<br><strong>📋 Отсутствует:</strong><br>';
-                html += result.missing_fields.map(f => '• ' + f).join('<br>');
+                for (var i = 0; i < result.missing_fields.length; i++) {
+                    html += '• ' + result.missing_fields[i] + '<br>';
+                }
             }
 
             html += '</div>';
-            resultDiv.innerHTML = html;
+            if (resultDiv) {
+                resultDiv.innerHTML = html;
+            }
         } else {
-            resultDiv.innerHTML = `<div class="error">❌ ${result.error || 'Ошибка'}</div>`;
+            if (resultDiv) {
+                resultDiv.innerHTML = '<div class="error">❌ ' + (result.error || 'Ошибка') + '</div>';
+            }
         }
-    } catch(e) {
-        resultDiv.innerHTML = `<div class="error">❌ Ошибка: ${e.message}</div>`;
+    } catch(error) {
+        if (resultDiv) {
+            resultDiv.innerHTML = '<div class="error">❌ Ошибка: ' + error.message + '</div>';
+        }
+    }
+}
+
+// ========== ОБНОВЛЕНИЕ ЭНЕРГИИ ==========
+
+/**
+ * Обновить отображение энергии
+ * @param {number} percent - Уровень энергии (0-100)
+ */
+function updateEnergyDisplay(percent) {
+    var energy = Math.max(0, Math.min(100, percent));
+    
+    // Обновляем 3D аватар
+    if (typeof window.updateAvatarEnergy === 'function') {
+        window.updateAvatarEnergy(energy);
+    }
+    
+    // Обновляем индикатор
+    var fill = document.getElementById('energy-fill');
+    var text = document.getElementById('energy-text');
+    
+    if (fill) {
+        fill.style.width = energy + '%';
+        // Меняем цвет индикатора
+        var hue = 240 - (energy / 100) * 200;
+        fill.style.background = 'hsl(' + hue + ', 80%, 60%)';
+    }
+    
+    if (text) {
+        text.textContent = Math.round(energy) + '%';
+        // Меняем цвет текста
+        var hue = 240 - (energy / 100) * 200;
+        text.style.color = 'hsl(' + hue + ', 80%, 60%)';
     }
 }
 
@@ -610,58 +888,75 @@ async function checkProfile() {
  * Получить рекомендации на день
  */
 async function getRecommendations() {
-    // ✅ Сначала получаем значения
-    const platform = currentPlatform || window.userPlatform;
-    const userId = currentUserId || window.userPlatformId;
+    var platform = currentPlatform || window.userPlatform;
+    var userId = currentUserId || window.userPlatformId;
 
-    // ✅ Проверяем ДО запроса
     if (!platform || !userId) {
         showToast('Ошибка: пользователь не авторизован', 'error');
         return;
     }
 
-    const resultDiv = document.getElementById('activities-result');
-    const targetDate = document.getElementById('target_date').value || new Date().toISOString().split('T')[0];
+    var resultDiv = document.getElementById('activities-result');
+    var targetDate = document.getElementById('target_date').value;
+    
+    if (!targetDate) {
+        var today = new Date();
+        targetDate = today.toISOString().split('T')[0];
+    }
 
-    resultDiv.innerHTML = '<div class="loading">🎯 Расчет рекомендаций...</div>';
+    if (resultDiv) {
+        resultDiv.innerHTML = '<div class="loading">🎯 Расчет рекомендаций...</div>';
+    }
 
     try {
-        const response = await fetch(`/api/recommendations?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}&date=${targetDate}`);
-        const result = await response.json();
+        var response = await fetch('/api/recommendations?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId) + '&date=' + targetDate);
+        var result = await response.json();
 
         if (result.success) {
-            let html = '<div class="result">';
-            html += `<strong>📅 ${result.date_formatted || formatDateDisplay(targetDate)}</strong>`;
+            // Обновляем энергию
+            var energyPercent = result.energy_percent || 50;
+            updateEnergyDisplay(energyPercent);
+            
+            // Формируем HTML для отображения
+            var html = '<div class="result">';
+            html += '<strong>📅 ' + (result.date_formatted || formatDateDisplay(targetDate)) + '</strong>';
 
-            const energyPercent = result.energy_percent || 50;
+            // Энергетическая шкала
             html += '<div class="energy-bar">';
-            html += `<div class="energy-fill" style="width: ${energyPercent}%">`;
-            html += `${energyPercent}%`;
+            html += '<div class="energy-fill" style="width: ' + energyPercent + '%">';
+            html += energyPercent + '%';
             html += '</div></div>';
 
             if (result.summary) {
-                html += `<div style="margin: 10px 0;">📊 ${result.summary}</div>`;
+                html += '<div style="margin: 10px 0;">📊 ' + result.summary + '</div>';
             }
 
             html += '<strong>✅ Рекомендации:</strong><br>';
             html += '<div style="margin-top: 10px;">';
 
-            const recommendationsText = result.recommendations_text || 'Нет рекомендаций на этот день';
+            var recommendationsText = result.recommendations_text || 'Нет рекомендаций на этот день';
             html += recommendationsText.replace(/\n/g, '<br>');
             html += '</div>';
 
             if (result.warnings && result.warnings !== '✅ Особых предостережений нет') {
-                html += `<br><div class="warning">⚠️ ${result.warnings}</div>`;
+                html += '<br><div class="warning">⚠️ ' + result.warnings + '</div>';
             }
 
             html += '</div>';
-            resultDiv.innerHTML = html;
+            
+            if (resultDiv) {
+                resultDiv.innerHTML = html;
+            }
         } else {
-            const errorMsg = result.error || 'Ошибка получения рекомендаций';
-            resultDiv.innerHTML = `<div class="error">❌ ${errorMsg}</div>`;
+            var errorMsg = result.error || 'Ошибка получения рекомендаций';
+            if (resultDiv) {
+                resultDiv.innerHTML = '<div class="error">❌ ' + errorMsg + '</div>';
+            }
         }
-    } catch(e) {
-        resultDiv.innerHTML = `<div class="error">❌ Ошибка: ${e.message}</div>`;
+    } catch(error) {
+        if (resultDiv) {
+            resultDiv.innerHTML = '<div class="error">❌ Ошибка: ' + error.message + '</div>';
+        }
     }
 }
 
@@ -671,86 +966,105 @@ async function getRecommendations() {
  * Получить прогноз на несколько дней
  */
 async function getForecast() {
-    // ✅ Сначала получаем значения
-    const platform = currentPlatform || window.userPlatform;
-    const userId = currentUserId || window.userPlatformId;
+    var platform = currentPlatform || window.userPlatform;
+    var userId = currentUserId || window.userPlatformId;
 
-    // ✅ Проверяем ДО запроса
     if (!platform || !userId) {
         showToast('Ошибка: пользователь не авторизован', 'error');
         return;
     }
 
-    const resultDiv = document.getElementById('forecast-result');
-    const days = parseInt(document.getElementById('forecast_days').value);
+    var resultDiv = document.getElementById('forecast-result');
+    var daysSelect = document.getElementById('forecast_days');
+    var days = parseInt(daysSelect.value);
 
-    resultDiv.innerHTML = '<div class="loading">🔮 Генерация прогноза...</div>';
+    if (resultDiv) {
+        resultDiv.innerHTML = '<div class="loading">🔮 Генерация прогноза...</div>';
+    }
 
-    let forecastHtml = '<div class="result">';
+    var forecastHtml = '<div class="result">';
     forecastHtml += '<strong>📊 Энергетический прогноз</strong><br><br>';
 
-    const today = new Date();
-    let hasErrors = false;
+    var today = new Date();
 
-    for (let i = 1; i <= days; i++) {
-        const date = new Date(today);
+    for (var i = 1; i <= days; i++) {
+        var date = new Date(today);
         date.setDate(today.getDate() + i);
-        const dateStr = date.toISOString().split('T')[0];
-        const weekday = date.toLocaleDateString('ru-RU', { weekday: 'long' });
-        const dayMonth = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+        var dateStr = date.toISOString().split('T')[0];
+        var weekday = date.toLocaleDateString('ru-RU', { weekday: 'long' });
+        var dayMonth = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
         try {
-            const response = await fetch(`/api/recommendations?platform=${platform}&platform_user_id=${encodeURIComponent(userId)}&date=${dateStr}`);
-            const result = await response.json();
+            var response = await fetch('/api/recommendations?platform=' + platform + '&platform_user_id=' + encodeURIComponent(userId) + '&date=' + dateStr);
+            var result = await response.json();
 
             if (result.success) {
-                const energyPercent = result.energy_percent || 50;
-                let energyIcon = energyPercent > 70 ? '🚀' : (energyPercent > 40 ? '⚡' : '😴');
-
-                forecastHtml += `<div style="margin: 15px 0; padding: 15px; background: #f5f5f5; border-radius: 10px;">`;
-                forecastHtml += `<strong>${weekday}, ${dayMonth}</strong><br>`;
-                forecastHtml += `${energyIcon} Энергия: ${energyPercent}%<br>`;
-
-                // Добавляем первую рекомендацию
-                const recommendationsText = result.recommendations_text || '';
-                const firstRec = recommendationsText.split('\n')[0];
-                if (firstRec) {
-                    const shortRec = firstRec.length > 60 ? firstRec.substring(0, 60) + '...' : firstRec;
-                    forecastHtml += `💡 ${shortRec}`;
+                var energyPercent = result.energy_percent || 50;
+                
+                // Обновляем аватар по первому дню
+                if (i === 1) {
+                    updateEnergyDisplay(energyPercent);
                 }
-                forecastHtml += `</div>`;
+                
+                var energyIcon = '';
+                if (energyPercent > 70) {
+                    energyIcon = '🚀';
+                } else if (energyPercent > 40) {
+                    energyIcon = '⚡';
+                } else {
+                    energyIcon = '😴';
+                }
+
+                forecastHtml += '<div style="margin: 15px 0; padding: 15px; background: #f5f5f5; border-radius: 10px;">';
+                forecastHtml += '<strong>' + weekday + ', ' + dayMonth + '</strong><br>';
+                forecastHtml += energyIcon + ' Энергия: ' + energyPercent + '%<br>';
+
+                var recommendationsText = result.recommendations_text || '';
+                var firstRec = recommendationsText.split('\n')[0];
+                if (firstRec) {
+                    var shortRec = firstRec;
+                    if (firstRec.length > 60) {
+                        shortRec = firstRec.substring(0, 60) + '...';
+                    }
+                    forecastHtml += '💡 ' + shortRec;
+                }
+                forecastHtml += '</div>';
             } else {
-                forecastHtml += `<div style="margin: 15px 0; padding: 15px; background: #fee; border-radius: 10px;">❌ Ошибка для ${dayMonth}</div>`;
-                hasErrors = true;
+                forecastHtml += '<div style="margin: 15px 0; padding: 15px; background: #fee; border-radius: 10px;">❌ Ошибка для ' + dayMonth + '</div>';
             }
-        } catch(e) {
-            forecastHtml += `<div style="margin: 15px 0; padding: 15px; background: #fee; border-radius: 10px;">❌ Ошибка для ${dayMonth}: ${e.message}</div>`;
-            hasErrors = true;
+        } catch(error) {
+            forecastHtml += '<div style="margin: 15px 0; padding: 15px; background: #fee; border-radius: 10px;">❌ Ошибка для ' + dayMonth + ': ' + error.message + '</div>';
         }
     }
 
-    if (hasErrors) {
-        forecastHtml += `<br><div class="warning">⚠️ Некоторые дни не удалось загрузить. Попробуйте позже.</div>`;
-    }
-
     forecastHtml += '</div>';
-    resultDiv.innerHTML = forecastHtml;
+    
+    if (resultDiv) {
+        resultDiv.innerHTML = forecastHtml;
+    }
 }
 
 // ========== НАВИГАЦИЯ ==========
 
 /**
  * Показать выбранную страницу
+ * @param {string} page - Имя страницы: 'profile', 'activities', 'forecast'
  */
 function showPage(page) {
-    const profilePage = document.getElementById('profile-page');
-    const activitiesPage = document.getElementById('activities-page');
-    const forecastPage = document.getElementById('forecast-page');
+    var profilePage = document.getElementById('profile-page');
+    var activitiesPage = document.getElementById('activities-page');
+    var forecastPage = document.getElementById('forecast-page');
 
     // Скрываем все
-    if (profilePage) profilePage.classList.add('hidden');
-    if (activitiesPage) activitiesPage.classList.add('hidden');
-    if (forecastPage) forecastPage.classList.add('hidden');
+    if (profilePage) {
+        profilePage.classList.add('hidden');
+    }
+    if (activitiesPage) {
+        activitiesPage.classList.add('hidden');
+    }
+    if (forecastPage) {
+        forecastPage.classList.add('hidden');
+    }
 
     // Показываем выбранную
     if (page === 'profile' && profilePage) {
@@ -766,49 +1080,68 @@ function showPage(page) {
 
 /**
  * Восстановить сессию из cookies
+ * @returns {boolean} - Успешно ли восстановлена сессия
  */
-
 function restoreSession() {
-    const cookies = document.cookie.split(';');
-    let platform = null;
-    let platformId = null;
-    let authenticated = false;
-    let name = null;
-    let email = null;
-    let userId = null;
+    var cookies = document.cookie.split(';');
+    var platform = null;
+    var platformId = null;
+    var authenticated = false;
+    var name = null;
+    var email = null;
 
-    cookies.forEach(cookie => {
-        const [key, value] = cookie.trim().split('=');
-        if (key === 'user_platform') platform = decodeURIComponent(value);
-        if (key === 'user_platform_id') platformId = decodeURIComponent(value);
-        if (key === 'user_authenticated') authenticated = value === 'true';
-        if (key === 'user_name') name = decodeURIComponent(value);
-        if (key === 'user_email') email = decodeURIComponent(value);
-        if (key === 'user_id') userId = decodeURIComponent(value);
-    });
+    for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        var parts = cookie.split('=');
+        var key = parts[0];
+        var value = decodeURIComponent(parts[1] || '');
+        
+        if (key === 'user_platform') {
+            platform = value;
+        }
+        if (key === 'user_platform_id') {
+            platformId = value;
+        }
+        if (key === 'user_authenticated') {
+            authenticated = value === 'true';
+        }
+        if (key === 'user_name') {
+            name = value;
+        }
+        if (key === 'user_email') {
+            email = value;
+        }
+    }
 
     if (authenticated && platform && platformId) {
         currentPlatform = platform;
-        currentUserId = platformId;  // yandex_id для Яндекса!
+        currentUserId = platformId;
 
         window.userAuthenticated = true;
         window.userPlatform = platform;
         window.userPlatformId = platformId;
 
         // Определяем отображаемое имя
-        let displayName = name || platformId;
+        var displayName = name || platformId;
         if (platform === 'yandex' && email) {
-            displayName = email;  // Для Яндекс показываем email
+            displayName = email;
         }
 
         // Скрываем форму входа
-        document.getElementById('auth-page').classList.add('hidden');
+        var authPage = document.getElementById('auth-page');
+        if (authPage) {
+            authPage.classList.add('hidden');
+        }
 
         // Показываем профиль
-        document.getElementById('profile-page').classList.remove('hidden');
-        const profileUserId = document.getElementById('profile-user-id');
+        var profilePage = document.getElementById('profile-page');
+        if (profilePage) {
+            profilePage.classList.remove('hidden');
+        }
+        
+        var profileUserId = document.getElementById('profile-user-id');
         if (profileUserId) {
-            profileUserId.innerHTML = `👤 ${displayName}`;
+            profileUserId.innerHTML = '👤 ' + displayName;
         }
 
         // Загружаем данные
@@ -822,92 +1155,22 @@ function restoreSession() {
     return false;
 }
 
-// ========== ИНИЦИАЛИЗАЦИЯ ==========
-
-/**
- * Инициализация приложения
- */
-function initApp() {
-    // Устанавливаем сегодняшнюю дату для поля даты
-    const today = new Date();
-    const formattedDate = today.toISOString().split('T')[0];
-    const targetDateInput = document.getElementById('target_date');
-    if (targetDateInput) {
-        targetDateInput.value = formattedDate;
-    }
-
-    // Настройка переключения типа аутентификации
-    toggleAuthType();
-
-    // Настройка форматирования телефона
-    const phoneInput = document.getElementById('phone_input');
-    if (phoneInput) {
-        phoneInput.addEventListener('input', function(e) {
-            formatPhoneNumber(this);
-        });
-    }
-
-    // Восстановление сессии
-    const sessionRestored = restoreSession();
-
-    // Если сессия не восстановлена, показываем форму входа
-    if (!sessionRestored) {
-        document.getElementById('auth-page').classList.remove('hidden');
-    }
-
-    // Обработка Enter в полях ввода
-    const emailInput = document.getElementById('email_input');
-    if (emailInput) {
-        emailInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') login();
-        });
-    }
-
-    if (phoneInput) {
-        phoneInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') login();
-        });
-    }
-
-    // Обработка Enter в модальных окнах
-    const modalPassword = document.getElementById('modal-password');
-    if (modalPassword) {
-        modalPassword.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') submitPassword();
-        });
-    }
-
-    const setPassword = document.getElementById('set-password');
-    if (setPassword) {
-        setPassword.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') submitSetPassword();
-        });
-    }
-
-    console.log('Daily Tuner initialized');
-    console.log('Authenticated:', !!currentUserId);
-}
-
-// Запускаем инициализацию после загрузки DOM
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initApp);
-} else {
-    initApp();
-}
-
 // ========== СОГЛАСИЕ НА ПЕРСОНАЛЬНЫЕ ДАННЫЕ ==========
 
+/**
+ * Инициализация чекбокса согласия на обработку персональных данных
+ */
 function initConsentCheckbox() {
-    const checkbox = document.getElementById('consent-checkbox');
-    const loginBtn = document.getElementById('yandex-login-btn');
+    var checkbox = document.getElementById('consent-checkbox');
+    var loginBtn = document.getElementById('yandex-login-btn');
 
     if (!checkbox || !loginBtn) {
-        console.warn('Consent elements not found');
+        console.warn('Элементы согласия не найдены');
         return;
     }
 
     // Восстановление состояния из localStorage
-    const consentGiven = localStorage.getItem('consent_given') === 'true';
+    var consentGiven = localStorage.getItem('consent_given') === 'true';
     if (consentGiven) {
         checkbox.checked = true;
         loginBtn.disabled = false;
@@ -915,7 +1178,7 @@ function initConsentCheckbox() {
 
     // Обработчик изменения чекбокса
     checkbox.addEventListener('change', function() {
-        const isChecked = this.checked;
+        var isChecked = this.checked;
         loginBtn.disabled = !isChecked;
         
         if (isChecked) {
@@ -928,19 +1191,19 @@ function initConsentCheckbox() {
     });
 
     // Блокировка клика по неактивной кнопке
-    loginBtn.addEventListener('click', function(e) {
+    loginBtn.addEventListener('click', function(event) {
         if (this.disabled) {
-            e.preventDefault();
-            e.stopPropagation();
+            event.preventDefault();
+            event.stopPropagation();
             showToast('Пожалуйста, дайте согласие на обработку персональных данных', 'warning');
             checkbox.focus();
             
             // Визуальная подсветка блока
-            const block = document.querySelector('.consent-block');
+            var block = document.querySelector('.consent-block');
             if (block) {
                 block.style.borderLeftColor = '#ff6b6b';
                 block.style.transition = 'border-left-color 0.3s ease';
-                setTimeout(() => {
+                setTimeout(function() {
                     block.style.borderLeftColor = '#667eea';
                 }, 1500);
             }
@@ -949,16 +1212,99 @@ function initConsentCheckbox() {
         return true;
     }, true);
 
-    console.log('✅ Consent checkbox initialized');
+    console.log('✅ Чекбокс согласия инициализирован');
 }
 
-// Инициализация после загрузки DOM
-document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(initConsentCheckbox, 100);
-});
+// ========== ИНИЦИАЛИЗАЦИЯ ==========
 
-// Экспорт для использования в других местах
-window.initConsentCheckbox = initConsentCheckbox;
+/**
+ * Инициализация приложения
+ */
+function initApp() {
+    // Устанавливаем сегодняшнюю дату для поля даты
+    var today = new Date();
+    var formattedDate = today.toISOString().split('T')[0];
+    var targetDateInput = document.getElementById('target_date');
+    if (targetDateInput) {
+        targetDateInput.value = formattedDate;
+    }
+
+    // Настройка переключения типа аутентификации
+    toggleAuthType();
+
+    // Настройка форматирования телефона
+    var phoneInput = document.getElementById('phone_input');
+    if (phoneInput) {
+        phoneInput.addEventListener('input', function(event) {
+            formatPhoneNumber(this);
+        });
+    }
+
+    // Инициализация чекбокса согласия
+    initConsentCheckbox();
+
+    // Восстановление сессии
+    var sessionRestored = restoreSession();
+
+    // Если сессия не восстановлена, показываем форму входа
+    if (!sessionRestored) {
+        var authPage = document.getElementById('auth-page');
+        if (authPage) {
+            authPage.classList.remove('hidden');
+        }
+    }
+
+    // Обработка Enter в полях ввода
+    var emailInput = document.getElementById('email_input');
+    if (emailInput) {
+        emailInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                login();
+            }
+        });
+    }
+
+    if (phoneInput) {
+        phoneInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                login();
+            }
+        });
+    }
+
+    // Обработка Enter в модальных окнах
+    var modalPassword = document.getElementById('modal-password');
+    if (modalPassword) {
+        modalPassword.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                submitPassword();
+            }
+        });
+    }
+
+    var setPassword = document.getElementById('set-password');
+    if (setPassword) {
+        setPassword.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                submitSetPassword();
+            }
+        });
+    }
+
+    console.log('Daily Tuner инициализирован');
+    console.log('Аутентифицирован:', !!currentUserId);
+}
+
+// ========== ЗАПУСК ==========
+
+// Запускаем инициализацию после загрузки DOM
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+} else {
+    initApp();
+}
+
+// ========== ЭКСПОРТ ФУНКЦИЙ ==========
 
 // Экспортируем функции для использования в HTML
 window.showToast = showToast;
@@ -981,3 +1327,5 @@ window.showSetPasswordForm = showSetPasswordModal;
 window.formatPhoneNumber = formatPhoneNumber;
 window.loadProfile = loadProfile;
 window.checkPasswordStatus = checkPasswordStatus;
+window.updateEnergyDisplay = updateEnergyDisplay;
+window.initConsentCheckbox = initConsentCheckbox;

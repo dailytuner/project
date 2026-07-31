@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash  init-caches.sh
 set -e
 
 EPHEMERIS_DIR="/usr/share/swisseph"

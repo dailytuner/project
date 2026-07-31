@@ -1,4 +1,4 @@
-<!-- web/templates/base.html -->
+<!-- app/web/templates/base.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -8,48 +8,67 @@
 
     {% block styles %}
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Сброс отступов и общие стили */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Основной фон страницы */
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
+
+        /* Контейнер для центрирования содержимого */
         .container {
             max-width: 600px;
             margin: 0 auto;
         }
+
+        /* Карточка - основной элемент интерфейса */
         .card {
             background: white;
             border-radius: 20px;
             padding: 30px;
             margin-bottom: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
             transition: transform 0.3s ease;
         }
+
         .card:hover {
             transform: translateY(-2px);
         }
+
+        /* Заголовки */
         h1 {
-            color: #333;
+            color: #333333;
             margin-bottom: 10px;
             font-size: 24px;
         }
+
         h2 {
-            color: #555;
+            color: #555555;
             margin-bottom: 15px;
             font-size: 18px;
         }
+
         h3 {
-            color: #666;
+            color: #666666;
             margin-bottom: 10px;
             font-size: 16px;
         }
+
         .subtitle {
-            color: #666;
+            color: #666666;
             margin-bottom: 30px;
             font-size: 14px;
         }
+
+        /* Поля ввода и выпадающие списки */
         input, select {
             width: 100%;
             padding: 14px;
@@ -59,10 +78,13 @@
             font-size: 16px;
             transition: border-color 0.3s ease;
         }
+
         input:focus, select:focus {
             outline: none;
             border-color: #667eea;
         }
+
+        /* Кнопки */
         button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -75,16 +97,20 @@
             margin-top: 10px;
             transition: all 0.3s ease;
         }
+
         button:hover {
             opacity: 0.9;
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
         }
+
         button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
             transform: none;
         }
+
+        /* Блок с результатами */
         .result {
             background: #f8f9fa;
             border-radius: 15px;
@@ -93,24 +119,30 @@
             font-size: 14px;
             line-height: 1.5;
         }
+
+        /* Навигационное меню */
         .nav {
             display: flex;
             gap: 10px;
             margin-bottom: 20px;
             flex-wrap: wrap;
         }
+
         .nav-btn {
-            background: rgba(255,255,255,0.2);
+            background: rgba(255, 255, 255, 0.2);
             color: white;
-            border: 1px solid rgba(255,255,255,0.3);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             margin: 0;
             padding: 12px;
             flex: 1;
             min-width: 100px;
         }
+
         .nav-btn:hover {
-            background: rgba(255,255,255,0.3);
+            background: rgba(255, 255, 255, 0.3);
         }
+
+        /* Сообщения о статусе */
         .error {
             background: #fee;
             color: #c00;
@@ -119,6 +151,7 @@
             margin-top: 20px;
             border-left: 4px solid #c00;
         }
+
         .success {
             background: #e8f5e9;
             color: #2e7d32;
@@ -127,6 +160,7 @@
             margin-top: 20px;
             border-left: 4px solid #2e7d32;
         }
+
         .warning {
             background: #fff3e0;
             color: #e65100;
@@ -135,6 +169,7 @@
             margin-top: 20px;
             border-left: 4px solid #ff9800;
         }
+
         .info {
             background: #e3f2fd;
             color: #1565c0;
@@ -143,11 +178,14 @@
             margin-top: 20px;
             border-left: 4px solid #2196f3;
         }
+
+        /* Тип аутентификации */
         .auth-type {
             display: flex;
             gap: 15px;
             margin-bottom: 20px;
         }
+
         .auth-type label {
             display: flex;
             align-items: center;
@@ -157,24 +195,29 @@
             border-radius: 10px;
             transition: background 0.3s ease;
         }
+
         .auth-type label:hover {
             background: #f0f0f0;
         }
+
         .auth-type input {
             width: auto;
             margin: 0;
         }
+
+        /* Всплывающие сообщения */
         .toast {
             position: fixed;
             bottom: 20px;
             right: 20px;
-            background: #333;
+            background: #333333;
             color: white;
             padding: 12px 20px;
             border-radius: 10px;
             z-index: 1000;
             animation: slideIn 0.3s ease;
         }
+
         @keyframes slideIn {
             from {
                 transform: translateX(100%);
@@ -185,12 +228,15 @@
                 opacity: 1;
             }
         }
+
+        /* Шкала энергии */
         .energy-bar {
             background: #e0e0e0;
             border-radius: 10px;
             overflow: hidden;
             margin: 15px 0;
         }
+
         .energy-fill {
             background: linear-gradient(90deg, #4caf50, #ff9800, #f44336);
             height: 30px;
@@ -203,11 +249,15 @@
             font-weight: bold;
             font-size: 14px;
         }
+
+        /* Индикатор загрузки */
         .loading {
             text-align: center;
             padding: 20px;
-            color: #666;
+            color: #666666;
         }
+
+        /* Модальные окна */
         .modal {
             display: none;
             position: fixed;
@@ -215,11 +265,12 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.5);
             z-index: 1001;
             justify-content: center;
             align-items: center;
         }
+
         .modal-content {
             background: white;
             border-radius: 20px;
@@ -228,23 +279,32 @@
             width: 90%;
             margin: 20px;
         }
+
+        /* Разделитель */
         hr {
             margin: 20px 0;
             border: none;
             border-top: 1px solid #e0e0e0;
         }
+
+        /* Вспомогательные классы */
         .hidden {
             display: none !important;
         }
+
         .flex {
             display: flex;
         }
+
         .flex-1 {
             flex: 1;
         }
+
         .gap-10 {
             gap: 10px;
         }
+
+        /* Информация о пользователе */
         .user-info {
             display: flex;
             align-items: center;
@@ -253,13 +313,15 @@
             background: white;
             border-radius: 15px;
             margin-bottom: 20px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
         }
+
         .user-name {
             font-weight: bold;
-            color: #333;
+            color: #333333;
             font-size: 16px;
         }
+
         .logout-btn {
             background: #dc3545;
             color: white;
@@ -271,11 +333,14 @@
             width: auto;
             margin: 0;
         }
+
         .logout-btn:hover {
             background: #c82333;
             opacity: 1;
             transform: none;
         }
+
+        /* Кнопка входа через Яндекс */
         .yandex-btn {
             background: #fc3f1d;
             color: white;
@@ -292,24 +357,43 @@
             justify-content: center;
             gap: 10px;
         }
+
         .yandex-btn:hover {
             opacity: 0.9;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(252, 63, 29, 0.3);
         }
+
+        .yandex-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .yandex-btn:not(:disabled):hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(252, 63, 29, 0.3);
+        }
+
+        /* Разделитель с текстом */
         .divider {
             display: flex;
             align-items: center;
             margin: 20px 0;
-            color: #999;
+            color: #999999;
             gap: 15px;
         }
-        .divider::before, .divider::after {
+
+        .divider::before,
+        .divider::after {
             content: "";
             flex: 1;
             border-bottom: 1px solid #e0e0e0;
         }
-        /* ===== СОГЛАСИЕ НА ПЕРСОНАЛЬНЫЕ ДАННЫЕ ===== */
+
+        /* Блок согласия на обработку персональных данных */
         .consent-block {
             margin: 20px 0 15px;
             padding: 16px 20px;
@@ -319,12 +403,25 @@
             text-align: left;
             width: 100%;
             transition: background 0.3s ease;
+            animation: fadeInUp 0.4s ease;
         }
 
         .consent-block:hover {
             background: #f0f3ff;
         }
 
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Кастомный чекбокс */
         .consent-checkbox {
             display: flex;
             align-items: flex-start;
@@ -390,20 +487,6 @@
             font-size: 12px;
         }
 
-        /* Кнопка Яндекс в disabled состоянии */
-        .yandex-btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            transform: none !important;
-            box-shadow: none !important;
-        }
-
-        .yandex-btn:not(:disabled):hover {
-            opacity: 0.9;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(252, 63, 29, 0.3);
-        }
-
         /* Юридическая заметка */
         .legal-note {
             font-size: 12px;
@@ -421,20 +504,94 @@
             text-decoration: underline;
         }
 
-        /* Анимация появления */
-        .consent-block {
-            animation: fadeInUp 0.4s ease;
+        /* Стили для 3D аватара */
+        #avatar-container {
+            position: relative;
+            transition: box-shadow 0.5s ease;
+            border-radius: 50%;
+            overflow: hidden;
+            background: radial-gradient(ellipse at center, #0a0a1a 0%, #000000 100%);
+            width: 100%;
+            max-width: 350px;
+            height: 350px;
+            margin: 0 auto 20px;
+            box-shadow: 0 0 40px rgba(102, 126, 234, 0.2);
+            cursor: pointer;
         }
 
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
+        #avatar-container:hover {
+            box-shadow: 0 0 60px rgba(102, 126, 234, 0.4);
+        }
+
+        #avatar-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+
+        /* Энергетический индикатор */
+        #energy-indicator {
+            background: linear-gradient(90deg, #4a00e0, #667eea, #f093fb, #ff6b6b);
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.2);
+            width: 200px;
+            height: 8px;
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+            flex: 1;
+            min-width: 100px;
+            max-width: 250px;
+        }
+
+        #energy-fill {
+            background: rgba(255, 255, 255, 0.4);
+            box-shadow: 0 0 15px rgba(102, 126, 234, 0.5);
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 50%;
+            height: 100%;
+            border-radius: 4px;
+        }
+
+        #energy-text {
+            color: #667eea;
+            font-weight: bold;
+            font-size: 18px;
+            min-width: 50px;
+            transition: color 0.5s ease;
+        }
+
+        /* Анимация вспышки для аватара */
+        @keyframes flashAnim {
+            0% {
                 opacity: 1;
-                transform: translateY(0);
+                transform: scale(0.5);
             }
+            100% {
+                opacity: 0;
+                transform: scale(1.5);
+            }
+        }
+
+        /* Контейнер для индикатора энергии */
+        .energy-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .energy-label {
+            color: #888888;
+            font-size: 14px;
+        }
+
+        .energy-hint {
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666666;
         }
     </style>
     {% endblock %}
@@ -443,6 +600,9 @@
     <div class="container">
         {% block content %}{% endblock %}
     </div>
+
+    <!-- Подключение библиотеки Three.js для 3D аватара -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     {% block scripts %}{% endblock %}
 </body>

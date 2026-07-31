@@ -203,6 +203,9 @@ services:
     entrypoint: [ "/entrypoint.sh" ]
     volumes:
       - ./scripts/postgres-exporter-entrypoint.sh:/entrypoint.sh:ro
+      - ./config/postgres-exporter.yml:/postgres_exporter.yml:ro
+    environment:
+      - PG_EXPORTER_CONFIG_FILE=/postgres_exporter.yml
     secrets:
       - postgrespassword
     networks:

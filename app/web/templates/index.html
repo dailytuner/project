@@ -274,4 +274,55 @@
             });
         })();
     </script>
+
+    <!-- Дополнительная инициализация для Яндекс кнопки -->
+    <script>
+        (function() {
+            console.log('🔄 Дополнительная проверка Яндекс кнопки...');
+            
+            function checkYandexButton() {
+                var checkbox = document.getElementById('consent-checkbox');
+                var loginBtn = document.getElementById('yandex-login-btn');
+                
+                if (!checkbox || !loginBtn) {
+                    console.warn('⚠️ Элементы не найдены');
+                    return;
+                }
+                
+                console.log('✅ Элементы найдены');
+                
+                // Проверяем состояние
+                var consentGiven = localStorage.getItem('consent_given') === 'true';
+                
+                if (consentGiven) {
+                    checkbox.checked = true;
+                    loginBtn.disabled = false;
+                    console.log('✅ Яндекс кнопка активирована (согласие было)');
+                } else if (checkbox.checked) {
+                    loginBtn.disabled = false;
+                    localStorage.setItem('consent_given', 'true');
+                    console.log('✅ Яндекс кнопка активирована (чекбокс отмечен)');
+                } else {
+                    loginBtn.disabled = true;
+                    console.log('🔒 Яндекс кнопка заблокирована');
+                }
+                
+                // Добавляем обработчик на случай, если чекбокс изменится вручную
+                checkbox.addEventListener('change', function() {
+                    if (this.checked) {
+                        loginBtn.disabled = false;
+                        localStorage.setItem('consent_given', 'true');
+                        console.log('✅ Яндекс кнопка активирована (изменение чекбокса)');
+                    } else {
+                        loginBtn.disabled = true;
+                        localStorage.removeItem('consent_given');
+                        console.log('🔒 Яндекс кнопка заблокирована (изменение чекбокса)');
+                    }
+                });
+            }
+            
+            // Запускаем с задержкой
+            setTimeout(checkYandexButton, 500);
+        })();
+    </script>
 {% endblock %}

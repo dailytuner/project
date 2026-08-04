@@ -1161,58 +1161,88 @@ function restoreSession() {
  * Инициализация чекбокса согласия на обработку персональных данных
  */
 function initConsentCheckbox() {
+    console.log('🔄 Инициализация чекбокса согласия...');
+    
     var checkbox = document.getElementById('consent-checkbox');
     var loginBtn = document.getElementById('yandex-login-btn');
 
     if (!checkbox || !loginBtn) {
-        console.warn('Элементы согласия не найдены');
+        console.warn('⚠️ Элементы согласия не найдены на странице');
         return;
     }
 
+    console.log('✅ Элементы согласия найдены');
+
     // Восстановление состояния из localStorage
     var consentGiven = localStorage.getItem('consent_given') === 'true';
+    console.log('📌 Состояние согласия из localStorage:', consentGiven);
+    
     if (consentGiven) {
         checkbox.checked = true;
         loginBtn.disabled = false;
+        console.log('✅ Кнопка Яндекс активирована (согласие было дано ранее)');
+    } else {
+        loginBtn.disabled = true;
+        console.log('🔒 Кнопка Яндекс заблокирована (согласие не дано)');
     }
 
+    // Удаляем старые обработчики, чтобы избежать дублирования
+    var newCheckbox = checkbox.cloneNode(true);
+    checkbox.parentNode.replaceChild(newCheckbox, checkbox);
+    checkbox = newCheckbox;
+
     // Обработчик изменения чекбокса
-    checkbox.addEventListener('change', function() {
+    checkbox.addEventListener('change', function(event) {
         var isChecked = this.checked;
-        loginBtn.disabled = !isChecked;
+        console.log('🔄 Чекбокс изменен:', isChecked);
         
         if (isChecked) {
+            loginBtn.disabled = false;
             localStorage.setItem('consent_given', 'true');
             showToast('✅ Согласие принято', 'success');
+            console.log('✅ Кнопка Яндекс активирована');
         } else {
+            loginBtn.disabled = true;
             localStorage.removeItem('consent_given');
             showToast('⚠️ Согласие отозвано', 'warning');
+            console.log('🔒 Кнопка Яндекс заблокирована');
         }
     });
 
     // Блокировка клика по неактивной кнопке
     loginBtn.addEventListener('click', function(event) {
         if (this.disabled) {
+            console.warn('⚠️ Попытка клика по заблокированной кнопке');
             event.preventDefault();
             event.stopPropagation();
             showToast('Пожалуйста, дайте согласие на обработку персональных данных', 'warning');
-            checkbox.focus();
             
             // Визуальная подсветка блока
             var block = document.querySelector('.consent-block');
             if (block) {
                 block.style.borderLeftColor = '#ff6b6b';
+                block.style.borderLeftWidth = '4px';
                 block.style.transition = 'border-left-color 0.3s ease';
                 setTimeout(function() {
                     block.style.borderLeftColor = '#667eea';
                 }, 1500);
             }
+            
+            // Подсветка чекбокса
+            checkbox.style.outline = '2px solid #ff6b6b';
+            checkbox.style.outlineOffset = '4px';
+            setTimeout(function() {
+                checkbox.style.outline = 'none';
+                checkbox.style.outlineOffset = '0';
+            }, 1500);
+            
+            checkbox.focus();
             return false;
         }
         return true;
     }, true);
 
-    console.log('✅ Чекбокс согласия инициализирован');
+    console.log('✅ Чекбокс согласия полностью инициализирован');
 }
 
 // ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -1221,6 +1251,8 @@ function initConsentCheckbox() {
  * Инициализация приложения
  */
 function initApp() {
+    console.log('🚀 Инициализация Daily Tuner...');
+    
     // Устанавливаем сегодняшнюю дату для поля даты
     var today = new Date();
     var formattedDate = today.toISOString().split('T')[0];
@@ -1240,8 +1272,10 @@ function initApp() {
         });
     }
 
-    // Инициализация чекбокса согласия
-    initConsentCheckbox();
+    // Инициализация чекбокса согласия (с задержкой для гарантии загрузки DOM)
+    setTimeout(function() {
+        initConsentCheckbox();
+    }, 100);
 
     // Восстановление сессии
     var sessionRestored = restoreSession();
@@ -1291,8 +1325,8 @@ function initApp() {
         });
     }
 
-    console.log('Daily Tuner инициализирован');
-    console.log('Аутентифицирован:', !!currentUserId);
+    console.log('✅ Daily Tuner инициализирован');
+    console.log('📊 Аутентифицирован:', !!currentUserId);
 }
 
 // ========== ЗАПУСК ==========

@@ -26,13 +26,30 @@ secrets:
 	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24 > docker-secrets/app_password.txt
 	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32 > docker-secrets/backend-api-key.txt
 	PASS=$$(cat docker-secrets/postgrespassword.txt) && echo "postgresql+asyncpg://postgres:$${PASS}@postgres:5432/personalassistant" > docker-secrets/db-url.txt
+
+	# 🔐 MinIO secrets
+	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 16 > docker-secrets/minio-root-user.txt
+	openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32 > docker-secrets/minio-root-password.txt
+
+	# 📊 Grafana secret
+	@if [ ! -f docker-secrets/grafana-password.txt ]; then \
+		openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24 > docker-secrets/grafana-password.txt; \
+	fi
+
+	# 🔑 JWT secret
+	@if [ ! -f docker-secrets/jwt-secret ]; then \
+		openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32 > docker-secrets/jwt-secret; \
+	fi
+
 	chmod 600 docker-secrets/*
 	@echo "${GREEN}✅ Secrets created:${RESET}"
 	@echo "   Postgres: $$(cat docker-secrets/postgrespassword.txt | cut -c1-8)... "
 	@echo "   App role: $$(cat docker-secrets/app_password.txt | cut -c1-8)... "
-	@echo "   API Key:  $$(cat docker-secrets/backend-api-key.txt | cut -c1-8)... " 
+	@echo "   API Key:  $$(cat docker-secrets/backend-api-key.txt | cut -c1-8)... "
 	@echo "   DB URL: $$(cat docker-secrets/db-url.txt | cut -c1-30)... "
-	
+	@echo "   MinIO User: $$(cat docker-secrets/minio-root-user.txt | cut -c1-8)... "
+	@echo "   MinIO Pass: $$(cat docker-secrets/minio-root-password.txt | cut -c1-8)... "
+	@echo "   Grafana: $$(cat docker-secrets/grafana-password.txt | cut -c1-8)... "
 # ============================================
 # 2. ПОЛНЫЙ ЗАПУСК (secrets + init + app)
 # ============================================
@@ -139,7 +156,8 @@ check-backup-quick:
 	@ls -lh backups/*.sql.gz 2>/dev/null | tail -1 || echo "No backups"
 	@echo ""
 	@echo "DB status:"
-	@make db-status
+	@echo "Tables:"
+	@docker exec pa-postgres psql -U postgres -d personalassistant -c "\dt" 2>/dev/null | tail -n +4 | head -n -2 | wc -l | xargs echo "  Total:" || echo "  DB not ready"
 # ============================================
 # 7. ВОССТАНОВЛЕНИЕ
 # ============================================

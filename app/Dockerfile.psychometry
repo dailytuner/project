@@ -1,0 +1,50 @@
+# app/Dockerfile.psychometry
+
+FROM python:3.11-slim AS builder
+
+# Устанавливаем системные зависимости для сборки
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создаем виртуальное окружение
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Копируем зависимости
+COPY requirements-psychometry.txt .
+RUN pip install --no-cache-dir -r requirements-psychometry.txt
+
+# Финальный образ
+FROM python:3.11-slim
+
+# Устанавливаем runtime зависимости
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем виртуальное окружение
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Создаем пользователя
+RUN useradd -m -u 1000 psychometry && \
+    chown -R psychometry:psychometry /opt/venv
+
+WORKDIR /app
+
+# Создаем структуру директорий (код будет смонтирован)
+RUN mkdir -p /app/psychometry-service
+
+# Переключаемся на пользователя
+USER psychometry
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000 9090
+
+ENV PYTHONPATH=/app/psychometry
+CMD ["uvicorn", "psychometry-service.src.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,26 @@
+# psychometry-service/.dockerignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.env
+.git
+.gitignore
+*.md
+Dockerfile
+.dockerignore
+tests/
+venv/
+.venv/
+pytest_cache/
+.coverage
+htmlcov/
+*.log
+*.sqlite3
+*.db

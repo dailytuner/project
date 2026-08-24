@@ -1,0 +1,206 @@
+# Статус всех контейнеров
+docker compose ps
+
+# Проверка всех логов на ошибки
+docker compose logs --tail=50 | grep -i "error\|fatal\|exception\|traceback"
+
+# Health check
+curl -s http://localhost:8002/health | jq .
+
+# Ready check
+curl -s http://localhost:8002/ready | jq .
+
+# Root endpoint
+curl -s http://localhost:8002/ | jq .
+
+# Проверка docs (если DEBUG=true)
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/docs
+
+# Проверка существования схемы psych
+docker exec pa-postgres psql -U postgres -d personalassistant -c "\dn"
+
+# Проверка таблиц в схеме psych
+docker exec pa-postgres psql -U postgres -d personalassistant -c "\dt psych.*"
+
+# Проверка индексов
+docker exec pa-postgres psql -U postgres -d personalassistant -c "\di psych.*"
+
+# Проверка триггеров
+docker exec pa-postgres psql -U postgres -d personalassistant -c "SELECT tgname FROM pg_trigger WHERE tgrelid::regclass::text LIKE 'psych.%'"
+
+
+
+
+
+# Проверка роли psychometry_app
+docker exec pa-postgres psql -U postgres -d personalassistant -c "SELECT rolname FROM pg_roles WHERE rolname = 'psychometry_app'"
+
+# Проверка прав доступа
+docker exec pa-postgres psql -U postgres -d personalassistant -c "\dp psych.*"
+
+
+
+
+
+# Health check MinIO
+curl -s http://localhost:9000/minio/health/live
+
+# Проверка bucket
+docker exec pa-minio mc ls myminio/personal-assistant-lake/ 2>/dev/null || echo "Bucket exists but empty"
+
+# Проверка доступа
+docker exec pa-minio mc stat myminio/personal-assistant-lake/
+
+
+
+
+
+# Проверка логов worker
+docker compose logs psychometry-outbox-worker --tail=20
+
+# Проверка, что worker не падает
+docker compose ps psychometry-outbox-worker
+
+
+
+
+
+
+# Проверка структуры app/psychometry/
+echo "=== Структура app/psychometry/ ==="
+tree ~/project/app/psychometry/ 2>/dev/null || find ~/project/app/psychometry/ -type f -name "*.py" | sort
+
+# Проверка наличия __init__.py
+echo ""
+echo "=== Проверка __init__.py ==="
+find ~/project/app/psychometry/ -name "__init__.py" | sort
+
+# Проверка main.py и settings.py
+echo ""
+echo "=== Проверка основных файлов ==="
+ls -la ~/project/app/psychometry/src/main.py ~/project/app/psychometry/src/settings.py
+
+# Проверка outbox_worker.py
+echo ""
+echo "=== Проверка outbox_worker.py ==="
+ls -la ~/project/app/psychometry/src/workers/outbox_worker.py
+
+# Проверка mmpi_norms.json
+echo ""
+echo "=== Проверка mmpi_norms.json ==="
+ls -la ~/project/app/psychometry/data/mmpi_norms.json
+
+
+
+echo "=== Проверка секретов ==="
+for secret in postgrespassword jwt-secret db-url minio-root-user minio-root-password; do
+    if [ -f "docker-secrets/$secret" ] || [ -f "docker-secrets/${secret}.txt" ]; then
+        echo "✅ $secret существует"
+    else
+        echo "❌ $secret отсутствует"
+    fi
+done
+
+# Проверка содержимого секретов (без раскрытия)
+echo ""
+echo "=== Размеры секретов ==="
+for file in docker-secrets/*; do
+    if [ -f "$file" ]; then
+        size=$(wc -c < "$file")
+        echo "$(basename $file): $size bytes"
+    fi
+done
+
+
+
+
+# Проверка подключения к БД из контейнера
+docker exec pa-psychometry python -c "
+import os
+import asyncpg
+import asyncio
+
+async def test():
+    try:
+        conn = await asyncpg.connect(
+            host='postgres',
+            database='personalassistant',
+            user='postgres',
+            password=os.getenv('POSTGRES_PASSWORD', 'postgres')
+        )
+        result = await conn.fetch('SELECT 1 as test')
+        print('✅ Database connection OK')
+        await conn.close()
+        return True
+    except Exception as e:
+        print(f'❌ Database connection failed: {e}')
+        return False
+
+asyncio.run(test())
+"
+
+# Проверка подключения к MinIO из контейнера
+docker exec pa-psychometry python -c "
+import os
+from aioboto3 import Session
+import asyncio
+
+async def test():
+    try:
+        session = Session()
+        async with session.client(
+            's3',
+            endpoint_url='http://minio:9000',
+            aws_access_key_id=os.getenv('LAKE_ACCESS_KEY', 'minioadmin'),
+            aws_secret_access_key=os.getenv('LAKE_SECRET_KEY', 'minioadmin'),
+            use_ssl=False
+        ) as s3:
+            await s3.head_bucket(Bucket='personal-assistant-lake')
+            print('✅ MinIO connection OK')
+    except Exception as e:
+        print(f'❌ MinIO connection failed: {e}')
+
+asyncio.run(test())
+"
+
+
+
+# Проверка JWT секрета
+echo "=== Проверка JWT ==="
+JWT_LEN=$(cat docker-secrets/jwt-secret | tr -d '\n\r' | wc -c)
+echo "JWT длина: $JWT_LEN символов"
+
+if [ $JWT_LEN -ge 32 ]; then
+    echo "✅ JWT секрет валидный"
+else
+    echo "❌ JWT секрет слишком короткий!"
+fi
+
+
+
+
+
+# Тест всех доступных endpoints
+echo "=== Тест API ==="
+
+# Health
+echo -n "Health: "
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/health
+
+# Ready
+echo -n "Ready: "
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/ready
+
+# Root
+echo -n "Root: "
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/
+
+# Docs (если доступны)
+echo -n "Docs: "
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/docs 2>/dev/null || echo "404 (отключены)"
+
+
+echo "=== Использование ресурсов ==="
+docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" | grep -E "psychometry|postgres|minio"
+
+

@@ -1,0 +1,1367 @@
+# Техническое задание на рефакторинг фронтенд
+
+## Версия 1.0 — Интеграция с Alignment Engine и сопоставлением профилей
+
+---
+
+## Оглавление
+
+1. [Введение и цели](#1-введение-и-цели)
+2. [Общая архитектура фронтенда](#2-общая-архитектура-фронтенда)
+3. [Структура проекта](#3-структура-проекта)
+4. [Новые страницы и компоненты](#4-новые-страницы-и-компоненты)
+5. [API интеграция](#5-api-интеграция)
+6. [Состояние и управление данными](#6-состояние-и-управление-данными)
+7. [UI/UX требования](#7-uiux-требования)
+8. [Типизация и модели данных](#8-типизация-и-модели-данных)
+9. [Конфигурация и развертывание](#9-конфигурация-и-развертывание)
+10. [Чек-лист приёмки](#10-чек-лист-приёмки)
+11. [План реализации](#11-план-реализации)
+
+---
+
+## 1. Введение и цели
+
+### 1.1. Что такое фронтенд рефакторинг
+
+**Фронтенд рефакторинг** — это обновление клиентской части приложения, которое:
+
+- Интегрирует новый **Alignment Engine** API
+- Добавляет страницу **сопоставления профилей** (когерентность)
+- Отображает **coherence_score** и **диссонансы** в понятном виде
+- Визуализирует **историю изменений** когерентности
+- Сохраняет существующий функционал (MMPI, IAT, прогнозы)
+
+**Ключевой принцип:** Пользователь видит не просто "прогноз", а **сопоставление** его астрологического и психологического профилей.
+
+### 1.2. Что изменилось в версии 3.0
+
+| Аспект | Версия 2.0 | Версия 3.0 (текущая) |
+|--------|-----------|---------------------|
+| **Основная страница** | Прогноз | Прогноз + Сопоставление профилей |
+| **Новые данные** | T-scores, D-score | + coherence_score, диссонансы |
+| **Визуализация** | Графики шкал | + Карта когерентности |
+| **Объяснения** | Шаблонные тексты | + Персонализированные объяснения |
+
+### 1.3. Бизнес-цели
+
+| Цель | Метрика успеха |
+|------|----------------|
+| Показать сопоставление профилей | 100% пользователей видят coherence_score |
+| Визуализировать когерентность | Понятная карта согласованности |
+| Объяснить диссонансы | Пользователь понимает, что означает расхождение |
+| Сохранить существующий UX | Все старые страницы работают |
+
+---
+
+## 2. Общая архитектура фронтенда
+
+### 2.1. Схема взаимодействия
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (React/Vue)                          │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  СТРАНИЦЫ                                                      │   │
+│  │  • Dashboard (главная)                                         │   │
+│  │  • Прогноз (Forecast) — существующий                           │   │
+│  │  • Тестирование (MMPI/IAT) — существующий                      │   │
+│  │  • Сопоставление профилей (Alignment) — НОВАЯ!                 │   │
+│  │  • История когерентности (History) — НОВАЯ!                    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  КОМПОНЕНТЫ                                                    │   │
+│  │  • CoherenceScoreCard — карточка когерентности (НОВЫЙ!)       │   │
+│  │  • AlignmentMap — карта сопоставлений (НОВЫЙ!)                │   │
+│  │  • DissonanceList — список диссонансов (НОВЫЙ!)               │   │
+│  │  • CoherenceChart — график истории (НОВЫЙ!)                   │   │
+│  │  • ProfileCard — карточка профиля (НОВЫЙ!)                    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  API КЛИЕНТЫ                                                   │   │
+│  │  • PsychometryAPI (MMPI/IAT/Alignment) — НОВЫЙ!               │   │
+│  │  • AstroAPI (прогнозы)                                         │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        API GATEWAY                                    │
+│  /api/v1/psych/* → Psychometry Service                                │
+│  /api/v1/forecast → Astro Service                                     │
+│  /api/v1/psych/alignment → Alignment Engine (НОВЫЙ!)                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2. Технологический стек
+
+| Компонент | Технология | Версия |
+|-----------|------------|--------|
+| Фреймворк | React / Next.js или Vue / Nuxt | 18+ / 3+ |
+| Язык | TypeScript | 5.0+ |
+| Стейт-менеджмент | Zustand / Redux Toolkit / Pinia | - |
+| HTTP клиент | Axios / React Query / TanStack Query | - |
+| Визуализация | Chart.js / D3.js / Recharts | - |
+| Стили | Tailwind CSS / Material-UI / Vuetify | - |
+| Роутинг | React Router / Vue Router | - |
+
+---
+
+## 3. Структура проекта
+
+### 3.1. Дерево файлов (React)
+
+```
+frontend/
+├── src/
+│   ├── __init__.ts
+│   ├── main.tsx                    # Точка входа
+│   ├── App.tsx                     # Корневой компонент
+│   ├── routes.tsx                  # Маршруты
+│   │
+│   ├── api/                        # API клиенты
+│   │   ├── __init__.ts
+│   │   ├── client.ts               # Базовый HTTP клиент
+│   │   ├── psychometry.ts          # Psychometry API (НОВЫЙ!)
+│   │   ├── astro.ts                # Astro API
+│   │   └── types.ts                # Типы для API
+│   │
+│   ├── pages/                      # Страницы
+│   │   ├── Dashboard/
+│   │   │   ├── index.tsx
+│   │   │   └── components/
+│   │   ├── Forecast/
+│   │   │   ├── index.tsx           # Существующий прогноз
+│   │   │   └── components/
+│   │   ├── Testing/
+│   │   │   ├── MMPI/
+│   │   │   │   ├── index.tsx       # MMPI тест
+│   │   │   │   └── components/
+│   │   │   └── IAT/
+│   │   │       ├── index.tsx       # IAT тест
+│   │   │       └── components/
+│   │   ├── Alignment/              # НОВАЯ СТРАНИЦА!
+│   │   │   ├── index.tsx           # Сопоставление профилей
+│   │   │   └── components/
+│   │   │       ├── AstroProfileCard.tsx
+│   │   │       ├── PsychProfileCard.tsx
+│   │   │       ├── AlignmentMap.tsx
+│   │   │       ├── CoherenceScoreCard.tsx
+│   │   │       └── DissonanceList.tsx
+│   │   └── AlignmentHistory/       # НОВАЯ СТРАНИЦА!
+│   │       ├── index.tsx           # История когерентности
+│   │       └── components/
+│   │           └── CoherenceChart.tsx
+│   │
+│   ├── components/                 # Общие компоненты
+│   │   ├── ui/
+│   │   │   ├── Button.tsx
+│   │   │   ├── Card.tsx
+│   │   │   ├── LoadingSpinner.tsx
+│   │   │   └── ErrorBoundary.tsx
+│   │   └── layout/
+│   │       ├── Header.tsx
+│   │       ├── Footer.tsx
+│   │       └── Sidebar.tsx
+│   │
+│   ├── store/                      # Состояние
+│   │   ├── __init__.ts
+│   │   ├── alignmentStore.ts       # НОВЫЙ!
+│   │   ├── userStore.ts
+│   │   └── testStore.ts
+│   │
+│   ├── hooks/                      # Кастомные хуки
+│   │   ├── __init__.ts
+│   │   ├── useAlignment.ts         # НОВЫЙ!
+│   │   ├── useForecast.ts
+│   │   └── useTests.ts
+│   │
+│   ├── utils/                      # Утилиты
+│   │   ├── __init__.ts
+│   │   ├── formatting.ts
+│   │   ├── validation.ts
+│   │   └── chartConfigs.ts         # НОВЫЙ!
+│   │
+│   └── types/                      # TypeScript типы
+│       ├── __init__.ts
+│       ├── alignment.ts            # НОВЫЙ!
+│       ├── astro.ts
+│       └── psychometry.ts
+│
+├── public/
+│   └── assets/
+├── package.json
+├── tsconfig.json
+├── tailwind.config.js
+└── vite.config.ts
+```
+
+### 3.2. Маршруты
+
+```typescript
+// routes.tsx
+
+export const routes = [
+  {
+    path: '/',
+    component: Dashboard,
+    exact: true,
+  },
+  {
+    path: '/forecast',
+    component: Forecast,
+    exact: true,
+  },
+  {
+    path: '/testing/mmpi',
+    component: MMPITest,
+    exact: true,
+  },
+  {
+    path: '/testing/iat',
+    component: IATTest,
+    exact: true,
+  },
+  {
+    path: '/alignment',           // НОВЫЙ!
+    component: Alignment,
+    exact: true,
+  },
+  {
+    path: '/alignment/history',   // НОВЫЙ!
+    component: AlignmentHistory,
+    exact: true,
+  },
+];
+```
+
+---
+
+## 4. Новые страницы и компоненты
+
+### 4.1. Страница сопоставления профилей
+
+```typescript
+// pages/Alignment/index.tsx
+
+import { useAlignment } from '../../hooks/useAlignment';
+import { AstroProfileCard } from './components/AstroProfileCard';
+import { PsychProfileCard } from './components/PsychProfileCard';
+import { AlignmentMap } from './components/AlignmentMap';
+import { CoherenceScoreCard } from './components/CoherenceScoreCard';
+import { DissonanceList } from './components/DissonanceList';
+
+export const Alignment = () => {
+  const { alignment, loading, error } = useAlignment();
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} />;
+  if (!alignment) return <EmptyState />;
+
+  return (
+    <div className="alignment-page">
+      <div className="header">
+        <h1>Сопоставление профилей</h1>
+        <p className="date">{alignment.date}</p>
+      </div>
+
+      {/* Общая когерентность */}
+      <CoherenceScoreCard
+        score={alignment.coherence_score}
+        level={alignment.coherence_level}
+      />
+
+      {/* Два профиля */}
+      <div className="profiles-grid">
+        <AstroProfileCard profile={alignment.astro_profile} />
+        <PsychProfileCard profile={alignment.psych_profile} />
+      </div>
+
+      {/* Карта сопоставлений */}
+      <AlignmentMap alignments={alignment.alignments} />
+
+      {/* Диссонансы */}
+      {alignment.dissonances.length > 0 && (
+        <DissonanceList dissonances={alignment.dissonances} />
+      )}
+
+      {/* Объяснения */}
+      <div className="recommendations">
+        <h3>Объяснение</h3>
+        <p>{alignment.recommendations}</p>
+      </div>
+    </div>
+  );
+};
+```
+
+### 4.2. CoherenceScoreCard
+
+```typescript
+// pages/Alignment/components/CoherenceScoreCard.tsx
+
+import { FC } from 'react';
+import { CoherenceScore, CoherenceLevel } from '../../../types/alignment';
+
+interface Props {
+  score: number;       // 0-1
+  level: CoherenceLevel; // 'high' | 'medium' | 'low'
+}
+
+export const CoherenceScoreCard: FC<Props> = ({ score, level }) => {
+  const levelData = {
+    high: { label: 'Высокая', color: 'text-green-600', bg: 'bg-green-100' },
+    medium: { label: 'Средняя', color: 'text-yellow-600', bg: 'bg-yellow-100' },
+    low: { label: 'Низкая', color: 'text-red-600', bg: 'bg-red-100' },
+  };
+
+  const percentage = Math.round(score * 100);
+
+  return (
+    <Card className="coherence-score-card">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Когерентность профилей</h3>
+          <p className="text-sm text-gray-500">
+            Насколько согласованы ваши профили
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-3xl font-bold">{percentage}%</div>
+          <span className={`text-sm font-medium ${levelData[level].color}`}>
+            {levelData[level].label}
+          </span>
+        </div>
+      </div>
+
+      {/* Визуализация шкалы */}
+      <div className="mt-4">
+        <div className="w-full h-4 bg-gray-200 rounded-full overflow-hidden">
+          <div
+            className={`h-full transition-all duration-500 ${
+              level === 'high' ? 'bg-green-500' :
+              level === 'medium' ? 'bg-yellow-500' :
+              'bg-red-500'
+            }`}
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-xs text-gray-500 mt-1">
+          <span>Низкая</span>
+          <span>Средняя</span>
+          <span>Высокая</span>
+        </div>
+      </div>
+    </Card>
+  );
+};
+```
+
+### 4.3. AlignmentMap
+
+```typescript
+// pages/Alignment/components/AlignmentMap.tsx
+
+import { FC } from 'react';
+import { Alignment } from '../../../types/alignment';
+
+interface Props {
+  alignments: Alignment[];
+}
+
+export const AlignmentMap: FC<Props> = ({ alignments }) => {
+  // Группируем по типам
+  const grouped = {
+    house: alignments.filter(a => a.type === 'house'),
+    dasha: alignments.filter(a => a.type === 'dasha'),
+    retro: alignments.filter(a => a.type === 'retro'),
+    element: alignments.filter(a => a.type === 'element'),
+  };
+
+  const typeLabels = {
+    house: 'Дома',
+    dasha: 'Даши',
+    retro: 'Ретроградность',
+    element: 'Стихии',
+  };
+
+  return (
+    <Card className="alignment-map">
+      <h3 className="text-lg font-semibold mb-4">Карта сопоставлений</h3>
+
+      {Object.entries(grouped).map(([type, items]) => (
+        items.length > 0 && (
+          <div key={type} className="mb-4">
+            <h4 className="text-sm font-medium text-gray-600 mb-2">
+              {typeLabels[type as keyof typeof typeLabels]}
+            </h4>
+            <div className="space-y-2">
+              {items.map((item, index) => (
+                <AlignmentItem key={index} alignment={item} />
+              ))}
+            </div>
+          </div>
+        )
+      ))}
+    </Card>
+  );
+};
+
+// Компонент для одного сопоставления
+const AlignmentItem: FC<{ alignment: Alignment }> = ({ alignment }) => {
+  const score = alignment.alignment_score;
+  const color = score > 0.7 ? 'bg-green-500' :
+                score > 0.4 ? 'bg-yellow-500' :
+                'bg-red-500';
+
+  return (
+    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+      <div className="flex-1">
+        <div className="font-medium">{alignment.factor}</div>
+        <div className="text-sm text-gray-500">
+          {alignment.psych_scale}: {alignment.psych_value ?? '—'}
+        </div>
+        <div className="text-xs text-gray-400">
+          Ожидалось: {alignment.expected} → Фактически: {alignment.actual ?? '—'}
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="text-sm font-medium">
+          {Math.round(score * 100)}%
+        </div>
+        <div className="w-3 h-3 rounded-full ${color}" />
+      </div>
+    </div>
+  );
+};
+```
+
+### 4.4. DissonanceList
+
+```typescript
+// pages/Alignment/components/DissonanceList.tsx
+
+import { FC, useState } from 'react';
+import { Dissonance } from '../../../types/alignment';
+
+interface Props {
+  dissonances: Dissonance[];
+}
+
+export const DissonanceList: FC<Props> = ({ dissonances }) => {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (dissonances.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card className="dissonance-list border-yellow-200 border-2">
+      <div className="flex items-start gap-3">
+        <div className="text-2xl">⚠️</div>
+        <div className="flex-1">
+          <h3 className="text-lg font-semibold text-yellow-700">
+            Обнаружены расхождения
+          </h3>
+          <p className="text-sm text-gray-600">
+            Ваши профили расходятся в {dissonances.length} аспектах.
+            Это может указывать на точки роста.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {dissonances.map((dissonance, index) => (
+          <DissonanceItem
+            key={index}
+            dissonance={dissonance}
+            expanded={expanded === String(index)}
+            onToggle={() => setExpanded(expanded === String(index) ? null : String(index))}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+};
+
+const DissonanceItem: FC<{
+  dissonance: Dissonance;
+  expanded: boolean;
+  onToggle: () => void;
+}> = ({ dissonance, expanded, onToggle }) => {
+  const severityColor =
+    dissonance.severity > 0.8 ? 'text-red-600' :
+    dissonance.severity > 0.6 ? 'text-orange-500' :
+    'text-yellow-600';
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <button
+        className="w-full p-3 text-left hover:bg-gray-50 flex items-center justify-between"
+        onClick={onToggle}
+      >
+        <div>
+          <div className="font-medium">{dissonance.source}</div>
+          <div className="text-sm text-gray-500">
+            Ожидалось: {dissonance.expected_state} → Фактически: {dissonance.actual_state}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-sm font-medium ${severityColor}`}>
+            {Math.round(dissonance.severity * 100)}%
+          </span>
+          <span className="text-gray-400">
+            {expanded ? '▼' : '▶'}
+          </span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="p-3 pt-0 border-t border-gray-100 bg-gray-50">
+          <div className="text-sm">
+            <div className="font-medium text-gray-700">Гипотеза:</div>
+            <p className="text-gray-600">{dissonance.hypothesis}</p>
+          </div>
+          {dissonance.resolved && (
+            <div className="mt-2 text-sm text-green-600">
+              ✅ Разрешено: {dissonance.resolution_notes}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+```
+
+### 4.5. Страница истории когерентности
+
+```typescript
+// pages/AlignmentHistory/index.tsx
+
+import { useAlignmentHistory } from '../../hooks/useAlignment';
+import { CoherenceChart } from './components/CoherenceChart';
+
+export const AlignmentHistory = () => {
+  const { history, loading, error } = useAlignmentHistory('90d');
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} />;
+  if (!history) return <EmptyState />;
+
+  return (
+    <div className="alignment-history-page">
+      <h1>История когерентности</h1>
+      <p className="text-gray-500">Как изменялось сопоставление ваших профилей</p>
+
+      {/* График когерентности */}
+      <CoherenceChart trajectory={history.trajectory} />
+
+      {/* Статистика */}
+      <div className="grid grid-cols-3 gap-4 mt-6">
+        <StatCard
+          label="Текущая когерентность"
+          value={`${Math.round(history.trajectory[history.trajectory.length - 1]?.coherence_score * 100)}%`}
+          trend={history.trend}
+        />
+        <StatCard
+          label="Изменение"
+          value={history.trend === 'improving' ? '📈 Растёт' : '📉 Падает'}
+          color={history.trend === 'improving' ? 'text-green-600' : 'text-red-600'}
+        />
+        <StatCard
+          label="Диссонансов"
+          value={`${history.dissonance_evolution[history.dissonance_evolution.length - 1]?.count || 0}`}
+          subtitle="в последнем периоде"
+        />
+      </div>
+    </div>
+  );
+};
+
+// Компонент графика
+const CoherenceChart: FC<{ trajectory: TrajectoryPoint[] }> = ({ trajectory }) => {
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    const ctx = chartRef.current.getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: trajectory.map(p => p.date),
+        datasets: [{
+          label: 'Когерентность',
+          data: trajectory.map(p => p.coherence_score * 100),
+          borderColor: '#4CAF50',
+          backgroundColor: 'rgba(76, 175, 80, 0.1)',
+          fill: true,
+          tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: {
+            callbacks: {
+              label: (context) => {
+                const point = trajectory[context.dataIndex];
+                return `Score: ${Math.round(point.coherence_score * 100)}% (${point.coherence_level})`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            min: 0,
+            max: 100,
+            ticks: {
+              callback: (value) => `${value}%`
+            }
+          }
+        }
+      }
+    });
+  }, [trajectory]);
+
+  return <canvas ref={chartRef} />;
+};
+```
+
+---
+
+## 5. API интеграция
+
+### 5.1. Psychometry API клиент
+
+```typescript
+// api/psychometry.ts
+
+import { apiClient } from './client';
+import {
+  MMPIRequest,
+  MMPIResponse,
+  IATRequest,
+  IATResponse,
+  AlignmentResponse,
+  AlignmentHistoryResponse,
+} from './types';
+
+export class PsychometryAPI {
+  private readonly basePath = '/api/v1/psych';
+
+  // Существующие API
+  async submitMMPI(data: MMPIRequest): Promise<MMPIResponse> {
+    return apiClient.post(`${this.basePath}/mmpi`, data);
+  }
+
+  async submitIAT(data: IATRequest): Promise<IATResponse> {
+    return apiClient.post(`${this.basePath}/iat`, data);
+  }
+
+  async getStatus(userId: number): Promise<TestStatus> {
+    return apiClient.get(`${this.basePath}/status`, { params: { user_id: userId } });
+  }
+
+  async getHistory(userId: number): Promise<TestHistory> {
+    return apiClient.get(`${this.basePath}/history`, { params: { user_id: userId } });
+  }
+
+  // НОВЫЕ API для Alignment Engine
+  async getAlignment(userId: number, date?: string): Promise<AlignmentResponse> {
+    return apiClient.get(`${this.basePath}/alignment`, {
+      params: { user_id: userId, date },
+    });
+  }
+
+  async getAlignmentHistory(
+    userId: number,
+    period: '7d' | '30d' | '90d' | '1y' = '90d'
+  ): Promise<AlignmentHistoryResponse> {
+    return apiClient.get(`${this.basePath}/alignment/history`, {
+      params: { user_id: userId, period },
+    });
+  }
+}
+```
+
+### 5.2. Типы данных
+
+```typescript
+// types/alignment.ts
+
+export interface AstroProfile {
+  dasha: {
+    maha: string | null;
+    antar: string | null;
+    pratyantar: string | null;
+  };
+  transits: {
+    saturn_house: number | null;
+    jupiter_house: number | null;
+    rahu_house: number | null;
+    moon_house: number | null;
+    moon_sign: string | null;
+    moon_phase: string | null;
+  };
+  retro: {
+    mercury: boolean | null;
+    venus: boolean | null;
+    mars: boolean | null;
+  };
+  elements: {
+    fire: number;
+    earth: number;
+    air: number;
+    water: number;
+  };
+}
+
+export interface PsychProfile {
+  mmpi: {
+    d_score: number | null;
+    pt_score: number | null;
+    pa_score: number | null;
+    sc_score: number | null;
+    pd_score: number | null;
+    ma_score: number | null;
+    hs_score: number | null;
+    hy_score: number | null;
+    si_score: number | null;
+    mf_score: number | null;
+  };
+  iat: {
+    d_score: number | null;
+    mean_rt_ms: number | null;
+    error_rate: number | null;
+    practice_effect: number | null;
+  };
+  validity: {
+    is_valid: boolean;
+    l_score: number | null;
+    f_score: number | null;
+    k_score: number | null;
+  };
+}
+
+export interface Alignment {
+  type: 'house' | 'dasha' | 'retro' | 'element' | 'dynamic';
+  factor: string;
+  psych_scale: string;
+  psych_value: number | null;
+  expected: string;
+  actual: string | null;
+  alignment_score: number;
+  confidence: number;
+  interpretation?: string;
+}
+
+export interface Dissonance {
+  type: string;
+  source: string;
+  expected_state: string;
+  actual_state: string;
+  psych_scale: string;
+  severity: number;
+  hypothesis: string;
+  resolved: boolean;
+  resolution_notes?: string;
+}
+
+export type CoherenceLevel = 'high' | 'medium' | 'low';
+
+export interface AlignmentResponse {
+  user_id: number;
+  date: string;
+  coherence_score: number;
+  coherence_level: CoherenceLevel;
+  astro_profile: AstroProfile;
+  psych_profile: PsychProfile;
+  alignments: Alignment[];
+  dissonances: Dissonance[];
+  recommendations: string;
+}
+
+export interface TrajectoryPoint {
+  date: string;
+  coherence_score: number;
+  coherence_level: CoherenceLevel;
+}
+
+export interface DissonanceEvolution {
+  date: string;
+  count: number;
+}
+
+export interface AlignmentHistoryResponse {
+  trajectory: TrajectoryPoint[];
+  trend: 'improving' | 'declining' | 'stable';
+  dissonance_evolution: DissonanceEvolution[];
+}
+```
+
+---
+
+## 6. Состояние и управление данными
+
+### 6.1. Store для Alignment
+
+```typescript
+// store/alignmentStore.ts
+
+import { create } from 'zustand';
+import { AlignmentResponse, AlignmentHistoryResponse } from '../types/alignment';
+import { PsychometryAPI } from '../api/psychometry';
+
+interface AlignmentState {
+  // Данные
+  currentAlignment: AlignmentResponse | null;
+  history: AlignmentHistoryResponse | null;
+
+  // Состояние загрузки
+  isLoading: boolean;
+  isLoadingHistory: boolean;
+
+  // Ошибки
+  error: string | null;
+  historyError: string | null;
+
+  // Действия
+  fetchAlignment: (userId: number, date?: string) => Promise<void>;
+  fetchHistory: (userId: number, period: '7d' | '30d' | '90d' | '1y') => Promise<void>;
+  clearErrors: () => void;
+}
+
+const api = new PsychometryAPI();
+
+export const useAlignmentStore = create<AlignmentState>((set, get) => ({
+  // Начальное состояние
+  currentAlignment: null,
+  history: null,
+  isLoading: false,
+  isLoadingHistory: false,
+  error: null,
+  historyError: null,
+
+  // Действия
+  fetchAlignment: async (userId: number, date?: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.getAlignment(userId, date);
+      set({ currentAlignment: response, isLoading: false });
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Не удалось загрузить сопоставление',
+        isLoading: false,
+      });
+    }
+  },
+
+  fetchHistory: async (userId: number, period: '7d' | '30d' | '90d' | '1y' = '90d') => {
+    set({ isLoadingHistory: true, historyError: null });
+    try {
+      const response = await api.getAlignmentHistory(userId, period);
+      set({ history: response, isLoadingHistory: false });
+    } catch (error) {
+      set({
+        historyError: error instanceof Error ? error.message : 'Не удалось загрузить историю',
+        isLoadingHistory: false,
+      });
+    }
+  },
+
+  clearErrors: () => {
+    set({ error: null, historyError: null });
+  },
+}));
+```
+
+### 6.2. Кастомный хук
+
+```typescript
+// hooks/useAlignment.ts
+
+import { useEffect } from 'react';
+import { useAlignmentStore } from '../store/alignmentStore';
+import { useUserStore } from '../store/userStore';
+
+export const useAlignment = (date?: string) => {
+  const {
+    currentAlignment,
+    isLoading,
+    error,
+    fetchAlignment,
+    clearErrors,
+  } = useAlignmentStore();
+
+  const { userId } = useUserStore();
+
+  useEffect(() => {
+    if (userId) {
+      fetchAlignment(userId, date);
+    }
+    return () => clearErrors();
+  }, [userId, date]);
+
+  return {
+    alignment: currentAlignment,
+    loading: isLoading,
+    error,
+    refetch: () => fetchAlignment(userId!, date),
+  };
+};
+
+export const useAlignmentHistory = (period: '7d' | '30d' | '90d' | '1y' = '90d') => {
+  const {
+    history,
+    isLoadingHistory,
+    historyError,
+    fetchHistory,
+    clearErrors,
+  } = useAlignmentStore();
+
+  const { userId } = useUserStore();
+
+  useEffect(() => {
+    if (userId) {
+      fetchHistory(userId, period);
+    }
+    return () => clearErrors();
+  }, [userId, period]);
+
+  return {
+    history,
+    loading: isLoadingHistory,
+    error: historyError,
+    refetch: () => fetchHistory(userId!, period),
+  };
+};
+```
+
+---
+
+## 7. UI/UX требования
+
+### 7.1. Дизайн-система
+
+```css
+/* alignment.css */
+
+/* Цвета когерентности */
+:root {
+  --coherence-high: #22c55e;
+  --coherence-high-bg: #dcfce7;
+  --coherence-medium: #eab308;
+  --coherence-medium-bg: #fef9c3;
+  --coherence-low: #ef4444;
+  --coherence-low-bg: #fee2e2;
+
+  --dissonance-severe: #dc2626;
+  --dissonance-moderate: #f97316;
+  --dissonance-mild: #eab308;
+
+  --alignment-strong: #22c55e;
+  --alignment-moderate: #eab308;
+  --alignment-weak: #ef4444;
+}
+
+/* Карточка когерентности */
+.coherence-score-card {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: white;
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.coherence-score-high .coherence-score-card {
+  border-left: 4px solid var(--coherence-high);
+}
+
+.coherence-score-medium .coherence-score-card {
+  border-left: 4px solid var(--coherence-medium);
+}
+
+.coherence-score-low .coherence-score-card {
+  border-left: 4px solid var(--coherence-low);
+}
+
+/* Карта сопоставлений */
+.alignment-item {
+  transition: all 0.2s ease;
+}
+
+.alignment-item:hover {
+  background: #f8fafc;
+  transform: translateX(4px);
+}
+
+/* Диссонансы */
+.dissonance-item {
+  transition: all 0.3s ease;
+}
+
+.dissonance-item.expanded {
+  background: #fefce8;
+}
+
+/* График истории */
+.coherence-chart {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .profiles-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coherence-score-card {
+    padding: 16px;
+  }
+
+  .alignment-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+}
+```
+
+### 7.2. Accessibility
+
+```typescript
+// Компоненты с ARIA-атрибутами
+
+export const CoherenceScoreCard: FC<Props> = ({ score, level }) => {
+  return (
+    <div
+      className="coherence-score-card"
+      role="region"
+      aria-label="Показатель когерентности профилей"
+    >
+      <div
+        role="meter"
+        aria-valuenow={score * 100}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`Когерентность: ${Math.round(score * 100)}%`}
+      >
+        {/* содержимое */}
+      </div>
+    </div>
+  );
+};
+```
+
+### 7.3. Состояния загрузки и ошибок
+
+```typescript
+// Компонент загрузки
+export const AlignmentSkeleton = () => (
+  <div className="space-y-4 animate-pulse">
+    <div className="h-32 bg-gray-200 rounded-lg" />
+    <div className="grid grid-cols-2 gap-4">
+      <div className="h-64 bg-gray-200 rounded-lg" />
+      <div className="h-64 bg-gray-200 rounded-lg" />
+    </div>
+    <div className="h-48 bg-gray-200 rounded-lg" />
+  </div>
+);
+
+// Компонент ошибки
+export const AlignmentError: FC<{ error: string; onRetry: () => void }> = ({
+  error,
+  onRetry,
+}) => (
+  <div className="flex flex-col items-center justify-center p-8">
+    <div className="text-red-500 text-4xl mb-4">⚠️</div>
+    <h3 className="text-lg font-semibold text-gray-800">Не удалось загрузить сопоставление</h3>
+    <p className="text-gray-500 mt-2">{error}</p>
+    <button
+      onClick={onRetry}
+      className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+    >
+      Попробовать снова
+    </button>
+  </div>
+);
+```
+
+---
+
+## 8. Типизация и модели данных
+
+### 8.1. Полная модель Alignment
+
+```typescript
+// types/alignment.ts
+
+export interface Alignment {
+  type: 'house' | 'dasha' | 'retro' | 'element' | 'dynamic';
+  factor: string;
+  psych_scale: string;
+  psych_value: number | null;
+  expected: string;
+  actual: string | null;
+  alignment_score: number;
+  confidence: number;
+  interpretation?: string;
+  knowledge_base_id?: number;
+}
+
+export interface Dissonance {
+  type: string;
+  source: string;
+  expected_state: string;
+  actual_state: string;
+  psych_scale: string;
+  severity: number;
+  hypothesis: string;
+  resolved: boolean;
+  resolution_notes?: string;
+  created_at?: string;
+  resolved_at?: string;
+}
+
+export interface AstroProfile {
+  dasha: {
+    maha: string | null;
+    antar: string | null;
+    pratyantar: string | null;
+  };
+  transits: {
+    saturn_house: number | null;
+    jupiter_house: number | null;
+    rahu_house: number | null;
+    moon_house: number | null;
+    moon_sign: string | null;
+    moon_phase: string | null;
+  };
+  retro: {
+    mercury: boolean | null;
+    venus: boolean | null;
+    mars: boolean | null;
+  };
+  elements: {
+    fire: number;
+    earth: number;
+    air: number;
+    water: number;
+  };
+}
+
+export interface PsychProfile {
+  mmpi: {
+    d_score: number | null;
+    pt_score: number | null;
+    pa_score: number | null;
+    sc_score: number | null;
+    pd_score: number | null;
+    ma_score: number | null;
+    hs_score: number | null;
+    hy_score: number | null;
+    si_score: number | null;
+    mf_score: number | null;
+  };
+  iat: {
+    d_score: number | null;
+    mean_rt_ms: number | null;
+    error_rate: number | null;
+    practice_effect: number | null;
+  };
+  validity: {
+    is_valid: boolean;
+    l_score: number | null;
+    f_score: number | null;
+    k_score: number | null;
+  };
+}
+
+export type CoherenceLevel = 'high' | 'medium' | 'low';
+
+export interface AlignmentResponse {
+  user_id: number;
+  date: string;
+  coherence_score: number;
+  coherence_level: CoherenceLevel;
+  astro_profile: AstroProfile;
+  psych_profile: PsychProfile;
+  alignments: Alignment[];
+  dissonances: Dissonance[];
+  recommendations: string;
+}
+
+export interface TrajectoryPoint {
+  date: string;
+  coherence_score: number;
+  coherence_level: CoherenceLevel;
+}
+
+export interface DissonanceEvolution {
+  date: string;
+  count: number;
+}
+
+export interface AlignmentHistoryResponse {
+  trajectory: TrajectoryPoint[];
+  trend: 'improving' | 'declining' | 'stable';
+  dissonance_evolution: DissonanceEvolution[];
+}
+```
+
+---
+
+## 9. Конфигурация и развертывание
+
+### 9.1. Переменные окружения
+
+```bash
+# .env
+
+# API URL
+VITE_API_BASE_URL=http://localhost:8000
+
+# Alignment Engine
+VITE_ALIGNMENT_ENABLED=true
+VITE_ALIGNMENT_DEFAULT_PERIOD=90d
+
+# Существующие
+VITE_ASTRO_URL=http://localhost:8001
+VITE_PSYCH_URL=http://localhost:8002
+```
+
+### 9.2. Vite конфигурация
+
+```typescript
+// vite.config.ts
+
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 3000,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor': ['react', 'react-dom', 'react-router-dom'],
+          'charts': ['chart.js', 'recharts'],
+        },
+      },
+    },
+  },
+});
+```
+
+---
+
+## 10. Чек-лист приёмки
+
+### 10.1. Функциональные требования
+
+- [ ] Страница сопоставления профилей отображается
+- [ ] coherence_score визуализируется понятно
+- [ ] Карта сопоставлений показывает все 5 типов
+- [ ] Диссонансы отображаются с пояснениями
+- [ ] История когерентности отображается на графике
+- [ ] Тренд когерентности виден
+- [ ] Переходы между страницами работают
+- [ ] Существующие страницы (прогноз, тесты) не сломаны
+
+### 10.2. UI/UX требования
+
+- [ ] Адаптивный дизайн для мобильных устройств
+- [ ] Анимации плавные (≥ 60fps)
+- [ ] Тёмная/светлая тема (если есть)
+- [ ] Цветовая кодировка когерентности понятна
+- [ ] Состояния загрузки отображаются
+- [ ] Ошибки обрабатываются и показываются пользователю
+- [ ] Доступность (ARIA-атрибуты, навигация с клавиатуры)
+
+### 10.3. Технические требования
+
+- [ ] TypeScript строгая типизация (strict: true)
+- [ ] Нет ошибок и предупреждений в консоли
+- [ ] Тесты для новых компонентов
+- [ ] Документация компонентов (Storybook)
+- [ ] Оптимизация производительности (LCP < 2.5s)
+
+---
+
+## 11. План реализации
+
+### Неделя 1: Фундамент
+
+| Задача | Оценка |
+|--------|--------|
+| Создание структуры проекта | 4 ч |
+| Настройка API клиентов | 4 ч |
+| Типизация данных | 4 ч |
+| Стейт-менеджмент (store) | 4 ч |
+
+### Неделя 2: Основные компоненты
+
+| Задача | Оценка |
+|--------|--------|
+| CoherenceScoreCard | 6 ч |
+| AlignmentMap | 8 ч |
+| DissonanceList | 6 ч |
+| ProfileCard (Astro + Psych) | 6 ч |
+
+### Неделя 3: Страницы
+
+| Задача | Оценка |
+|--------|--------|
+| Страница сопоставления | 8 ч |
+| Страница истории | 8 ч |
+| Навигация и маршруты | 4 ч |
+| Интеграция с существующими страницами | 4 ч |
+
+### Неделя 4: Завершение
+
+| Задача | Оценка |
+|--------|--------|
+| UI/UX доработки | 8 ч |
+| Тестирование | 8 ч |
+| Исправление багов | 8 ч |
+
+---
+
+## 12. Заключение
+
+**Фронтенд рефакторинг v3.0** — это обновление клиентской части, которое:
+
+1. **Интегрирует** Alignment Engine API
+2. **Добавляет** страницу сопоставления профилей
+3. **Визуализирует** когерентность (coherence_score)
+4. **Отображает** диссонансы с объяснениями
+5. **Показывает** историю изменений когерентности
+
+**Ключевые изменения:**
+- ✅ Новая страница Alignment
+- ✅ Новая страница AlignmentHistory
+- ✅ 5 новых UI компонентов
+- ✅ Интеграция с Psychometry API
+- ✅ Полная типизация данных
+- ✅ Состояния загрузки и ошибок
+
+**Критерий готовности:** Пользователи видят сопоставление своих профилей с понятными объяснениями, могут отслеживать изменения когерентности во времени.

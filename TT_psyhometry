@@ -1,0 +1,981 @@
+ **Техническое задание на разработку Psychometry Service**
+
+**Версия 3.4 — Production-ready (исправленное)**
+
+---
+
+## Оглавление
+
+1. [Введение и цели](#1-введение-и-цели)
+2. [Общая архитектура](#2-общая-архитектура)
+3. [Структура базы данных](#3-структура-базы-данных)
+4. [Структура сервиса](#4-структура-сервиса)
+5. [Математическое ядро](#5-математическое-ядро)
+6. [Бизнес-логика](#6-бизнес-логика)
+7. [API интерфейсы](#7-api-интерфейсы)
+8. [Интеграция с инфраструктурой](#8-интеграция-с-инфраструктурой)
+9. [Data Lake интеграция](#9-data-lake-интеграция)
+10. [Конфигурация и развертывание](#10-конфигурация-и-развертывание)
+11. [Нефункциональные требования](#11-нефункциональные-требования)
+12. [Чек-лист приёмки](#12-чек-лист-приёмки)
+13. [План реализации](#13-план-реализации)
+14. [Заключение](#14-заключение)
+
+---
+
+## 1. Введение и цели
+
+### 1.1. Что такое Psychometry Service
+
+**Psychometry Service** — автономный микросервис, который:
+
+- Проводит психометрическое тестирование (MMPI-2 и IAT).
+- Рассчитывает результаты (T-scores с K-коррекцией, D-score).
+- Сохраняет агрегаты в PostgreSQL (схема `psych`).
+- Загружает сырые ответы в Data Lake (MinIO, Parquet).
+- Управляет графиком тестирования (MMPI раз в 90 дней, IAT раз в 30 дней).
+- Предоставляет API для фронтенда.
+- Отправляет события в Outbox для гарантированной доставки.
+
+**Ключевой принцип:** полная автономность. Сервис не зависит от астрологического сервиса (fallback-режим). Не содержит alignment-логики.
+
+### 1.2. Бизнес-цели
+
+| Цель | Метрика успеха |
+|------|----------------|
+| Запустить тестирование MMPI | Пользователи проходят MMPI раз в 90 дней |
+| Запустить тестирование IAT | Пользователи проходят IAT раз в 30 дней |
+| Сохранять все сырые ответы | 100% ответов сохраняются в Data Lake |
+| Предоставить историю тестов | Пользователь видит график T-scores |
+| Гарантировать доставку событий | Outbox: 100% доставка, 0% потерь |
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────┐
+│           FRONTEND (React/Vue)          │
+└─────────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────┐
+│      BACKEND API (существующий)         │
+│  • Аутентификация (JWT)                 │
+│  • /auth/*, /user/*                     │
+└─────────────────────────────────────────┘
+                    │
+                    ▼ (Authorization: Bearer)
+┌─────────────────────────────────────────┐
+│      PSYCHOMETRY SERVICE (новый)        │
+│  • Порт 8000 (внутри контейнера)        │
+│  • /api/v1/psych/*                      │
+└─────────────────────────────────────────┘
+                    │
+        ┌─────────┴─────────┐
+        ▼                   ▼
+┌──────────────┐    ┌──────────────┐
+│  PostgreSQL  │    │    MinIO     │
+│  схема psych │    │  Data Lake   │
+└──────────────┘    └──────────────┘
+```
+
+---
+
+## 2. Общая архитектура
+
+### 2.1. Принципы сервиса
+
+| Принцип | Описание |
+|---------|----------|
+| **Автономность** | Работает без Astro Service. Fallback — NULL-контекст. |
+| **Data Lake first** | Сырые данные в озере, в БД — только агрегаты. |
+| **Idempotency** | Повторная отправка теста не создаёт дубли. |
+| **Outbox** | Гарантированная доставка с dead-letter. |
+| **Сделал и забыл** | После сохранения теста — ничего не требуется. |
+| **Неинвазивность** | Не изменяет существующие таблицы. |
+| **Безопасность** | `user_id` из JWT, никаких идентификаторов в теле запроса. |
+
+### 2.2. Технологический стек
+
+| Компонент | Технология | Версия |
+|-----------|------------|--------|
+| Язык | Python | 3.11+ |
+| Веб-фреймворк | FastAPI | 0.100+ |
+| ORM | SQLAlchemy | 2.0+ |
+| Миграции | Alembic | 1.12+ |
+| HTTP клиент | httpx | 0.25+ |
+| S3 клиент | aioboto3 | 1.34+ |
+| Формат данных | Parquet | pyarrow |
+| База данных | PostgreSQL | 15+ (существующая) |
+| Data Lake | MinIO | latest |
+
+---
+
+## 3. Структура базы данных
+
+### 3.1. Схема `psych`
+
+```sql
+CREATE SCHEMA IF NOT EXISTS psych;
+
+-- ============================================================
+-- 1. MMPI РЕЗУЛЬТАТЫ
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS psych.mmpi_results (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    taken_at TIMESTAMPTZ NOT NULL,
+    test_version VARCHAR(20) DEFAULT 'MMPI-2',
+
+    -- T-scores (клинические шкалы)
+    hs_score FLOAT,  d_score FLOAT,   hy_score FLOAT,
+    pd_score FLOAT,  mf_score FLOAT,  pa_score FLOAT,
+    pt_score FLOAT,  sc_score FLOAT,  ma_score FLOAT,
+    si_score FLOAT,
+
+    -- Шкалы валидности (raw scores)
+    l_score FLOAT,
+    f_score FLOAT,
+    k_score FLOAT,
+    q_count INTEGER,
+    is_valid BOOLEAN,
+
+    -- Idempotency Key
+    idempotency_key VARCHAR(64) UNIQUE,
+
+    -- Астро-контекст (NULL при fallback)
+    dasha_maha VARCHAR(20),
+    dasha_antar VARCHAR(20),
+    dasha_pratyantar VARCHAR(20),
+    transit_saturn_house INTEGER,
+    transit_jupiter_house INTEGER,
+    transit_rahu_house INTEGER,
+    moon_sign VARCHAR(20),
+    moon_house INTEGER,
+    moon_phase VARCHAR(20),
+    is_retro_mercury BOOLEAN,
+    is_retro_venus BOOLEAN,
+    is_retro_mars BOOLEAN,
+
+    -- Ссылка на сырые данные (NULL если upload временно не удался)
+    raw_data_uri TEXT,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 2. IAT РЕЗУЛЬТАТЫ
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS psych.iat_results (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    taken_at TIMESTAMPTZ NOT NULL,
+    test_type VARCHAR(50) NOT NULL,
+
+    d_score FLOAT NOT NULL,
+    mean_rt_ms FLOAT,
+    error_rate FLOAT,
+    rt_std FLOAT,
+    practice_effect_score FLOAT,
+
+    idempotency_key VARCHAR(64) UNIQUE,
+
+    -- session_seed: BIGINT для исключения переполнения
+    session_seed BIGINT NOT NULL,
+
+    -- Астро-контекст
+    dasha_maha VARCHAR(20),
+    dasha_antar VARCHAR(20),
+    transit_moon_house INTEGER,
+    moon_phase VARCHAR(20),
+    is_retro_mercury BOOLEAN,
+    is_retro_venus BOOLEAN,
+    transit_saturn_house INTEGER,
+
+    raw_data_uri TEXT,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 3. ПЛАНИРОВЩИК ТЕСТОВ
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS psych.test_schedule (
+    user_id BIGINT PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+    last_mmpi_at TIMESTAMPTZ,
+    last_iat_at TIMESTAMPTZ,
+    next_mmpi_due DATE,
+    next_iat_due DATE,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 4. OUTBOX
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS psych.outbox (
+    id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(50) NOT NULL,
+    payload JSONB NOT NULL,
+    idempotency_key VARCHAR(64) UNIQUE,
+    status VARCHAR(20) DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'sent', 'dead_letter')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    processing_started_at TIMESTAMPTZ,  -- для stale recovery
+    processed_at TIMESTAMPTZ,
+    retry_count INTEGER DEFAULT 0,
+    last_error TEXT
+);
+
+-- ============================================================
+-- 5. ИНДЕКСЫ
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_mmpi_user_date ON psych.mmpi_results(user_id, taken_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mmpi_idempotency ON psych.mmpi_results(idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_iat_user_date ON psych.iat_results(user_id, taken_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iat_idempotency ON psych.iat_results(idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_next_mmpi ON psych.test_schedule(next_mmpi_due)
+    WHERE next_mmpi_due IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_schedule_next_iat ON psych.test_schedule(next_iat_due)
+    WHERE next_iat_due IS NOT NULL;
+
+-- Outbox: pending + stale processing
+CREATE INDEX IF NOT EXISTS idx_outbox_pending ON psych.outbox(status, created_at)
+    WHERE status IN ('pending', 'processing');
+
+CREATE INDEX IF NOT EXISTS idx_outbox_dead_letter ON psych.outbox(status)
+    WHERE status = 'dead_letter';
+
+-- ============================================================
+-- 6. ТРИГГЕРЫ
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION psych.update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_mmpi_updated_at
+    BEFORE UPDATE ON psych.mmpi_results
+    FOR EACH ROW EXECUTE FUNCTION psych.update_updated_at();
+
+CREATE TRIGGER update_iat_updated_at
+    BEFORE UPDATE ON psych.iat_results
+    FOR EACH ROW EXECUTE FUNCTION psych.update_updated_at();
+
+CREATE TRIGGER update_schedule_updated_at
+    BEFORE UPDATE ON psych.test_schedule
+    FOR EACH ROW EXECUTE FUNCTION psych.update_updated_at();
+
+-- ============================================================
+-- 7. ПРАВА ДОСТУПА
+-- ============================================================
+
+CREATE ROLE IF NOT EXISTS psychometry_app;
+GRANT USAGE ON SCHEMA psych TO psychometry_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA psych TO psychometry_app;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA psych TO psychometry_app;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA psych TO psychometry_app;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA psych
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO psychometry_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA psych
+    GRANT USAGE ON SEQUENCES TO psychometry_app;
+```
+
+### 3.2. Что НЕ хранится в PostgreSQL
+
+| Что | Где | Почему |
+|-----|-----|--------|
+| Raw ответы MMPI (566 вопросов) | Data Lake (Parquet) | Объём |
+| IAT trial data | Data Lake (Parquet) | Объём |
+
+---
+
+## 4. Структура сервиса
+
+```
+psychometry-service/
+├── src/
+│   ├── __init__.py
+│   ├── main.py                 # FastAPI entrypoint
+│   ├── settings.py
+│   │
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── routes.py           # Endpoints
+│   │   ├── schemas.py          # Pydantic
+│   │   └── deps.py             # JWT, DB, rate limit
+│   │
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── mmpi_scorer.py      # T-scores + K-коррекция
+│   │   ├── iat_scorer.py       # D-score
+│   │   ├── iat_generator.py    # hashlib seed
+│   │   ├── validators.py       # L/F/K
+│   │   ├── constants.py        # Вопросы, нормы, K-вопросы
+│   │   └── models.py
+│   │
+│   ├── clients/
+│   │   ├── __init__.py
+│   │   ├── astro_client.py     # Fallback HTTP
+│   │   └── lake_client.py      # MinIO
+│   │
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── psychometry_service.py
+│   │   └── scheduler_service.py
+│   │
+│   ├── infrastructure/
+│   │   ├── __init__.py
+│   │   ├── database.py
+│   │   ├── metrics.py          # Fire-and-forget
+│   │   ├── audit.py            # Fire-and-forget
+│   │   └── outbox_publisher.py
+│   │
+│   └── workers/
+│       ├── __init__.py
+│       └── outbox_worker.py    # Batch commit + stale recovery
+│
+├── migrations/
+├── tests/
+│   ├── unit/
+│   └── integration/
+├── Dockerfile
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 5. Математическое ядро
+
+### 5.1. MMPI Scorer (с K-коррекцией)
+
+```python
+import json
+import hashlib
+
+class MMPIScorer:
+    """
+    Расчет T-scores для MMPI-2 с K-коррекцией.
+    """
+
+    SCALE_KEYS = {
+        'Hs': {'questions': [1, 2, 3, ...], 'k_correction': 0.5},
+        'D':  {'questions': [5, 6, 7, ...], 'k_correction': 0.0},
+        'Hy': {'questions': [8, 9, 10, ...], 'k_correction': 0.0},
+        'Pd': {'questions': [11, 12, 13, ...], 'k_correction': 0.4},
+        'Mf': {'questions': [14, 15, 16, ...], 'k_correction': 0.0},
+        'Pa': {'questions': [17, 18, 19, ...], 'k_correction': 0.0},
+        'Pt': {'questions': [20, 21, 22, ...], 'k_correction': 1.0},
+        'Sc': {'questions': [23, 24, 25, ...], 'k_correction': 1.0},
+        'Ma': {'questions': [26, 27, 28, ...], 'k_correction': 0.2},
+        'Si': {'questions': [29, 30, 31, ...], 'k_correction': 0.0},
+    }
+
+    # K-шкала: номера вопросов (заполнить реальными из MMPI-2)
+    K_QUESTIONS = [30, 45, 60, 75, 90, 105, 120, 135, 150,
+                   165, 180, 195, 210, 225, 240, 255, 270, 285, 300]
+
+    def calculate_raw_scores(self, answers: dict[int, bool]) -> dict[str, float]:
+        raw = {}
+        for name, data in self.SCALE_KEYS.items():
+            raw[name] = sum(1 for q in data['questions'] if answers.get(q, False))
+
+        k_raw = sum(1 for q in self.K_QUESTIONS if answers.get(q, False))
+
+        for name, data in self.SCALE_KEYS.items():
+            k_corr = data.get('k_correction', 0.0)
+            if k_corr > 0:
+                raw[name] += k_raw * k_corr
+
+        return raw
+
+    def calculate_t_scores(self, raw_scores: dict[str, float], gender: str = 'female') -> dict[str, float]:
+        norms = self._load_norms(gender)
+        return {
+            scale: 50 + 10 * (raw - norms[scale]['mean']) / norms[scale]['std']
+            for scale, raw in raw_scores.items()
+        }
+
+    def validate_response(self, answers: dict[int, bool]) -> dict:
+        l_raw = self._calculate_l_scale(answers)
+        f_raw = self._calculate_f_scale(answers)
+        k_raw = sum(1 for q in self.K_QUESTIONS if answers.get(q, False))
+
+        return {
+            'l_score': l_raw,
+            'f_score': f_raw,
+            'k_score': k_raw,
+            'is_valid': (l_raw <= 8 and f_raw <= 16 and k_raw <= 20)
+        }
+```
+
+### 5.2. IAT Scorer
+
+```python
+class IATScorer:
+    """
+    D-score по Greenwald et al. (2003).
+    """
+
+    def calculate_d_score(self, blocks: list[BlockData]) -> float:
+        filtered = self._filter_outliers(blocks)   # RT < 300 или > 10000 → удалить
+        capped = self._cap_values(filtered)        # RT > 3000 → 3000
+        means = self._calculate_block_means(capped)
+        return self._calculate_d(means)
+```
+
+### 5.3. IAT Stimulus Generator (hashlib)
+
+```python
+import hashlib
+import random
+
+class IATStimulusGenerator:
+    def generate(self, test_type: str, user_id: int, month: int, year: int):
+        seed_str = f"{user_id}_{month}_{year}"
+        session_seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
+
+        rng = random.Random(session_seed)
+        pool = self._load_stimuli_pool(test_type)
+        selected = rng.sample(pool, k=min(20, len(pool)))
+
+        return selected, session_seed
+```
+
+---
+
+## 6. Бизнес-логика
+
+### 6.1. PsychometryService
+
+```python
+class PsychometryService:
+    def __init__(self, mmpi_scorer, iat_scorer, astro_client, lake_client,
+                 scheduler, outbox_publisher, metrics, audit):
+        ...
+
+    async def save_mmpi(self, user_id: int, answers: dict[int, bool]) -> MMPIResult:
+        """
+        1. Проверка графика (90 дней)
+        2. Валидация L/F/K
+        3. Расчет T-scores с K-коррекцией
+        4. Idempotency Key (детерминированный)
+        5. Астро-контекст (fallback)
+        6. Сохранение в БД (raw_data_uri = NULL initially)
+        7. Загрузка в Data Lake (best effort)
+        8. Обновление URI в БД (если успех)
+        9. Обновление графика
+        10. Outbox
+        11. Метрики и аудит (fire-and-forget)
+        """
+        # 1. График
+        if not await self.scheduler.can_take_mmpi(user_id):
+            raise TestNotAvailableError("MMPI доступен не раньше следующей даты")
+
+        # 2-3. Расчет
+        raw = self.mmpi_scorer.calculate_raw_scores(answers)
+        t_scores = self.mmpi_scorer.calculate_t_scores(raw)
+        validity = self.mmpi_scorer.validate_response(answers)
+
+        # 4. Idempotency Key (детерминированный, sort_keys)
+        idempotency_key = hashlib.sha256(
+            json.dumps({"u": user_id, "a": answers}, sort_keys=True).encode()
+        ).hexdigest()[:32]
+
+        # 5. Астро
+        astro = await self.astro_client.get_context(user_id, datetime.now())
+
+        # 6. Сохранение в БД (uri пока NULL)
+        result = await self._save_mmpi_to_db(
+            user_id=user_id, t_scores=t_scores, validity=validity,
+            astro_context=astro, idempotency_key=idempotency_key
+        )
+
+        # 7-8. Data Lake (best effort, не блокируем пользователя)
+        taken = result.taken_at
+        lake_key = f"psych/mmpi/year={taken.year}/month={taken.month}/user_{user_id}_{taken:%Y%m%d}.parquet"
+        try:
+            uri = await self.lake_client.upload(lake_key, self._serialize(answers, result.id))
+            await self._update_lake_uri(result.id, uri)
+        except Exception as e:
+            logger.warning("lake_upload_failed", user_id=user_id, error=str(e))
+            # uri остается NULL, данные не потеряны (есть в payload outbox)
+
+        # 9. График
+        await self.scheduler.update_schedule(user_id, 'mmpi')
+
+        # 10. Outbox
+        await self.outbox_publisher.publish(
+            event_type='test.completed',
+            payload={
+                'test_type': 'mmpi', 'user_id': user_id,
+                'result_id': result.id, 'taken_at': taken.isoformat(),
+                't_scores': t_scores, 'validity': validity,
+                'astro_context': astro
+            },
+            idempotency_key=idempotency_key
+        )
+
+        # 11. Метрики и аудит — fire-and-forget, не блокируем ответ
+        asyncio.create_task(self.metrics.record_mmpi_taken(user_id, validity['is_valid']))
+        asyncio.create_task(self.audit.log_mmpi_completed(user_id, result.id))
+
+        return result
+```
+
+### 6.2. OutboxWorker (batch + stale recovery)
+
+```python
+class OutboxWorker:
+    POLL_INTERVAL = 30
+    MAX_RETRY = 5
+    STALE_MINUTES = 5
+
+    async def run(self):
+        while True:
+            try:
+                await self._process_batch()
+            except Exception as e:
+                logger.error(f"Outbox Worker error: {e}")
+            await asyncio.sleep(self.POLL_INTERVAL)
+
+    async def _process_batch(self):
+        async with async_session() as session:
+            # Выбираем pending ИЛИ processing, зависшие более 5 минут
+            pending = await session.execute(
+                select(Outbox)
+                .where(
+                    (Outbox.status == 'pending')
+                    | (
+                        (Outbox.status == 'processing')
+                        & (Outbox.processing_started_at < datetime.now() - timedelta(minutes=self.STALE_MINUTES))
+                    )
+                )
+                .order_by(Outbox.created_at)
+                .limit(100)
+                .with_for_update(skip_locked=True)  # конкурентная безопасность
+            )
+
+            events = pending.scalars().all()
+            if not events:
+                return
+
+            for event in events:
+                try:
+                    event.status = 'processing'
+                    event.processing_started_at = datetime.now()
+                except Exception as e:
+                    event.retry_count += 1
+                    event.last_error = str(e)
+
+                    if event.retry_count >= self.MAX_RETRY:
+                        event.status = 'dead_letter'
+                        logger.critical("outbox_dead_letter", event_id=event.id, error=str(e))
+                    else:
+                        event.status = 'pending'
+                        event.processing_started_at = None
+
+            await session.commit()  # один commit на батч
+```
+
+### 6.3. AstroContextClient (fallback)
+
+```python
+class AstroContextClient:
+    def __init__(self, base_url: str | None = None, fallback_mode: bool = True):
+        self.base_url = base_url
+        self.fallback_mode = fallback_mode
+
+    async def get_context(self, user_id: int, at: datetime) -> AstroContext:
+        if self.fallback_mode:
+            return AstroContext.empty()
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    f"{self.base_url}/internal/v1/users/{user_id}/astro-context",
+                    params={"at": at.isoformat()}
+                )
+                r.raise_for_status()
+                return AstroContext(**r.json())
+        except Exception as e:
+            logger.warning("astro_fallback", error=str(e))
+            return AstroContext.empty()
+```
+
+---
+
+## 7. API интерфейсы
+
+### 7.1. Аутентификация
+
+Все эндпоинты (кроме `/health`) требуют:
+```
+Authorization: Bearer <JWT>
+```
+
+`user_id` извлекается из JWT (`sub` claim). **В теле запроса `user_id` не передаётся.**
+
+### 7.2. POST /api/v1/psych/mmpi/start
+
+**Request:** тело пустое или `{"test_version": "MMPI-2"}` (user_id из JWT).
+
+**Response:**
+```json
+{
+  "success": true,
+  "test_id": "mmpi_123_20260816",
+  "questions": [
+    {"id": 1, "text": "Я люблю читать книги"},
+    {"id": 2, "text": "Я часто чувствую усталость"}
+  ],
+  "total_questions": 566,
+  "estimated_time_seconds": 1800
+}
+```
+> **Важно:** поле `scale` отсутствует. Шкалы — серверный секрет.
+
+### 7.3. POST /api/v1/psych/mmpi/submit
+
+**Request:**
+```json
+{
+  "answers": {
+    "1": true,
+    "2": false
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "result_id": 456,
+  "t_scores": {
+    "hs": 65.2, "d": 72.5, "hy": 58.3,
+    "pd": 45.0, "mf": 62.1, "pa": 48.5,
+    "pt": 55.0, "sc": 42.3, "ma": 68.7,
+    "si": 51.2
+  },
+  "validity": {
+    "l_score": 4.0,
+    "f_score": 6.0,
+    "k_score": 12.0,
+    "is_valid": true
+  },
+  "astro_context": null,
+  "taken_at": "2026-08-16T14:01:00Z"
+}
+```
+
+### 7.4. POST /api/v1/psych/iat/start
+
+**Request:** `{"test_type": "implicit_bias"}`
+
+**Response:**
+```json
+{
+  "success": true,
+  "test_id": "iat_123_20260816",
+  "session_seed": 123456789,
+  "blocks": [
+    {
+      "block_id": 1,
+      "block_type": "practice",
+      "trials": [
+        {"stimulus": "flower", "category": "positive"}
+      ]
+    }
+  ]
+}
+```
+
+### 7.5. POST /api/v1/psych/iat/submit
+
+**Request:**
+```json
+{
+  "test_type": "implicit_bias",
+  "blocks": [
+    {
+      "block_id": 1,
+      "block_type": "practice",
+      "trials": [
+        {"stimulus": "flower", "rt_ms": 450, "correct": true}
+      ]
+    }
+  ]
+}
+```
+
+### 7.6. GET /api/v1/psych/status
+
+**Response:**
+```json
+{
+  "can_take_mmpi": false,
+  "can_take_iat": true,
+  "next_mmpi_due": "2026-11-14",
+  "next_iat_due": "2026-09-15"
+}
+```
+
+### 7.7. GET /api/v1/psych/history
+
+**Query:** `?limit=10`
+
+**Response:**
+```json
+{
+  "mmpi": [
+    {"id": 456, "taken_at": "2026-08-16T14:01:00Z", "d_score": 72.5, "is_valid": true}
+  ],
+  "iat": [
+    {"id": 789, "taken_at": "2026-08-16T14:30:00Z", "d_score": 0.45}
+  ]
+}
+```
+
+### 7.8. GET /health
+
+```json
+{
+  "status": "healthy",
+  "components": {
+    "database": "healthy",
+    "lake": "healthy",
+    "astro": "degraded"
+  }
+}
+```
+
+---
+
+## 8. Интеграция с инфраструктурой
+
+### 8.1. docker-compose (фрагмент)
+
+```yaml
+psychometry-service:
+  build: .
+  container_name: pa-psychometry
+  command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+  environment:
+    DATABASE_URL: postgresql://...
+    ASTRO_SERVICE_URL: http://astro-service:8000
+    ASTRO_FALLBACK_MODE: "true"
+    LAKE_ENDPOINT: minio:9000
+    MMPI_INTERVAL_DAYS: 90
+    IAT_INTERVAL_DAYS: 30
+  ports:
+    - "127.0.0.1:8002:8000"
+  depends_on:
+    postgres:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+  # НЕТ depends_on astro-service (автономность)
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  restart: unless-stopped
+
+psychometry-outbox-worker:
+  build: .
+  command: ["python", "-m", "src.workers.outbox_worker"]
+  environment:
+    DATABASE_URL: postgresql://...
+    ASTRO_SERVICE_URL: http://astro-service:8000
+  depends_on:
+    postgres:
+      condition: service_healthy
+  # НЕТ depends_on astro-service
+  restart: unless-stopped
+```
+
+### 8.2. Метрики и аудит (fire-and-forget)
+
+Метрики и аудит не блокируют HTTP-ответ. Реализуются через `asyncio.create_task()` или фоновый мини-worker. При ошибке записи — лог warning, не exception.
+
+---
+
+## 9. Data Lake интеграция
+
+### 9.1. Структура озера
+
+```
+s3://personal-assistant-lake/
+├── psych/
+│   ├── mmpi/
+│   │   ├── year=2026/
+│   │   │   ├── month=8/          # ← без ведущего нуля (Hive-совместимость)
+│   │   │   │   └── user_123_20260816.parquet
+│   └── iat/
+│       └── year=2026/
+│           └── month=8/
+│               └── user_123_20260816.parquet
+```
+
+### 9.2. LakeClient
+
+```python
+class LakeClient:
+    async def upload(self, key: str, data: bytes) -> str:
+        try:
+            await self.client.put_object(Bucket=self.bucket, Key=key, Body=data)
+            return f"s3://{self.bucket}/{key}"
+        except Exception:
+            # Повторная попытка 1 раз, затем raise (вызывающий код поймает)
+            await asyncio.sleep(1)
+            await self.client.put_object(Bucket=self.bucket, Key=key, Body=data)
+            return f"s3://{self.bucket}/{key}"
+```
+
+---
+
+## 10. Конфигурация и развертывание
+
+```python
+class Settings(BaseSettings):
+    SERVICE_NAME: str = "psychometry"
+    DEBUG: bool = False
+    LOG_LEVEL: str = "INFO"
+
+    DATABASE_URL: str
+    ASTRO_SERVICE_URL: Optional[str] = None
+    ASTRO_FALLBACK_MODE: bool = True
+    ASTRO_TIMEOUT: float = 5.0
+
+    LAKE_BUCKET: str = "personal-assistant-lake"
+    LAKE_ENDPOINT: str = "minio:9000"
+    LAKE_ACCESS_KEY: str = "minioadmin"
+    LAKE_SECRET_KEY: str = "minioadmin"
+
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8000
+
+    MMPI_INTERVAL_DAYS: int = 90
+    IAT_INTERVAL_DAYS: int = 30
+
+    OUTBOX_POLL_INTERVAL: int = 30
+    OUTBOX_MAX_RETRY: int = 5
+    OUTBOX_STALE_MINUTES: int = 5
+
+    class Config:
+        env_file = ".env"
+```
+
+---
+
+## 11. Нефункциональные требования
+
+### 11.1. Производительность
+
+| Метрика | Требование |
+|---------|------------|
+| MMPI submit | < 3 сек |
+| IAT submit | < 2 сек |
+| GET /status | < 50 мс |
+| GET /history | < 100 мс |
+
+### 11.2. Ресурсы
+
+| Компонент | CPU | RAM |
+|-----------|-----|-----|
+| Psychometry Service | 1 | 1.5 GB |
+| Outbox Worker | 0.2 | 256 MB |
+| PostgreSQL | 1.5 | 3 GB |
+| MinIO | 0.5 | 512 MB |
+
+### 11.3. Безопасность
+
+- `user_id` только из JWT. В теле/параметрах — запрещено.
+- Rate limiting: 10 запросов/мин на endpoint, 1 тест/интервал.
+- SQL-инъекции: исключены (SQLAlchemy ORM).
+- Parquet файлы не содержат PII в имени (только user_id, который внутренний).
+
+### 11.4. Надёжность
+
+- Outbox: dead-letter после 5 попыток. Stale recovery для зависших `processing`.
+- Data Lake: best-effort upload. При fail URI=NULL, данные остаются в payload outbox.
+- Astro: fallback empty context при любой ошибке.
+
+---
+
+## 12. Чек-лист приёмки
+
+### 12.1. Безопасность
+
+- [ ] `user_id` в API извлекается из JWT, не из тела запроса
+- [ ] `start_mmpi` не возвращает поле `scale`
+- [ ] Rate limiting работает
+- [ ] Роль `psychometry_app` изолирована
+
+### 12.2. Надёжность
+
+- [ ] Outbox имеет статусы `pending/processing/sent/dead_letter`
+- [ ] Outbox Worker восстанавливает зависшие `processing` (stale > 5 мин)
+- [ ] Batch commit в Outbox Worker (не на каждое событие)
+- [ ] Data Lake upload — best effort, не блокирует ответ
+- [ ] Dead-letter логируется через `logger.critical`
+
+### 12.3. Корректность расчётов
+
+- [ ] K-коррекция применяется к сырым баллам
+- [ ] Пороги L/F/K — raw scores
+- [ ] `session_seed` использует `hashlib.md5`
+- [ ] `session_seed` типа `BIGINT` в БД
+- [ ] Idempotency Key детерминирован (`sort_keys=True`)
+
+### 12.4. Инфраструктура
+
+- [ ] Health-check использует порт 8000 внутри контейнера
+- [ ] Нет `depends_on astro-service` у Psychometry
+- [ ] Нет `depends_on astro-service` у Outbox Worker
+- [ ] Hive-пути: `month=8` (без ведущего нуля)
+- [ ] Метрики и аудит — fire-and-forget
+
+---
+
+## 13. План реализации
+
+| Неделя | Задача | Оценка |
+|--------|--------|--------|
+| 1 | Схема psych, миграции, MinIO, Docker | 16 ч |
+| 2 | Core: MMPI (K-коррекция), IAT (D-score), hashlib seed | 24 ч |
+| 3 | Сервисы: Scheduler, AstroClient, LakeClient, Outbox | 24 ч |
+| 4 | API: JWT-аутентификация, endpoints, fire-and-forget metrics | 20 ч |
+| 5 | Тесты, интеграция, приёмка | 16 ч |
+
+---
+
+## 14. Заключение
+
+**Psychometry Service v3.4** — исправленная production-ready версия:
+
+- ✅ **Безопасность:** `user_id` из JWT, нет раскрытия шкал MMPI.
+- ✅ **Надёжность:** Outbox с dead-letter и stale recovery, best-effort Data Lake.
+- ✅ **Корректность:** K-коррекция, детерминированный hashlib, BIGINT seed.
+- ✅ **Автономность:** нет жёстких зависимостей от Astro в Docker.
+- ✅ **Ресурсов кость:** batch commit, fire-and-forget метрики, Hive-совместимые пути.
+- ✅ **Сделал и забыл:** после submit пользователь свободен, все фоновые процессы самообслуживаются.
+
+**ТЗ готово к разработке.**

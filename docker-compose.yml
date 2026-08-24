@@ -204,8 +204,6 @@ services:
     volumes:
       - ./scripts/postgres-exporter-entrypoint.sh:/entrypoint.sh:ro
       - ./config/postgres-exporter.yml:/postgres_exporter.yml:ro
-    environment:
-      - PG_EXPORTER_CONFIG_FILE=/postgres_exporter.yml
     secrets:
       - postgrespassword
     networks:
@@ -231,7 +229,7 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana-password
       - GF_SERVER_ROOT_URL=http://localhost:3001
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      #- GF_INSTALL_PLUGINS=grafana-piechart-panel
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
@@ -251,8 +249,321 @@ services:
           cpus: '0.2'
           memory: 256M
 
+
+  # ============================================
+  # PSYCHOMETRY SERVICE
+  # ============================================
+
+  psychometry-service:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.psychometry
+    container_name: pa-psychometry
+    command: [ "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]
+    ports:
+      - "127.0.0.1:8002:8000"  # Internal port, not exposed to public
+      - "127.0.0.1:9091:9090"  # Metrics
+    environment:
+      - DATABASE_URL_FILE=/run/secrets/db-url
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgrespassword
+      - DB_POOL_SIZE=10
+      - DB_MAX_OVERFLOW=20
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=3600
+
+      # JWT (из секретов)
+      - JWT_SECRET_KEY_FILE=/run/secrets/jwt-secret
+      - JWT_ALGORITHM=HS256
+      - JWT_AUDIENCE=psychometry
+      - JWT_ISSUER=personal-assistant
+
+      # Astro Service (fallback если недоступен)
+      - ASTRO_SERVICE_URL=http://astro-service:8000
+      - ASTRO_FALLBACK_MODE=true
+      - ASTRO_TIMEOUT=3.0
+
+      # Data Lake (MinIO)
+      - LAKE_ENDPOINT=minio:9000
+      - LAKE_BUCKET=personal-assistant-lake
+      - LAKE_ACCESS_KEY_FILE=/run/secrets/minio-root-user
+      - LAKE_SECRET_KEY_FILE=/run/secrets/minio-root-password
+      - LAKE_USE_SSL=false
+      - LAKE_REGION=us-east-1
+      - LAKE_UPLOAD_TIMEOUT=30
+
+      # Test Intervals
+      - MMPI_INTERVAL_DAYS=90
+      - IAT_INTERVAL_DAYS=30
+
+      # Outbox
+      - OUTBOX_POLL_INTERVAL=30
+      - OUTBOX_MAX_RETRY=5
+      - OUTBOX_STALE_MINUTES=5
+      - OUTBOX_BATCH_SIZE=100
+
+      # Rate Limiting
+      - RATE_LIMIT_REQUESTS=10
+      - RATE_LIMIT_PERIOD=60
+
+      # Service
+      - SERVICE_NAME=psychometry
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+
+      # Metrics
+      - METRICS_ENABLED=true
+      - METRICS_PORT=9090
+
+      # API
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_PREFIX=/api/v1/psych
+
+      # MMPI Norms
+      - MMPI_NORMS_PATH=/app/psychometry/data/mmpi_norms.json
+    volumes:
+      - ./app/psychometry:/app/psychometry:ro
+    secrets:
+      - jwt-secret
+      - postgrespassword
+      - db-url
+      - minio-root-user
+      - minio-root-password
+    networks:
+      - pa-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-restore:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # OUTBOX WORKER (отдельный процесс)
+  # ============================================
+
+  psychometry-outbox-worker:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.psychometry
+    container_name: pa-psychometry-worker
+    command: [ "python", "-m", "src.workers.outbox_worker" ]
+    environment:
+      # Database
+      - DATABASE_URL_FILE=/run/secrets/db-url
+      - DB_POOL_SIZE=5
+      - DB_MAX_OVERFLOW=10
+
+      # JWT
+      - JWT_SECRET_KEY_FILE=/run/secrets/jwt-secret
+
+      # Astro
+      - ASTRO_SERVICE_URL=http://astro-service:8000
+      - ASTRO_FALLBACK_MODE=true
+      - ASTRO_TIMEOUT=3.0
+
+      # Data Lake
+      - LAKE_ENDPOINT=minio:9000
+      - LAKE_BUCKET=personal-assistant-lake
+      - LAKE_ACCESS_KEY_FILE=/run/secrets/minio-root-user
+      - LAKE_SECRET_KEY_FILE=/run/secrets/minio-root-password
+      - LAKE_USE_SSL=false
+
+      # Outbox
+      - OUTBOX_POLL_INTERVAL=30
+      - OUTBOX_MAX_RETRY=5
+      - OUTBOX_STALE_MINUTES=5
+      - OUTBOX_BATCH_SIZE=100
+
+      # Service
+      - SERVICE_NAME=psychometry-worker
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    volumes:
+      - ./app/psychometry:/app/psychometry:ro
+    secrets:
+      - jwt-secret
+      - postgrespassword
+      - db-url
+      - minio-root-user
+      - minio-root-password
+    networks:
+      - pa-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-restore:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # НЕТ depends_on astro-service
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # MINIO (Data Lake)
+  # ============================================
+
+  minio:
+    image: 11notes/minio:2025.10.15
+    container_name: pa-minio
+    user: root
+    ports:
+      - "127.0.0.1:9006:9000"
+      - "127.0.0.1:9005:9001"
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
+    volumes:
+      - minio_data:/data
+      - minio_config:/root/.mc
+    command: server /data --console-address ":9001"
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    networks:
+      - pa-net
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/localhealth", "https://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # MINIO INIT
+  # ============================================
+
+  minio-init:
+    image: minio/mc:latest  # ← ДОЛЖНО БЫТЬ!
+    container_name: pa-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    volumes:
+      - minio_config:/root/.mc
+    entrypoint: >
+      /bin/sh -c "
+      set -e;
+
+      echo '⏳ Waiting for MinIO...';
+      sleep 5;
+
+      MINIO_USER=\$$(cat /run/secrets/minio-root-user);
+      MINIO_PASS=\$$(cat /run/secrets/minio-root-password);
+
+      if [ -z \"\$$MINIO_USER\" ] || [ -z \"\$$MINIO_PASS\" ]; then
+        echo '❌ ERROR: Empty credentials from secrets';
+        exit 1;
+      fi
+
+      echo '⏳ Configuring MinIO client...';
+      # ✅ Использовать HTTPS с --insecure
+      /usr/bin/mc alias set myminio https://minio:9000 \"\$$MINIO_USER\" \"\$$MINIO_PASS\" --api S3v4 --insecure;
+
+      BUCKET=\"personal-assistant-lake\";
+
+      if /usr/bin/mc ls myminio/\$$BUCKET > /dev/null 2>&1; then
+        echo '✅ Bucket exists, ensuring policy...';
+      else
+        echo '📦 Creating bucket...';
+        /usr/bin/mc mb myminio/\$$BUCKET --insecure;
+      fi
+
+      /usr/bin/mc anonymous set private myminio/\$$BUCKET;
+
+      echo '📋 Enabling versioning...';
+      /usr/bin/mc version enable myminio/\$$BUCKET;
+
+      if /usr/bin/mc ilm list myminio/\$$BUCKET 2>/dev/null | grep -q \"expire\"; then
+        echo '✅ Lifecycle policy already exists';
+      else
+        echo '📋 Setting lifecycle policy (90 days)...';
+        /usr/bin/mc ilm add myminio/\$$BUCKET --expiry-days \"90\" --rules \"expire\";
+      fi
+
+      echo '📋 Bucket info:';
+      /usr/bin/mc ls myminio/;
+      /usr/bin/mc stat myminio/\$$BUCKET;
+
+      touch /tmp/init-completed;
+      echo '✅ MinIO initialization completed successfully!';
+      exit 0;
+      "
+    networks:
+      - pa-net
+    healthcheck:
+      test: [ "CMD-SHELL", "test -f /tmp/init-completed || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+
 volumes:
   pgdata: {}
+  minio_data: {}
+  minio_config: {}
   grafana_data: {}
   prometheus_data: {}
 
@@ -277,6 +588,10 @@ secrets:
     file: ./docker-secrets/jwt-secret
   grafana-password:
     file: ./docker-secrets/grafana-password.txt
+  minio-root-user:
+    file: ./docker-secrets/minio-root-user.txt
+  minio-root-password:
+    file: ./docker-secrets/minio-root-password.txt
 
 networks:
   pa-net:

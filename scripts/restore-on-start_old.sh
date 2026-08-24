@@ -1,7 +1,6 @@
 #!/bin/sh
 # ============================================
 # АВТОМАТИЧЕСКОЕ ВОССТАНОВЛЕНИЕ БД ПРИ ЗАПУСКЕ
-# С ПОДДЕРЖКОЙ СХЕМЫ PSYCH
 # ============================================
 
 set -e
@@ -19,13 +18,10 @@ DB_USER="postgres"
 DB_NAME="personalassistant"
 BACKUP_DIR="/backups"
 INIT_SCRIPT="/docker-entrypoint-initdb.d/init_db.sql"
-PSYCH_SCRIPT="/docker-entrypoint-initdb.d/psych.sql"
 FLAG_FILE="/tmp/.restore_completed"
-PSYCH_FLAG_FILE="/tmp/.psych_schema_applied"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}🔄 SMART RESTORE SYSTEM v3.0${NC}"
-echo -e "${BLUE}📊 С поддержкой схемы PSYCH${NC}"
+echo -e "${BLUE}🔄 SMART RESTORE SYSTEM v2.0${NC}"
 echo -e "${BLUE}========================================${NC}"
 
 # ============================================
@@ -91,31 +87,6 @@ if [ "$DB_EXISTS" = "1" ]; then
             echo -e "${GREEN}✅ База данных содержит данные${NC}"
             echo -e "${YELLOW}⚠️  Пропускаем восстановление${NC}"
             echo "$(date +%Y-%m-%d)" > "$FLAG_FILE"
-            
-            # ============================================
-            # 4a. ПРОВЕРКА СХЕМЫ PSYCH (даже если данные есть)
-            # ============================================
-            echo -e "${BLUE}🔍 Проверка схемы psych...${NC}"
-            PSYCH_EXISTS=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT schema_name FROM information_schema.schemata WHERE schema_name='psych';" 2>/dev/null | tr -d ' ')
-            
-            if [ -z "$PSYCH_EXISTS" ]; then
-                echo -e "${YELLOW}⚠️  Схема psych отсутствует!${NC}"
-                echo -e "${BLUE}📄 Применяем psych.sql...${NC}"
-                
-                if [ -f "$PSYCH_SCRIPT" ]; then
-                    if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -f "$PSYCH_SCRIPT" 2>/dev/null; then
-                        echo -e "${GREEN}✅ Схема psych создана${NC}"
-                    else
-                        echo -e "${RED}❌ Ошибка создания схемы psych${NC}"
-                    fi
-                else
-                    echo -e "${RED}❌ Файл psych.sql не найден${NC}"
-                fi
-            else
-                PSYCH_TABLES=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='psych';" 2>/dev/null || echo 0)
-                echo -e "${GREEN}✅ Схема psych существует (таблиц: $PSYCH_TABLES)${NC}"
-            fi
-            
             exit 0
         fi
     fi
@@ -142,19 +113,6 @@ if [ -z "$LATEST_BACKUP" ]; then
     
     if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -f "$INIT_SCRIPT" 2>/dev/null; then
         echo -e "${GREEN}✅ База данных инициализирована${NC}"
-        
-        # ============================================
-        # 5a. ПРИМЕНЯЕМ СХЕМУ PSYCH
-        # ============================================
-        if [ -f "$PSYCH_SCRIPT" ]; then
-            echo -e "${BLUE}📄 Применяем схему psych...${NC}"
-            if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -f "$PSYCH_SCRIPT" 2>/dev/null; then
-                echo -e "${GREEN}✅ Схема psych создана${NC}"
-            else
-                echo -e "${RED}❌ Ошибка создания схемы psych${NC}"
-            fi
-        fi
-        
         echo "$(date +%Y-%m-%d)" > "$FLAG_FILE"
         exit 0
     else
@@ -250,6 +208,7 @@ if [ -f "$INIT_SCRIPT" ]; then
             EXISTS_IN_MAIN=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$TABLE';" 2>/dev/null || echo 0)
             if [ "$EXISTS_IN_MAIN" != "1" ]; then
                 echo -e "${BLUE}ℹ️  Создание таблицы: $TABLE${NC}"
+                # Создаем таблицу из временной БД, но с правильным синтаксисом
                 psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "CREATE TABLE IF NOT EXISTS $TABLE (LIKE $TEMP_DB.public.$TABLE INCLUDING ALL);" 2>/dev/null || true
                 
                 # Копируем данные
@@ -267,55 +226,7 @@ if [ -f "$INIT_SCRIPT" ]; then
 fi
 
 # ============================================
-# 9. ПРИМЕНЕНИЕ СХЕМЫ PSYCH
-# ============================================
-
-echo -e "${BLUE}🔍 Проверка схемы psych...${NC}"
-
-PSYCH_EXISTS=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT schema_name FROM information_schema.schemata WHERE schema_name='psych';" 2>/dev/null | tr -d ' ')
-
-if [ -z "$PSYCH_EXISTS" ]; then
-    echo -e "${YELLOW}⚠️  Схема psych отсутствует в бэкапе${NC}"
-    
-    if [ -f "$PSYCH_SCRIPT" ]; then
-        echo -e "${BLUE}📄 Применяем psych.sql...${NC}"
-        if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -f "$PSYCH_SCRIPT" 2>/dev/null; then
-            echo -e "${GREEN}✅ Схема psych создана${NC}"
-            
-            # Проверяем созданные таблицы
-            PSYCH_TABLES=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='psych';" 2>/dev/null || echo 0)
-            echo -e "${GREEN}✅ Создано таблиц в psych: $PSYCH_TABLES${NC}"
-        else
-            echo -e "${RED}❌ Ошибка создания схемы psych${NC}"
-        fi
-    else
-        echo -e "${RED}❌ Файл psych.sql не найден в /docker-entrypoint-initdb.d/${NC}"
-        echo -e "${YELLOW}⚠️  Схема psych не будет создана автоматически${NC}"
-    fi
-else
-    PSYCH_TABLES=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='psych';" 2>/dev/null || echo 0)
-    echo -e "${GREEN}✅ Схема psych существует (таблиц: $PSYCH_TABLES)${NC}"
-fi
-
-# ============================================
-# 10. ПРОВЕРКА FOREIGN KEYS ДЛЯ PSYCH
-# ============================================
-
-echo -e "${BLUE}🔍 Проверка foreign keys для psych...${NC}"
-
-FK_CHECK=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "
-SELECT COUNT(*) FROM information_schema.table_constraints 
-WHERE constraint_type = 'FOREIGN KEY' 
-  AND constraint_schema = 'psych';" 2>/dev/null || echo 0)
-
-if [ "$FK_CHECK" -gt 0 ]; then
-    echo -e "${GREEN}✅ Найдено foreign keys: $FK_CHECK${NC}"
-else
-    echo -e "${YELLOW}⚠️  Foreign keys не найдены (могут быть добавлены позже)${NC}"
-fi
-
-# ============================================
-# 11. ФИНАЛЬНАЯ ПРОВЕРКА
+# 9. ФИНАЛЬНАЯ ПРОВЕРКА
 # ============================================
 
 echo -e "${BLUE}🔍 Финальная проверка...${NC}"
@@ -323,27 +234,14 @@ echo -e "${BLUE}🔍 Финальная проверка...${NC}"
 FINAL_TABLE_COUNT=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null || echo 0)
 FINAL_USER_COUNT=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM users;" 2>/dev/null || echo 0)
 
-# Проверка psych
-PSYCH_TABLE_COUNT=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='psych';" 2>/dev/null || echo 0)
-
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}📊 ИТОГИ ВОССТАНОВЛЕНИЯ${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}✅ Таблиц public: $FINAL_TABLE_COUNT${NC}"
+echo -e "${GREEN}✅ Таблиц: $FINAL_TABLE_COUNT${NC}"
 echo -e "${GREEN}✅ Пользователей: $FINAL_USER_COUNT${NC}"
-echo -e "${GREEN}✅ Таблиц psych: $PSYCH_TABLE_COUNT${NC}"
 
-if [ "$PSYCH_TABLE_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}✅ Схема psych успешно восстановлена${NC}"
-else
-    echo -e "${YELLOW}⚠️  Схема psych пуста или отсутствует${NC}"
-fi
-
-if [ "$FINAL_TABLE_COUNT" -gt 0 ] && [ "$FINAL_USER_COUNT" -gt 0 ]; then
+if [ "$FINAL_TABLE_COUNT" -gt 0 ]; then
     echo -e "${GREEN}✅ База данных успешно восстановлена${NC}"
     echo "$(date +%Y-%m-%d)" > "$FLAG_FILE"
     exit 0
 else
-    echo -e "${RED}❌ База данных пуста или повреждена!${NC}"
+    echo -e "${RED}❌ База данных пуста!${NC}"
     exit 1
 fi

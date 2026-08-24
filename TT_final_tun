@@ -1,0 +1,1366 @@
+# Техническое задание на итоговую отладку и настройку проекта
+
+## Версия 3.0 — Интеграция всех сервисов с Alignment Engine
+
+---
+
+## Оглавление
+
+1. [Введение и цели](#1-введение-и-цели)
+2. [Общая архитектура финальной системы](#2-общая-архитектура-финальной-системы)
+3. [Структура проекта и репозиториев](#3-структура-проекта-и-репозиториев)
+4. [Интеграция сервисов](#4-интеграция-сервисов)
+5. [Валидация данных](#5-валидация-данных)
+6. [Тестирование](#6-тестирование)
+7. [Мониторинг и логирование](#7-мониторинг-и-логирование)
+8. [Процедура развертывания](#8-процедура-развертывания)
+9. [Документация](#9-документация)
+10. [Чек-лист финальной приёмки](#10-чек-лист-финальной-приёмки)
+11. [План работ](#11-план-работ)
+
+---
+
+## 1. Введение и цели
+
+### 1.1. Что такое итоговая отладка и настройка
+
+**Итоговая отладка и настройка** — это завершающий этап проекта, в ходе которого:
+
+- Все 5 сервисов (Astro, Psychometry, Analytics Worker, Alignment Engine, Data Lake) собираются в единую систему
+- Проверяется корректность взаимодействия между сервисами
+- Выполняется валидация данных (миграции, backfill, консистентность)
+- Настраивается мониторинг и оповещения
+- Система разворачивается в production-окружении
+- **Проверяется работа Alignment Engine** (НОВОЕ!)
+
+**Ключевой принцип:** "Сделал и забыл" — после настройки система работает автономно.
+
+### 1.2. Что изменилось в версии 3.0
+
+| Аспект | Версия 2.0 | Версия 3.0 (текущая) |
+|--------|-----------|---------------------|
+| **Количество сервисов** | 4 | **5** (добавлен Alignment Engine) |
+| **Интеграция** | Astro ↔ Psychometry ↔ Analytics | + Alignment Engine |
+| **Тестирование** | API тесты | + Alignment тесты |
+| **Мониторинг** | Метрики сервисов | + Метрики Alignment |
+| **Данные** | Миграция прогнозов | + Backfill alignment_cache |
+
+### 1.3. Финальная архитектура
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (React/Vue)                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        API GATEWAY (FastAPI)                          │
+│  /api/v1/forecast → Astro Service                                     │
+│  /api/v1/psych/* → Psychometry Service                                │
+│  /api/v1/psych/alignment → Alignment Engine (НОВЫЙ!)                 │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┬───────────────┬───────────────┐
+              ▼               ▼               ▼               ▼               ▼
+┌─────────────────────┐ ┌───────────────┐ ┌───────────────┐ ┌─────────────┐ ┌─────────────────────┐
+│   ASTRO SERVICE     │ │  PSYCHOMETRY  │ │   ALIGNMENT   │ │  ANALYTICS  │ │  DATA LAKE          │
+│   (v3.0)            │ │  SERVICE      │ │   ENGINE      │ │  WORKER     │ │  (MinIO)            │
+│                     │ │  (v3.0)       │ │   (НОВЫЙ!)    │ │  (v3.0)     │ │                     │
+└─────────────────────┘ └───────────────┘ └───────────────┘ └─────────────┘ └─────────────────────┘
+              │               │               │               │               │
+              └───────────────┼───────────────┼───────────────┼───────────────┘
+                              ▼               ▼               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    POSTGRESQL (общая БД)                               │
+│  • astro schema (forecasts_v2, alignment_cache)                       │
+│  • psych schema (mmpi_results, profile_alignments, dissonance)        │
+│  • analytics schema (snapshots, patterns)                             │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    MONITORING & OBSERVABILITY                         │
+│  • Prometheus (метрики)                                               │
+│  • Grafana (дашборды)                                                 │
+│  • Loki (логи)                                                        │
+│  • AlertManager (оповещения)                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Общая архитектура финальной системы
+
+### 2.1. Контейнеризация (Docker Compose)
+
+```yaml
+# docker-compose.yml (финальный)
+
+version: '3.8'
+
+services:
+  # ============================================================
+  # INFRASTRUCTURE
+  # ============================================================
+  
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_DB: personal_assistant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ============================================================
+  # SERVICES
+  # ============================================================
+  
+  astro-service:
+    build: ./astro-service
+    container_name: astro-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      USE_V2_FORECASTS: ${USE_V2_FORECASTS:-true}
+      ALIGNMENT_CACHE_TTL: 604800
+      HOUSE_SYSTEM: W
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  psychometry-service:
+    build: ./psychometry-service
+    container_name: psychometry-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      ASTRO_FALLBACK_MODE: ${ASTRO_FALLBACK_MODE:-false}
+      LAKE_ENDPOINT: minio:9000
+      LAKE_ACCESS_KEY: ${MINIO_ROOT_USER}
+      LAKE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MMPI_INTERVAL_DAYS: 90
+      IAT_INTERVAL_DAYS: 30
+      ALIGNMENT_BATCH_SIZE: 50
+      ALIGNMENT_SLEEP_SECONDS: 5
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  alignment-engine:  # НОВЫЙ СЕРВИС!
+    build: ./alignment-engine
+    container_name: alignment-engine
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      ASTRO_API_KEY: ${INTERNAL_API_KEY}
+      PSYCHOMETRY_SERVICE_URL: http://psychometry-service:8000
+      TEMPLATES_PATH: ./interpretations/alignments/
+      DISSONANCE_THRESHOLD: 0.4
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  psychometry-outbox-worker:
+    build: ./psychometry-service
+    container_name: psychometry-outbox-worker
+    command: python -m src.workers.outbox_worker
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  psychometry-alignment-job:  # Cron для Alignment
+    build: ./psychometry-service
+    container_name: psychometry-alignment-job
+    command: python -m src.jobs.daily_alignment
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      ALIGNMENT_BATCH_SIZE: 50
+      ALIGNMENT_SLEEP_SECONDS: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  analytics-worker:
+    build: ./analytics-worker
+    container_name: analytics-worker
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      LAKE_ENDPOINT: minio:9000
+      LAKE_ACCESS_KEY: ${MINIO_ROOT_USER}
+      LAKE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MIN_OBSERVATIONS: 10
+      MIN_UNIQUE_USERS: 3
+      SIGNIFICANCE_THRESHOLD: 0.5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ============================================================
+  # API GATEWAY
+  # ============================================================
+  
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    environment:
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      PSYCHOMETRY_SERVICE_URL: http://psychometry-service:8000
+      ALIGNMENT_ENGINE_URL: http://alignment-engine:8000  # НОВЫЙ!
+    ports:
+      - "8000:8000"
+    depends_on:
+      astro-service:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+      alignment-engine:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ============================================================
+  # MONITORING
+  # ============================================================
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - /var/log/containers:/var/log/containers
+      - ./promtail.yml:/etc/promtail/promtail.yml
+    command: -config.file=/etc/promtail/promtail.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+```
+
+### 2.2. Переменные окружения (.env)
+
+```bash
+# ============================================================
+# POSTGRESQL
+# ============================================================
+POSTGRES_PASSWORD=secure_password_here
+
+# ============================================================
+# MINIO (DATA LAKE)
+# ============================================================
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=secure_minio_password
+
+# ============================================================
+# INTERNAL API AUTH
+# ============================================================
+INTERNAL_API_KEY=32_byte_hex_internal_key
+
+# ============================================================
+# ASTRO SERVICE
+# ============================================================
+USE_V2_FORECASTS=true
+HOUSE_SYSTEM=W
+ALIGNMENT_CACHE_TTL=604800
+
+# ============================================================
+# PSYCHOMETRY SERVICE
+# ============================================================
+ASTRO_FALLBACK_MODE=false
+MMPI_INTERVAL_DAYS=90
+IAT_INTERVAL_DAYS=30
+ALIGNMENT_BATCH_SIZE=50
+ALIGNMENT_SLEEP_SECONDS=5
+
+# ============================================================
+# ALIGNMENT ENGINE (НОВЫЙ!)
+# ============================================================
+DISSONANCE_THRESHOLD=0.4
+TEMPLATES_PATH=./interpretations/alignments/
+
+# ============================================================
+# ANALYTICS WORKER
+# ============================================================
+MIN_OBSERVATIONS=10
+MIN_UNIQUE_USERS=3
+SIGNIFICANCE_THRESHOLD=0.5
+
+# ============================================================
+# GRAFANA
+# ============================================================
+GRAFANA_PASSWORD=secure_grafana_password
+```
+
+---
+
+## 3. Структура проекта и репозиториев
+
+### 3.1. Монорепозиторий
+
+```
+personal-assistant/
+├── docker-compose.yml
+├── .env
+├── Makefile
+├── README.md
+│
+├── api-gateway/
+│   ├── Dockerfile
+│   ├── src/
+│   │   ├── main.py
+│   │   ├── routes.py
+│   │   └── settings.py
+│   └── requirements.txt
+│
+├── astro-service/
+│   ├── Dockerfile
+│   ├── src/
+│   │   ├── main.py
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── layers/
+│   │   ├── services/
+│   │   └── interpretations/
+│   ├── migrations/
+│   ├── tests/
+│   └── requirements.txt
+│
+├── psychometry-service/
+│   ├── Dockerfile
+│   ├── src/
+│   │   ├── main.py
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── alignment/      # НОВЫЙ!
+│   │   ├── clients/
+│   │   ├── services/
+│   │   ├── jobs/
+│   │   └── workers/
+│   ├── migrations/
+│   ├── tests/
+│   └── requirements.txt
+│
+├── alignment-engine/        # НОВЫЙ СЕРВИС!
+│   ├── Dockerfile
+│   ├── src/
+│   │   ├── main.py
+│   │   ├── api/
+│   │   ├── core/
+│   │   │   ├── aligners/
+│   │   │   ├── coherence_calculator.py
+│   │   │   ├── dissonance_analyzer.py
+│   │   │   └── template_renderer.py
+│   │   ├── builders/
+│   │   ├── services/
+│   │   └── clients/
+│   ├── interpretations/
+│   │   └── alignments/
+│   ├── migrations/
+│   ├── tests/
+│   └── requirements.txt
+│
+├── analytics-worker/
+│   ├── Dockerfile
+│   ├── src/
+│   │   ├── main.py
+│   │   ├── core/
+│   │   ├── services/
+│   │   └── jobs/
+│   ├── tests/
+│   └── requirements.txt
+│
+├── monitoring/
+│   ├── prometheus.yml
+│   ├── promtail.yml
+│   └── grafana/
+│       ├── dashboards/
+│       │   ├── astro_psych_dashboard.json
+│       │   └── alignment_dashboard.json  # НОВЫЙ!
+│       └── datasources/
+│           └── prometheus.yml
+│
+├── scripts/
+│   ├── migrate_forecasts.py
+│   ├── backfill_astro_context.py
+│   ├── backfill_alignment_cache.py  # НОВЫЙ!
+│   ├── verify_data.py
+│   └── seed_demo_data.py
+│
+└── backups/
+    └── (автоматически создаётся)
+```
+
+### 3.2. Makefile
+
+```makefile
+# Makefile для управления проектом
+
+.PHONY: help build up down logs test migrate seed clean backup status
+
+help:
+	@echo "Available commands:"
+	@echo "  make build      - Build all Docker images"
+	@echo "  make up         - Start all services"
+	@echo "  make down       - Stop all services"
+	@echo "  make logs       - Show logs from all services"
+	@echo "  make test       - Run all tests"
+	@echo "  make migrate    - Run database migrations"
+	@echo "  make seed       - Seed demo data"
+	@echo "  make backup     - Create database backup"
+	@echo "  make clean      - Clean up containers and volumes"
+	@echo "  make status     - Check health of all services"
+
+build:
+	docker-compose build
+
+up:
+	docker-compose up -d
+	@echo "Waiting for services to be ready..."
+	sleep 15
+	make migrate
+	@echo "All services are running!"
+
+down:
+	docker-compose down
+
+logs:
+	docker-compose logs -f
+
+test:
+	docker-compose exec astro-service pytest tests/
+	docker-compose exec psychometry-service pytest tests/
+	docker-compose exec alignment-engine pytest tests/   # НОВЫЙ!
+	docker-compose exec analytics-worker pytest tests/
+
+migrate:
+	docker-compose run --rm migrations-astro
+	docker-compose run --rm migrations-psych
+	docker-compose run --rm migrations-alignment  # НОВЫЙ!
+
+seed:
+	python scripts/seed_demo_data.py
+
+backup:
+	docker-compose exec postgres pg_dump -U postgres personal_assistant > backups/manual_$(shell date +%Y%m%d_%H%M%S).sql
+
+clean:
+	docker-compose down -v
+	rm -rf backups/*
+
+status:
+	docker-compose ps
+	@echo "\n--- Health Checks ---"
+	curl -s http://localhost:8000/health | jq .
+	curl -s http://localhost:8001/health | jq .
+	curl -s http://localhost:8002/health | jq .
+	curl -s http://localhost:8003/health | jq .   # НОВЫЙ!
+```
+
+---
+
+## 4. Интеграция сервисов
+
+### 4.1. Проверка Internal API
+
+```python
+# scripts/verify_integration.py
+
+class IntegrationVerifier:
+    """
+    Проверяет все internal endpoint'ы между сервисами.
+    """
+    
+    def __init__(self):
+        self.base_urls = {
+            'gateway': 'http://localhost:8000',
+            'astro': 'http://localhost:8001',
+            'psych': 'http://localhost:8002',
+            'alignment': 'http://localhost:8003',  # НОВЫЙ!
+        }
+        self.api_key = os.getenv('INTERNAL_API_KEY')
+    
+    async def verify_all(self) -> Dict:
+        """Запускает все проверки."""
+        checks = [
+            self.check_astro_health(),
+            self.check_psych_health(),
+            self.check_alignment_health(),  # НОВЫЙ!
+            self.check_astro_context(),
+            self.check_astro_profile(),     # НОВЫЙ!
+            self.check_test_status(),
+            self.check_blind_protocol(),
+            self.check_forecast(),
+            self.check_psych_status(),
+            self.check_alignment(),         # НОВЫЙ!
+        ]
+        
+        results = await asyncio.gather(*checks, return_exceptions=True)
+        
+        return {
+            'status': 'success' if all(r.get('status') == 'ok' for r in results) else 'failed',
+            'checks': results
+        }
+    
+    async def check_alignment_health(self):  # НОВЫЙ!
+        """Проверяет health endpoint Alignment Engine."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{self.base_urls['alignment']}/health")
+            return {
+                'name': 'alignment_health',
+                'status': 'ok' if response.status_code == 200 else 'failed',
+                'response': response.json() if response.status_code == 200 else None
+            }
+    
+    async def check_astro_profile(self):  # НОВЫЙ!
+        """Проверяет /internal/v1/users/{id}/astro-profile."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_urls['astro']}/internal/v1/users/1/astro-profile",
+                params={"date": "2026-08-04"},
+                headers={"X-Internal-API-Key": self.api_key}
+            )
+            return {
+                'name': 'astro_profile',
+                'status': 'ok' if response.status_code == 200 else 'failed',
+                'has_axes': 'dasha' in response.json() if response.status_code == 200 else False
+            }
+    
+    async def check_alignment(self):  # НОВЫЙ!
+        """Проверяет /api/v1/psych/alignment."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_urls['gateway']}/api/v1/psych/alignment",
+                params={"user_id": 1, "date": "2026-08-04"}
+            )
+            return {
+                'name': 'alignment',
+                'status': 'ok' if response.status_code == 200 else 'failed',
+                'has_coherence': 'coherence_score' in response.json() if response.status_code == 200 else False
+            }
+```
+
+### 4.2. Запуск проверки интеграции
+
+```bash
+# Запуск проверки интеграции
+docker-compose exec api-gateway python scripts/verify_integration.py
+
+# Ожидаемый вывод:
+{
+  "status": "success",
+  "checks": [
+    {"name": "astro_health", "status": "ok"},
+    {"name": "psych_health", "status": "ok"},
+    {"name": "alignment_health", "status": "ok"},
+    {"name": "astro_context", "status": "ok"},
+    {"name": "astro_profile", "status": "ok"},
+    {"name": "test_status", "status": "ok"},
+    {"name": "blind_protocol", "status": "ok"},
+    {"name": "forecast", "status": "ok"},
+    {"name": "psych_status", "status": "ok"},
+    {"name": "alignment", "status": "ok"}
+  ]
+}
+```
+
+---
+
+## 5. Валидация данных
+
+### 5.1. Проверка консистентности данных
+
+```python
+# scripts/verify_data.py
+
+class DataVerifier:
+    """
+    Проверяет консистентность данных в БД.
+    """
+    
+    async def verify_all(self) -> Dict:
+        """Запускает все проверки."""
+        checks = [
+            self.check_forecasts_count(),
+            self.check_axes_count(),
+            self.check_mmpi_count(),
+            self.check_iat_count(),
+            self.check_alignments_count(),    # НОВЫЙ!
+            self.check_dissonances_count(),   # НОВЫЙ!
+            self.check_no_orphans(),
+        ]
+        
+        results = await asyncio.gather(*checks, return_exceptions=True)
+        
+        return {
+            'status': 'success' if all(r.get('status') == 'ok' for r in results) else 'failed',
+            'checks': results
+        }
+    
+    async def check_alignments_count(self):  # НОВЫЙ!
+        """Проверяет количество сопоставлений."""
+        async with async_session() as session:
+            count = await session.scalar(select(func.count()).select_from(ProfileAlignment))
+            return {
+                'name': 'alignments_count',
+                'status': 'ok' if count > 0 else 'warning',
+                'count': count
+            }
+    
+    async def check_dissonances_count(self):  # НОВЫЙ!
+        """Проверяет количество диссонансов."""
+        async with async_session() as session:
+            count = await session.scalar(select(func.count()).select_from(Dissonance))
+            return {
+                'name': 'dissonances_count',
+                'status': 'ok' if count >= 0 else 'warning',
+                'count': count
+            }
+```
+
+### 5.2. Backfill alignment_cache
+
+```python
+# scripts/backfill_alignment_cache.py
+
+async def backfill_alignment_cache():
+    """
+    Заполняет alignment_cache для существующих пользователей.
+    """
+    async with async_session() as session:
+        # 1. Находим всех пользователей с прогнозами
+        stmt = select(ForecastV2.user_id).distinct()
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+        
+        total = len(users)
+        processed = 0
+        
+        for user_id in users:
+            # 2. Для каждого пользователя рассчитываем профиль
+            profile = await astro_profile_service.build_profile(
+                user_id=user_id,
+                date=date.today(),
+                session=session
+            )
+            
+            # 3. Сохраняем в кэш
+            await alignment_cache.set(user_id, date.today(), profile)
+            
+            processed += 1
+            if processed % 10 == 0:
+                logger.info(f"Backfilled {processed}/{total} users")
+            
+            # 4. Пауза (не перегружать)
+            await asyncio.sleep(0.1)
+        
+        logger.info(f"Completed backfill for {processed} users")
+```
+
+---
+
+## 6. Тестирование
+
+### 6.1. E2E тесты
+
+```python
+# tests/e2e/test_full_flow.py
+
+class TestFullFlow:
+    """
+    End-to-end тесты всего flow с Alignment Engine.
+    """
+    
+    @pytest.mark.asyncio
+    async def test_full_flow(self):
+        """
+        Полный сценарий использования с Alignment Engine.
+        """
+        async with httpx.AsyncClient() as client:
+            # 1. Регистрация пользователя
+            user_id = await self._register_user(client)
+            
+            # 2. Получение прогноза
+            forecast = await self._get_forecast(client, user_id)
+            assert 'axes' in forecast
+            
+            # 3. Прохождение MMPI
+            mmpi_result = await self._pass_mmpi(client, user_id)
+            assert mmpi_result['validity']['is_valid'] == True
+            
+            # 4. Проверка сопоставления профилей (НОВОЕ!)
+            alignment = await self._get_alignment(client, user_id)
+            assert 'coherence_score' in alignment
+            assert alignment['coherence_score'] >= 0
+            
+            # 5. Проверка диссонансов
+            dissonances = alignment.get('dissonances', [])
+            assert isinstance(dissonances, list)
+            
+            # 6. Проверка объяснений
+            recommendations = alignment.get('recommendations', '')
+            assert len(recommendations) > 0
+    
+    async def _get_alignment(self, client, user_id):  # НОВЫЙ!
+        """Получает сопоставление профилей."""
+        response = await client.get(
+            f"/api/v1/psych/alignment",
+            params={"user_id": user_id, "date": "2026-08-04"}
+        )
+        return response.json()
+```
+
+### 6.2. Нагрузочное тестирование
+
+```python
+# tests/performance/test_load.py
+
+class LoadTester:
+    """
+    Тестирует производительность под нагрузкой.
+    """
+    
+    async def test_alignment_throughput(self, concurrent: int = 50):  # НОВЫЙ!
+        """
+        Тестирует throughput Alignment Engine.
+        """
+        async with httpx.AsyncClient() as client:
+            tasks = []
+            for i in range(concurrent):
+                tasks.append(
+                    client.get(
+                        f"http://localhost:8000/api/v1/psych/alignment",
+                        params={"user_id": i % 10 + 1, "date": "2026-08-04"}
+                    )
+                )
+            
+            start = time.time()
+            responses = await asyncio.gather(*tasks)
+            elapsed = time.time() - start
+            
+            success = sum(1 for r in responses if r.status_code == 200)
+            
+            return {
+                'total': len(responses),
+                'success': success,
+                'failed': len(responses) - success,
+                'elapsed_seconds': elapsed,
+                'rps': len(responses) / elapsed
+            }
+```
+
+---
+
+## 7. Мониторинг и логирование
+
+### 7.1. Метрики (Prometheus)
+
+```yaml
+# prometheus.yml
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8000']
+    metrics_path: '/metrics'
+  
+  - job_name: 'astro-service'
+    static_configs:
+      - targets: ['astro-service:8000']
+    metrics_path: '/metrics'
+  
+  - job_name: 'psychometry-service'
+    static_configs:
+      - targets: ['psychometry-service:8000']
+    metrics_path: '/metrics'
+  
+  - job_name: 'alignment-engine'  # НОВЫЙ!
+    static_configs:
+      - targets: ['alignment-engine:8000']
+    metrics_path: '/metrics'
+  
+  - job_name: 'analytics-worker'
+    static_configs:
+      - targets: ['analytics-worker:8000']
+    metrics_path: '/metrics'
+```
+
+### 7.2. Новые метрики для Alignment Engine
+
+```python
+# src/metrics.py (Alignment Engine)
+
+from prometheus_client import Counter, Gauge, Histogram
+
+# Счётчики
+alignment_requests = Counter('alignment_requests_total', 'Total alignment requests')
+alignment_errors = Counter('alignment_errors_total', 'Total alignment errors')
+
+# Показатели
+coherence_score_gauge = Gauge('coherence_score', 'Average coherence score')
+dissonance_count_gauge = Gauge('dissonance_count', 'Total dissonances found')
+
+# Гистограммы
+alignment_latency = Histogram('alignment_latency_seconds', 'Alignment calculation latency')
+
+# Новые метрики для Alignment Engine
+coherence_distribution = Histogram(
+    'coherence_score_distribution',
+    'Distribution of coherence scores',
+    buckets=[0, 0.2, 0.4, 0.6, 0.8, 1.0]
+)
+
+dissonance_distribution = Histogram(
+    'dissonance_distribution',
+    'Distribution of dissonance counts',
+    buckets=[0, 1, 2, 3, 4, 5]
+)
+
+alignment_cache_hit = Counter('alignment_cache_hit_total', 'Cache hits')
+alignment_cache_miss = Counter('alignment_cache_miss_total', 'Cache misses')
+```
+
+### 7.3. Новые дашборды Grafana
+
+```json
+{
+  "title": "Alignment Engine Dashboard",
+  "panels": [
+    {
+      "title": "Coherence Score Distribution",
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(coherence_score_distribution_bucket[5m])) by (le))",
+          "legendFormat": "coherence_score"
+        }
+      ]
+    },
+    {
+      "title": "Alignment Cache Hit Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(alignment_cache_hit_total[5m]) / (rate(alignment_cache_hit_total[5m]) + rate(alignment_cache_miss_total[5m]))",
+          "legendFormat": "hit_rate"
+        }
+      ]
+    },
+    {
+      "title": "Dissonance Analysis",
+      "type": "table",
+      "targets": [
+        {
+          "expr": "dissonance_count",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "title": "Alignment Latency",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(alignment_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(alignment_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 7.4. Алерты (AlertManager)
+
+```yaml
+# alertmanager.yml
+
+groups:
+  - name: service_alerts
+    rules:
+      # Существующие алерты
+      - alert: ServiceDown
+        expr: up{job=~".*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is down"
+      
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency on {{ $labels.job }}"
+      
+      # НОВЫЕ алерты для Alignment Engine
+      - alert: LowCoherenceScore
+        expr: avg(coherence_score) < 0.4
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average coherence score below threshold"
+      
+      - alert: HighDissonanceRate
+        expr: rate(dissonance_count[1h]) > 10
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High dissonance rate detected"
+      
+      - alert: AlignmentCacheLowHitRate
+        expr: rate(alignment_cache_hit_total[1h]) / (rate(alignment_cache_hit_total[1h]) + rate(alignment_cache_miss_total[1h])) < 0.5
+        for: 1h
+        labels:
+          severity: warning
+          annotations:
+            summary: "Alignment cache hit rate below 50%"
+      
+      # Существующие алерты
+      - alert: AnalyticsFailed
+        expr: analytics_update_failure_count > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Analytics update failed"
+      
+      - alert: LakeUploadFailed
+        expr: lake_upload_failure_count > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Data Lake upload failures"
+```
+
+---
+
+## 8. Процедура развертывания
+
+### 8.1. Первичное развертывание
+
+```bash
+# 1. Клонирование репозитория
+git clone https://github.com/your-org/personal-assistant.git
+cd personal-assistant
+
+# 2. Настройка переменных окружения
+cp .env.example .env
+# Отредактировать .env, установить пароли
+
+# 3. Сборка и запуск
+make build
+make up
+
+# 4. Проверка статуса
+make status
+
+# 5. Загрузка демо-данных (опционально)
+make seed
+```
+
+### 8.2. Миграция с v1 на v3
+
+```bash
+# 1. Бэкап БД
+make backup
+
+# 2. Запуск миграций
+make migrate
+
+# 3. Миграция прогнозов (Astro)
+docker-compose exec astro-service python scripts/migrate_forecasts.py
+
+# 4. Backfill астро-контекста (Psychometry)
+docker-compose exec psychometry-service python scripts/backfill_astro_context.py
+
+# 5. Backfill alignment_cache (НОВЫЙ!)
+docker-compose exec astro-service python scripts/backfill_alignment_cache.py
+
+# 6. Переключение на v3
+# В .env: USE_V2_FORECASTS=true
+docker-compose restart astro-service psychometry-service alignment-engine
+
+# 7. Проверка
+make status
+```
+
+### 8.3. Обновление (rolling update)
+
+```bash
+# 1. Остановка одного сервиса
+docker-compose stop alignment-engine
+
+# 2. Обновление кода
+git pull
+
+# 3. Пересборка и запуск
+docker-compose build alignment-engine
+docker-compose up -d alignment-engine
+
+# 4. Проверка здоровья
+curl -f http://localhost:8003/health
+```
+
+---
+
+## 9. Документация
+
+### 9.1. README.md
+
+```markdown
+# Personal Assistant — Адаптивная астропсихологическая система
+
+## Быстрый старт
+
+```bash
+git clone ...
+cp .env.example .env
+# отредактировать .env
+make up
+```
+
+## Архитектура
+
+Система состоит из 5 сервисов:
+1. **Astro Service** — астрологические расчёты и прогнозы
+2. **Psychometry Service** — психологическое тестирование
+3. **Alignment Engine** — сопоставление профилей (НОВЫЙ!)
+4. **Analytics Worker** — обучение на диссонансах
+5. **API Gateway** — маршрутизация запросов
+
+...
+```
+
+### 9.2. API документация (OpenAPI)
+
+```yaml
+# Доступна по адресу:
+GET /docs  # Swagger UI
+GET /redoc # ReDoc
+```
+
+### 9.3. Руководство администратора
+
+```markdown
+# Администрирование
+
+## Ежедневные операции
+- Проверка логов: `docker-compose logs -f`
+- Проверка метрик: Grafana http://localhost:3000
+- Проверка Alignment: `curl http://localhost:8003/health`
+- Ежедневный бэкап: автоматический в 3:00
+
+## Еженедельные операции
+- Проверка weekly job Analytics Worker
+- Проверка Daily Alignment Job
+
+## Ежемесячные операции
+- Проверка monthly job Analytics Worker
+- Проверка базы знаний
+
+## Новые операции для Alignment Engine
+- Проверка coherence_score: `SELECT AVG(coherence_score) FROM psych.profile_alignments`
+- Проверка диссонансов: `SELECT COUNT(*) FROM psych.dissonance_analysis WHERE resolved = false`
+- Очистка кэша: `DELETE FROM astro.alignment_cache WHERE expires_at < NOW()`
+```
+
+---
+
+## 10. Чек-лист финальной приёмки
+
+### 10.1. Инфраструктура
+
+- [ ] Все контейнеры запускаются через `docker-compose up`
+- [ ] Health checks работают для всех 5 сервисов
+- [ ] Ежедневный бэкап БД настроен
+- [ ] Переменные окружения установлены
+- [ ] Сети настроены корректно
+
+### 10.2. Сервисы
+
+- [ ] **Astro Service**
+  - [ ] GET /api/v1/forecast возвращает прогноз
+  - [ ] GET /internal/v1/astro-context возвращает контекст
+  - [ ] GET /internal/v1/astro-profile возвращает профиль (НОВЫЙ!)
+  - [ ] alignment_cache работает
+
+- [ ] **Psychometry Service**
+  - [ ] POST /api/v1/psych/mmpi сохраняет MMPI
+  - [ ] POST /api/v1/psych/iat сохраняет IAT
+  - [ ] GET /api/v1/psych/status возвращает статус
+  - [ ] GET /api/v1/psych/history возвращает историю
+  - [ ] Daily Alignment Job работает
+
+- [ ] **Alignment Engine** (НОВЫЙ!)
+  - [ ] GET /api/v1/psych/alignment возвращает сопоставление
+  - [ ] GET /api/v1/psych/alignment/history возвращает историю
+  - [ ] House/Dasha/Retro/Element/Dynamic Aligners работают
+  - [ ] Coherence_score рассчитывается
+  - [ ] Диссонансы выявляются
+  - [ ] Шаблонные объяснения генерируются
+
+- [ ] **Analytics Worker**
+  - [ ] Weekly job работает
+  - [ ] Monthly job работает
+  - [ ] База знаний обновляется
+
+- [ ] **Data Lake**
+  - [ ] MinIO работает
+  - [ ] Данные загружаются
+
+### 10.3. Мониторинг
+
+- [ ] Prometheus собирает метрики со всех 5 сервисов
+- [ ] Grafana дашборды настроены (включая Alignment)
+- [ ] Loki собирает логи
+- [ ] Алерты настроены (включая Alignment)
+
+### 10.4. Интеграция
+
+- [ ] Internal API работает между сервисами
+- [ ] Alignment Engine получает профиль из Astro Service
+- [ ] Alignment Engine получает тесты из Psychometry Service
+- [ ] Blind Protocol корректно работает
+- [ ] Daily Alignment Job не блокирует основной сервис
+
+### 10.5. Данные
+
+- [ ] Все миграции накатаны
+- [ ] alignment_cache заполнен
+- [ ] Нет сирот в БД
+- [ ] profile_alignments таблица заполнена
+
+### 10.6. Документация
+
+- [ ] README.md полный
+- [ ] OpenAPI доступен (включая Alignment)
+- [ ] Руководство администратора (обновлено)
+- [ ] Руководство разработчика (обновлено)
+
+---
+
+## 11. План работ
+
+### День 1: Инфраструктура + Alignment Engine
+
+| Время | Задача |
+|-------|--------|
+| 09:00-10:00 | Настройка Docker Compose с Alignment Engine |
+| 10:00-12:00 | Сборка всех 5 образов |
+| 13:00-15:00 | Настройка переменных окружения |
+| 15:00-18:00 | Проверка запуска всех сервисов |
+
+### День 2: Интеграция
+
+| Время | Задача |
+|-------|--------|
+| 09:00-11:00 | Проверка Internal API (Astro → Alignment) |
+| 11:00-13:00 | Проверка работы Alignment Engine |
+| 14:00-16:00 | Проверка Daily Alignment Job |
+| 16:00-18:00 | Валидация данных (profile_alignments) |
+
+### День 3: Миграция
+
+| Время | Задача |
+|-------|--------|
+| 09:00-11:00 | Миграция прогнозов (v1 → v2) |
+| 11:00-13:00 | Backfill астро-контекста |
+| 14:00-16:00 | Backfill alignment_cache (НОВЫЙ!) |
+| 16:00-18:00 | Проверка консистентности |
+
+### День 4: Мониторинг
+
+| Время | Задача |
+|-------|--------|
+| 09:00-11:00 | Настройка Prometheus (добавить Alignment) |
+| 11:00-13:00 | Настройка Grafana (новый дашборд) |
+| 14:00-16:00 | Настройка Loki |
+| 16:00-18:00 | Настройка AlertManager (новые алерты) |
+
+### День 5: Тестирование и документация
+
+| Время | Задача |
+|-------|--------|
+| 09:00-11:00 | E2E тесты (с Alignment) |
+| 11:00-13:00 | Нагрузочное тестирование |
+| 14:00-16:00 | Документация (обновить) |
+| 16:00-18:00 | Финальная приёмка |
+
+---
+
+## 12. Заключение
+
+**Итоговая отладка и настройка v3.0** — это завершающий этап, который:
+
+1. **Объединяет** 5 сервисов в единую систему (добавлен Alignment Engine)
+2. **Проверяет** корректность взаимодействия всех компонентов
+3. **Валидирует** данные и миграции
+4. **Настраивает** мониторинг и оповещения (включая метрики Alignment)
+5. **Готовит** систему к production
+
+**Ключевые изменения:**
+- ✅ Добавлен Alignment Engine как 5-й сервис
+- ✅ Добавлены новые метрики и дашборды
+- ✅ Добавлены новые алерты (coherence, dissonance)
+- ✅ Добавлены новые тесты (E2E, нагрузочные)
+- ✅ Добавлен backfill alignment_cache
+- ✅ Обновлена документация
+
+**Критерий готовности:** Все 5 сервисов работают стабильно, Alignment Engine корректно сопоставляет профили, мониторинг настроен, система готова к эксплуатации.

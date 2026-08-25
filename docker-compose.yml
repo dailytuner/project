@@ -285,8 +285,8 @@ services:
       # Data Lake (MinIO)
       - LAKE_ENDPOINT=minio:9000
       - LAKE_BUCKET=personal-assistant-lake
-      - LAKE_ACCESS_KEY_FILE=/run/secrets/minio-root-user
-      - LAKE_SECRET_KEY_FILE=/run/secrets/minio-root-password
+      - LAKE_ACCESS_KEY_FILE=/run/secrets/s3-access-key
+      - LAKE_SECRET_KEY_FILE=/run/secrets/s3-secret-key
       - LAKE_USE_SSL=false
       - LAKE_REGION=us-east-1
       - LAKE_UPLOAD_TIMEOUT=30
@@ -328,8 +328,8 @@ services:
       - jwt-secret
       - postgrespassword
       - db-url
-      - minio-root-user
-      - minio-root-password
+      - s3-access-key
+      - s3-secret-key
     networks:
       - pa-net
     depends_on:
@@ -389,9 +389,10 @@ services:
       # Data Lake
       - LAKE_ENDPOINT=minio:9000
       - LAKE_BUCKET=personal-assistant-lake
-      - LAKE_ACCESS_KEY_FILE=/run/secrets/minio-root-user
-      - LAKE_SECRET_KEY_FILE=/run/secrets/minio-root-password
+      - LAKE_ACCESS_KEY_FILE=/run/secrets/s3-access-key
+      - LAKE_SECRET_KEY_FILE=/run/secrets/s3-secret-key
       - LAKE_USE_SSL=false
+      - LAKE_REGION=us-east-1
 
       # Outbox
       - OUTBOX_POLL_INTERVAL=30
@@ -410,8 +411,8 @@ services:
       - jwt-secret
       - postgrespassword
       - db-url
-      - minio-root-user
-      - minio-root-password
+      - s3-access-key
+      - s3-secret-key
     networks:
       - pa-net
     depends_on:
@@ -444,30 +445,29 @@ services:
   # ============================================
 
   minio:
-    image: 11notes/minio:2025.10.15
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
     container_name: pa-minio
-    user: root
+    user: 1000:1000
     ports:
-      - "127.0.0.1:9006:9000"
-      - "127.0.0.1:9005:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
+      MINIO_ROOT_USER: paadmin
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
     volumes:
-      - minio_data:/data
-      - minio_config:/root/.mc
+      #- /mnt/minio-data:/data  # ← отдельный диск для продакшена
+      - ./minio_data:/data  # ← для локальной разработки
     command: server /data --console-address ":9001"
     secrets:
-      - minio-root-user
       - minio-root-password
     networks:
       - pa-net
     healthcheck:
-      test: ["CMD", "/usr/local/bin/localhealth", "https://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 60s
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -484,76 +484,26 @@ services:
         max-file: "3"
 
   # ============================================
-  # MINIO INIT
+  # MINIO INIT - PRODUCTION
   # ============================================
 
   minio-init:
-    image: minio/mc:latest  # ← ДОЛЖНО БЫТЬ!
+    image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: pa-minio-init
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
     secrets:
-      - minio-root-user
       - minio-root-password
+      - s3-access-key
+      - s3-secret-key
     volumes:
-      - minio_config:/root/.mc
-    entrypoint: >
-      /bin/sh -c "
-      set -e;
-
-      echo '⏳ Waiting for MinIO...';
-      sleep 5;
-
-      MINIO_USER=\$$(cat /run/secrets/minio-root-user);
-      MINIO_PASS=\$$(cat /run/secrets/minio-root-password);
-
-      if [ -z \"\$$MINIO_USER\" ] || [ -z \"\$$MINIO_PASS\" ]; then
-        echo '❌ ERROR: Empty credentials from secrets';
-        exit 1;
-      fi
-
-      echo '⏳ Configuring MinIO client...';
-      # ✅ Использовать HTTPS с --insecure
-      /usr/bin/mc alias set myminio https://minio:9000 \"\$$MINIO_USER\" \"\$$MINIO_PASS\" --api S3v4 --insecure;
-
-      BUCKET=\"personal-assistant-lake\";
-
-      if /usr/bin/mc ls myminio/\$$BUCKET > /dev/null 2>&1; then
-        echo '✅ Bucket exists, ensuring policy...';
-      else
-        echo '📦 Creating bucket...';
-        /usr/bin/mc mb myminio/\$$BUCKET --insecure;
-      fi
-
-      /usr/bin/mc anonymous set private myminio/\$$BUCKET;
-
-      echo '📋 Enabling versioning...';
-      /usr/bin/mc version enable myminio/\$$BUCKET;
-
-      if /usr/bin/mc ilm list myminio/\$$BUCKET 2>/dev/null | grep -q \"expire\"; then
-        echo '✅ Lifecycle policy already exists';
-      else
-        echo '📋 Setting lifecycle policy (90 days)...';
-        /usr/bin/mc ilm add myminio/\$$BUCKET --expiry-days \"90\" --rules \"expire\";
-      fi
-
-      echo '📋 Bucket info:';
-      /usr/bin/mc ls myminio/;
-      /usr/bin/mc stat myminio/\$$BUCKET;
-
-      touch /tmp/init-completed;
-      echo '✅ MinIO initialization completed successfully!';
-      exit 0;
-      "
+      - ./scripts/minio-init.sh:/init.sh:ro
+      - ./config/minio-policies:/policies:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
     networks:
       - pa-net
-    healthcheck:
-      test: [ "CMD-SHELL", "test -f /tmp/init-completed || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    restart: "no"
     deploy:
       resources:
         limits:
@@ -562,8 +512,6 @@ services:
 
 volumes:
   pgdata: {}
-  minio_data: {}
-  minio_config: {}
   grafana_data: {}
   prometheus_data: {}
 
@@ -592,6 +540,10 @@ secrets:
     file: ./docker-secrets/minio-root-user.txt
   minio-root-password:
     file: ./docker-secrets/minio-root-password.txt
+  s3-access-key:
+    file: ./docker-secrets/s3-access-key
+  s3-secret-key:
+    file: ./docker-secrets/s3-secret-key
 
 networks:
   pa-net:

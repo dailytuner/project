@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = Field(default=3600, ge=60)
 
     # ========== JWT ==========
-    JWT_SECRET_KEY: str = Field(min_length=32)
+    JWT_SECRET_KEY: str = Field(default="", min_length=32)
     JWT_SECRET_KEY_FILE: Optional[str] = None
     JWT_ALGORITHM: str = "HS256"
     JWT_AUDIENCE: str = "psychometry"

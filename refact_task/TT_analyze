@@ -1,0 +1,1020 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ ANALYTICS WORKER v2.0
+
+## «Feedback-loop и калибровка для адаптивной системы»
+
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Назначение документа
+
+Документ описывает архитектуру, модель данных, алгоритмы и API для реализации **Analytics Worker** — batch-сервиса, который:
+
+- Собирает и обрабатывает обратную связь от пользователей
+- Калибрует веса индексов достижения
+- Оптимизирует пороги окон возможностей
+- Генерирует отчёты для мониторинга качества
+- Обеспечивает самообучение системы
+
+**Сервис работает в связке с:**
+- **Psychometry Service** — состояния, индексы, окна
+- **MinIO (Data Lake)** — хранение обратной связи и калибровок
+- **Final Tuner** — итоговая оптимизация (отдельный сервис)
+
+### 1.2. Философское основание
+
+**От корреляций к feedback-loop:**
+
+```
+СТАРАЯ ПАРАДИГМА:
+Астрология → Прогноз → Сравнение с MMPI → Обновление весов
+(корреляционный анализ, статистические методы)
+
+НОВАЯ ПАРАДИГМА:
+Состояние → Рекомендации → Действие пользователя → Обратная связь → Калибровка
+(циклическое обучение на основе реальных исходов)
+```
+
+**Ключевой принцип:** Система учится на **реальных результатах** пользователей, а не на статистических корреляциях.
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PSYCHOMETRY SERVICE                                 │
+│  • Состояния, индексы, окна, рекомендации                             │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ПОЛЬЗОВАТЕЛЬ                                        │
+│  • Получает рекомендации                                               │
+│  • Действует                                                          │
+│  • Даёт обратную связь                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ANALYTICS WORKER (НОВЫЙ)                           │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    1. FEEDBACK PROCESSOR                        │   │
+│  │  • Сбор обратной связи                                          │   │
+│  │  • Агрегация по категориям                                      │   │
+│  │  • Вычисление accuracy                                          │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    2. INDEX CALIBRATOR                         │   │
+│  │  • Калибровка весов индексов                                    │   │
+│  │  • Обновление формул                                            │   │
+│  │  • Версионирование                                              │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    3. WINDOW OPTIMIZER                          │   │
+│  │  • Оптимизация порогов окон                                     │   │
+│  │  • Поиск оптимальных значений                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    4. REPORT GENERATOR                         │   │
+│  │  • Еженедельные отчёты                                          │   │
+│  │  • Ежемесячные отчёты                                           │   │
+│  │  • Метрики качества                                             │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    MINIO (DATA LAKE)                                   │
+│  • analytics/feedback/                                                │
+│  • analytics/calibrations/                                            │
+│  • analytics/reports/                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. МОДЕЛЬ ДАННЫХ
+
+### 2.1. Таблицы в схеме `analytics`
+
+```sql
+-- ============================================================
+-- 1. ОБРАТНАЯ СВЯЗЬ (АГРЕГИРОВАННАЯ)
+-- ============================================================
+
+CREATE TABLE analytics.feedback_aggregates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    category_id TEXT NOT NULL,  -- family, work, health, self
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Статистика по категории
+    total_feedback INTEGER NOT NULL DEFAULT 0,
+    avg_outcome FLOAT,
+    avg_rating FLOAT,
+    accuracy FLOAT,  -- доля сбывшихся прогнозов
+    
+    -- Распределение
+    outcome_distribution JSONB,  -- { "high": 10, "medium": 5, "low": 2 }
+    rating_distribution JSONB,   -- { "5": 3, "4": 5, "3": 2, "2": 1, "1": 0 }
+    
+    -- Тренды
+    trend_direction TEXT,  -- improving, stable, declining
+    trend_slope FLOAT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_feedback_agg_user (user_id),
+    INDEX idx_feedback_agg_category (category_id),
+    INDEX idx_feedback_agg_date (calculated_at)
+);
+
+-- ============================================================
+-- 2. КАЛИБРОВКИ ИНДЕКСОВ
+-- ============================================================
+
+CREATE TABLE analytics.index_calibrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category_id TEXT NOT NULL,
+    version TEXT NOT NULL,  -- v1.0, v1.1, v2.0, etc.
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Веса компонентов
+    weights JSONB NOT NULL,
+    -- { "clarity": 0.3, "synchronicity": 0.3, "resource": 0.3, "inertia": 0.1 }
+    
+    -- Сезонные бусты
+    seasonal_boosts JSONB,
+    
+    -- Метрики качества
+    validation_score FLOAT,  -- 0-1, точность на исторических данных
+    n_observations INTEGER,
+    p_value FLOAT,
+    
+    -- Статус
+    status TEXT DEFAULT 'experimental',  -- experimental, active, deprecated
+    applied_at TIMESTAMP,
+    
+    -- Ссылка на озеро
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_calibrations_category (category_id),
+    INDEX idx_calibrations_version (version),
+    INDEX idx_calibrations_status (status)
+);
+
+-- ============================================================
+-- 3. ОПТИМИЗАЦИЯ ПОРОГОВ ОКОН
+-- ============================================================
+
+CREATE TABLE analytics.window_optimizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    version TEXT NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Пороги
+    thresholds JSONB NOT NULL,
+    -- { "open": 0.7, "partial": 0.4, "closed": 0.2 }
+    
+    -- Метрики качества
+    validation_score FLOAT,
+    n_observations INTEGER,
+    
+    -- Статус
+    status TEXT DEFAULT 'experimental',
+    applied_at TIMESTAMP,
+    
+    -- Ссылка на озеро
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_window_optimizations_version (version),
+    INDEX idx_window_optimizations_status (status)
+);
+
+-- ============================================================
+-- 4. ОТЧЁТЫ
+-- ============================================================
+
+CREATE TABLE analytics.reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_type TEXT NOT NULL,  -- weekly, monthly, quarterly
+    report_date DATE NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Содержание отчёта
+    content JSONB NOT NULL,
+    -- { "summary": "...", "charts": [...], "recommendations": [...] }
+    
+    -- Метрики
+    metrics JSONB,
+    -- { "total_users": 100, "avg_coherence": 0.65, "accuracy": 0.72, ... }
+    
+    -- Ссылка на озеро
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_reports_type_date (report_type, report_date)
+);
+
+-- ============================================================
+-- 5. ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
+-- ============================================================
+
+CREATE INDEX idx_feedback_agg_user_date ON analytics.feedback_aggregates(user_id, calculated_at);
+CREATE INDEX idx_calibrations_category_status ON analytics.index_calibrations(category_id, status);
+CREATE INDEX idx_window_optimizations_status ON analytics.window_optimizations(status);
+```
+
+---
+
+## 3. CORE МОДУЛИ
+
+### 3.1. Feedback Processor
+
+```python
+# src/core/feedback_processor.py
+
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from uuid import UUID
+import numpy as np
+from collections import defaultdict
+
+class FeedbackProcessor:
+    """
+    Обработка и агрегация обратной связи.
+    """
+    
+    async def process_feedback(
+        self,
+        user_id: UUID,
+        category_id: str,
+        forecast_date: datetime,
+        actual_outcome: float,
+        rating: Optional[int] = None,
+        comment: Optional[str] = None
+    ) -> Dict:
+        """
+        Обрабатывает одну запись обратной связи.
+        """
+        # 1. Сохраняем в БД
+        feedback_id = await self._save_feedback(
+            user_id, category_id, forecast_date,
+            actual_outcome, rating, comment
+        )
+        
+        # 2. Обновляем агрегаты
+        await self._update_aggregates(user_id, category_id)
+        
+        # 3. Проверяем необходимость калибровки
+        if await self._needs_calibration(category_id):
+            await self._trigger_calibration(category_id)
+        
+        return {
+            'feedback_id': feedback_id,
+            'processed': True,
+            'needs_calibration': await self._needs_calibration(category_id)
+        }
+    
+    async def _update_aggregates(
+        self,
+        user_id: UUID,
+        category_id: str
+    ):
+        """
+        Обновляет агрегированную статистику для категории.
+        """
+        # 1. Получаем все feedback для пользователя по категории
+        feedbacks = await self._get_user_feedback(user_id, category_id)
+        
+        if not feedbacks:
+            return
+        
+        # 2. Вычисляем статистику
+        outcomes = [f['actual_outcome'] for f in feedbacks]
+        ratings = [f['rating'] for f in feedbacks if f.get('rating')]
+        
+        # Accuracy: доля исходов > 0.5
+        accuracy = sum(1 for o in outcomes if o > 0.5) / len(outcomes) if outcomes else 0
+        
+        # Распределение исходов
+        outcome_dist = self._distribution(outcomes, bins=[0, 0.33, 0.66, 1])
+        rating_dist = self._distribution(ratings, bins=[1, 2, 3, 4, 5])
+        
+        # Тренд
+        trend = self._calculate_trend(outcomes)
+        
+        # 3. Сохраняем агрегаты
+        await self._save_aggregates(
+            user_id=user_id,
+            category_id=category_id,
+            total_feedback=len(feedbacks),
+            avg_outcome=np.mean(outcomes) if outcomes else 0,
+            avg_rating=np.mean(ratings) if ratings else 0,
+            accuracy=accuracy,
+            outcome_distribution=outcome_dist,
+            rating_distribution=rating_dist,
+            trend_direction=trend['direction'],
+            trend_slope=trend['slope']
+        )
+    
+    def _distribution(self, values: List[float], bins: List[float]) -> Dict:
+        """
+        Вычисляет распределение значений по корзинам.
+        """
+        dist = {}
+        for i in range(len(bins) - 1):
+            key = f"{bins[i]}-{bins[i+1]}"
+            count = sum(1 for v in values if bins[i] <= v < bins[i+1])
+            dist[key] = count
+        return dist
+    
+    def _calculate_trend(self, values: List[float]) -> Dict:
+        """
+        Вычисляет тренд на основе скользящего среднего.
+        """
+        if len(values) < 3:
+            return {'direction': 'stable', 'slope': 0.0}
+        
+        # Простая линейная регрессия
+        x = np.arange(len(values))
+        y = np.array(values)
+        slope = np.polyfit(x, y, 1)[0]
+        
+        if slope > 0.05:
+            direction = 'improving'
+        elif slope < -0.05:
+            direction = 'declining'
+        else:
+            direction = 'stable'
+        
+        return {
+            'direction': direction,
+            'slope': round(float(slope), 4)
+        }
+    
+    async def _needs_calibration(self, category_id: str) -> bool:
+        """
+        Проверяет, нужно ли калибровать категорию.
+        """
+        # Минимум 30 наблюдений для калибровки
+        count = await self._get_feedback_count(category_id)
+        return count >= 30
+```
+
+### 3.2. Index Calibrator
+
+```python
+# src/core/index_calibrator.py
+
+from typing import Dict, List, Optional
+from datetime import datetime
+from uuid import UUID
+import numpy as np
+from scipy.optimize import minimize
+
+class IndexCalibrator:
+    """
+    Калибровка весов индексов достижения на основе обратной связи.
+    """
+    
+    # Компоненты индекса
+    COMPONENTS = ['clarity', 'synchronicity', 'resource', 'inertia']
+    
+    async def calibrate(
+        self,
+        category_id: str,
+        version: str = 'v1.0'
+    ) -> Dict:
+        """
+        Калибрует веса для указанной категории.
+        """
+        # 1. Получаем исторические данные
+        data = await self._get_historical_data(category_id)
+        
+        if len(data) < 30:
+            return {
+                'status': 'insufficient_data',
+                'n_observations': len(data)
+            }
+        
+        # 2. Оптимизируем веса
+        optimal_weights = self._optimize_weights(data)
+        
+        # 3. Вычисляем метрики качества
+        validation_score = self._validate(optimal_weights, data)
+        
+        # 4. Сохраняем калибровку
+        calibration_id = await self._save_calibration(
+            category_id=category_id,
+            version=version,
+            weights=optimal_weights,
+            validation_score=validation_score,
+            n_observations=len(data)
+        )
+        
+        return {
+            'calibration_id': calibration_id,
+            'weights': optimal_weights,
+            'validation_score': validation_score,
+            'n_observations': len(data)
+        }
+    
+    def _optimize_weights(self, data: List[Dict]) -> Dict:
+        """
+        Оптимизирует веса для максимальной точности.
+        """
+        # Целевая функция: минимизация ошибки
+        def objective(weights):
+            total_error = 0
+            for record in data:
+                predicted = (
+                    record['clarity'] * weights[0] +
+                    record['synchronicity'] * weights[1] +
+                    record['resource'] * weights[2] -
+                    record['inertia'] * weights[3]
+                )
+                predicted = max(0, min(1, predicted))
+                actual = record['actual_outcome']
+                total_error += (predicted - actual) ** 2
+            return total_error / len(data)
+        
+        # Начальные значения (текущие веса)
+        initial_weights = [0.3, 0.3, 0.3, 0.1]
+        
+        # Ограничения: сумма = 1, все >= 0
+        constraints = [
+            {'type': 'eq', 'fun': lambda w: sum(w) - 1},
+            {'type': 'ineq', 'fun': lambda w: w}  # все >= 0
+        ]
+        
+        # Оптимизация
+        result = minimize(
+            objective,
+            initial_weights,
+            method='SLSQP',
+            constraints=constraints
+        )
+        
+        if result.success:
+            return {
+                'clarity': round(float(result.x[0]), 3),
+                'synchronicity': round(float(result.x[1]), 3),
+                'resource': round(float(result.x[2]), 3),
+                'inertia': round(float(result.x[3]), 3)
+            }
+        else:
+            # Fallback: текущие веса
+            return {
+                'clarity': 0.3,
+                'synchronicity': 0.3,
+                'resource': 0.3,
+                'inertia': 0.1
+            }
+    
+    def _validate(
+        self,
+        weights: Dict,
+        data: List[Dict]
+    ) -> float:
+        """
+        Валидирует веса на исторических данных.
+        """
+        predictions = []
+        actuals = []
+        
+        for record in data:
+            predicted = (
+                record['clarity'] * weights['clarity'] +
+                record['synchronicity'] * weights['synchronicity'] +
+                record['resource'] * weights['resource'] -
+                record['inertia'] * weights['inertia']
+            )
+            predicted = max(0, min(1, predicted))
+            predictions.append(predicted)
+            actuals.append(record['actual_outcome'])
+        
+        # R^2 (коэффициент детерминации)
+        predictions = np.array(predictions)
+        actuals = np.array(actuals)
+        
+        ss_res = np.sum((predictions - actuals) ** 2)
+        ss_tot = np.sum((actuals - np.mean(actuals)) ** 2)
+        
+        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        return max(0, min(1, r2))
+```
+
+### 3.3. Window Optimizer
+
+```python
+# src/core/window_optimizer.py
+
+from typing import Dict, List, Optional
+from datetime import datetime
+import numpy as np
+
+class WindowOptimizer:
+    """
+    Оптимизация порогов окон возможностей.
+    """
+    
+    async def optimize(
+        self,
+        version: str = 'v1.0'
+    ) -> Dict:
+        """
+        Оптимизирует пороги окон на основе обратной связи.
+        """
+        # 1. Получаем исторические данные
+        data = await self._get_window_data()
+        
+        if len(data) < 100:
+            return {
+                'status': 'insufficient_data',
+                'n_observations': len(data)
+            }
+        
+        # 2. Поиск оптимальных порогов
+        optimal_thresholds = self._find_optimal_thresholds(data)
+        
+        # 3. Валидация
+        validation_score = self._validate_thresholds(optimal_thresholds, data)
+        
+        # 4. Сохраняем
+        optimization_id = await self._save_optimization(
+            version=version,
+            thresholds=optimal_thresholds,
+            validation_score=validation_score,
+            n_observations=len(data)
+        )
+        
+        return {
+            'optimization_id': optimization_id,
+            'thresholds': optimal_thresholds,
+            'validation_score': validation_score
+        }
+    
+    def _find_optimal_thresholds(self, data: List[Dict]) -> Dict:
+        """
+        Находит оптимальные пороги для окон.
+        """
+        # Значения окон и исходы
+        window_values = [d['window_value'] for d in data]
+        outcomes = [d['actual_outcome'] for d in data]
+        
+        # Перебор порогов
+        best_accuracy = 0
+        best_thresholds = {'open': 0.7, 'partial': 0.4, 'closed': 0.2}
+        
+        for open_th in np.arange(0.5, 0.9, 0.05):
+            for partial_th in np.arange(0.2, 0.6, 0.05):
+                if partial_th >= open_th:
+                    continue
+                
+                # Классификация по порогам
+                predictions = []
+                for wv in window_values:
+                    if wv >= open_th:
+                        predictions.append('open')
+                    elif wv >= partial_th:
+                        predictions.append('partial')
+                    else:
+                        predictions.append('closed')
+                
+                # Сопоставление с исходами
+                accuracy = self._calculate_accuracy(predictions, outcomes)
+                
+                if accuracy > best_accuracy:
+                    best_accuracy = accuracy
+                    best_thresholds = {
+                        'open': round(open_th, 2),
+                        'partial': round(partial_th, 2),
+                        'closed': round(partial_th - 0.1, 2)
+                    }
+        
+        return best_thresholds
+    
+    def _calculate_accuracy(
+        self,
+        predictions: List[str],
+        outcomes: List[float]
+    ) -> float:
+        """
+        Вычисляет точность классификации.
+        """
+        correct = 0
+        for pred, outcome in zip(predictions, outcomes):
+            if pred == 'open' and outcome > 0.6:
+                correct += 1
+            elif pred == 'partial' and 0.3 < outcome <= 0.6:
+                correct += 1
+            elif pred == 'closed' and outcome <= 0.3:
+                correct += 1
+        
+        return correct / len(predictions) if predictions else 0
+    
+    def _validate_thresholds(
+        self,
+        thresholds: Dict,
+        data: List[Dict]
+    ) -> float:
+        """
+        Валидирует пороги на данных.
+        """
+        window_values = [d['window_value'] for d in data]
+        outcomes = [d['actual_outcome'] for d in data]
+        
+        predictions = []
+        for wv in window_values:
+            if wv >= thresholds['open']:
+                predictions.append('open')
+            elif wv >= thresholds['partial']:
+                predictions.append('partial')
+            else:
+                predictions.append('closed')
+        
+        return self._calculate_accuracy(predictions, outcomes)
+```
+
+---
+
+## 4. SERVICE LAYER
+
+### 4.1. Analytics Service
+
+```python
+# src/services/analytics_service.py
+
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from uuid import UUID
+
+from ..core.feedback_processor import FeedbackProcessor
+from ..core.index_calibrator import IndexCalibrator
+from ..core.window_optimizer import WindowOptimizer
+from ..core.report_generator import ReportGenerator
+
+class AnalyticsService:
+    """
+    Главный сервис аналитики.
+    """
+    
+    def __init__(
+        self,
+        feedback_processor: FeedbackProcessor,
+        index_calibrator: IndexCalibrator,
+        window_optimizer: WindowOptimizer,
+        report_generator: ReportGenerator
+    ):
+        self.feedback_processor = feedback_processor
+        self.index_calibrator = index_calibrator
+        self.window_optimizer = window_optimizer
+        self.report_generator = report_generator
+    
+    async def process_feedback(
+        self,
+        user_id: UUID,
+        category_id: str,
+        forecast_date: datetime,
+        actual_outcome: float,
+        rating: Optional[int] = None,
+        comment: Optional[str] = None
+    ) -> Dict:
+        """
+        Обрабатывает обратную связь.
+        """
+        return await self.feedback_processor.process_feedback(
+            user_id, category_id, forecast_date,
+            actual_outcome, rating, comment
+        )
+    
+    async def run_calibration(self, category_id: str) -> Dict:
+        """
+        Запускает калибровку индексов для категории.
+        """
+        version = f"v{datetime.now().strftime('%Y%m%d')}"
+        return await self.index_calibrator.calibrate(
+            category_id=category_id,
+            version=version
+        )
+    
+    async def run_window_optimization(self) -> Dict:
+        """
+        Запускает оптимизацию окон.
+        """
+        version = f"v{datetime.now().strftime('%Y%m%d')}"
+        return await self.window_optimizer.optimize(version=version)
+    
+    async def generate_report(self, report_type: str) -> Dict:
+        """
+        Генерирует отчёт.
+        """
+        return await self.report_generator.generate(report_type)
+```
+
+### 4.2. Report Generator
+
+```python
+# src/core/report_generator.py
+
+from datetime import datetime, timedelta
+from typing import Dict, List
+from uuid import UUID
+
+class ReportGenerator:
+    """
+    Генерация отчётов.
+    """
+    
+    async def generate(
+        self,
+        report_type: str  # weekly, monthly
+    ) -> Dict:
+        """
+        Генерирует отчёт указанного типа.
+        """
+        if report_type == 'weekly':
+            return await self._generate_weekly()
+        elif report_type == 'monthly':
+            return await self._generate_monthly()
+        else:
+            return {'error': f'Unknown report type: {report_type}'}
+    
+    async def _generate_weekly(self) -> Dict:
+        """
+        Генерирует еженедельный отчёт.
+        """
+        # 1. Загружаем данные за неделю
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        feedback = await self._get_feedback_range(start_date, end_date)
+        states = await self._get_states_range(start_date, end_date)
+        
+        # 2. Вычисляем метрики
+        metrics = {
+            'total_users': len(set(f['user_id'] for f in feedback)),
+            'total_feedback': len(feedback),
+            'avg_accuracy': self._avg_accuracy(feedback),
+            'avg_rating': self._avg_rating(feedback),
+            'coherence_trend': self._coherence_trend(states),
+        }
+        
+        # 3. Формируем контент
+        content = {
+            'period': {
+                'start': start_date.isoformat(),
+                'end': end_date.isoformat()
+            },
+            'metrics': metrics,
+            'top_categories': self._top_categories(feedback),
+            'recommendations': self._generate_recommendations(metrics)
+        }
+        
+        # 4. Сохраняем
+        await self._save_report('weekly', start_date.date(), content, metrics)
+        
+        return content
+    
+    def _avg_accuracy(self, feedback: List[Dict]) -> float:
+        """Вычисляет среднюю точность."""
+        if not feedback:
+            return 0.0
+        return sum(f.get('accuracy', 0) for f in feedback) / len(feedback)
+    
+    def _avg_rating(self, feedback: List[Dict]) -> float:
+        """Вычисляет средний рейтинг."""
+        ratings = [f.get('rating') for f in feedback if f.get('rating')]
+        if not ratings:
+            return 0.0
+        return sum(ratings) / len(ratings)
+    
+    def _coherence_trend(self, states: List[Dict]) -> str:
+        """Определяет тренд когерентности."""
+        if len(states) < 2:
+            return 'insufficient_data'
+        
+        # Сравниваем первую и последнюю неделю
+        first_week = [s for s in states if s['week'] == 0]
+        last_week = [s for s in states if s['week'] == 6]
+        
+        if not first_week or not last_week:
+            return 'insufficient_data'
+        
+        first_avg = sum(s['coherence'] for s in first_week) / len(first_week)
+        last_avg = sum(s['coherence'] for s in last_week) / len(last_week)
+        
+        if last_avg > first_avg * 1.1:
+            return 'improving'
+        elif last_avg < first_avg * 0.9:
+            return 'declining'
+        else:
+            return 'stable'
+    
+    def _top_categories(self, feedback: List[Dict]) -> List[Dict]:
+        """Возвращает топ-категории по точности."""
+        categories = {}
+        for f in feedback:
+            cat = f.get('category_id')
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(f.get('accuracy', 0))
+        
+        sorted_categories = sorted(
+            categories.items(),
+            key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
+            reverse=True
+        )
+        
+        return [
+            {
+                'category': cat,
+                'avg_accuracy': sum(vals) / len(vals) if vals else 0,
+                'count': len(vals)
+            }
+            for cat, vals in sorted_categories[:3]
+        ]
+```
+
+---
+
+## 5. API INTERFACES
+
+### 5.1. Основные эндпоинты
+
+```python
+# src/api/routes.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+from datetime import date, datetime
+from typing import Optional
+
+router = APIRouter(prefix="/api/v4/analytics", tags=["Analytics"])
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Отправить обратную связь.
+    """
+    result = await service.process_feedback(
+        user_id=request.user_id,
+        category_id=request.category_id,
+        forecast_date=request.forecast_date,
+        actual_outcome=request.actual_outcome,
+        rating=request.rating,
+        comment=request.comment
+    )
+    
+    return {
+        "success": True,
+        "result": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/calibrate/{category_id}")
+async def calibrate_index(
+    category_id: str,
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Запустить калибровку индекса для категории.
+    """
+    result = await service.run_calibration(category_id)
+    
+    return {
+        "success": True,
+        "calibration": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/optimize-windows")
+async def optimize_windows(
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Запустить оптимизацию окон.
+    """
+    result = await service.run_window_optimization()
+    
+    return {
+        "success": True,
+        "optimization": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/reports/{report_type}")
+async def get_report(
+    report_type: str,  # weekly, monthly
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Получить отчёт.
+    """
+    if report_type not in ['weekly', 'monthly']:
+        raise HTTPException(status_code=400, detail="Invalid report type")
+    
+    report = await service.generate_report(report_type)
+    
+    return {
+        "success": True,
+        "report": report,
+        "timestamp": datetime.now().isoformat()
+    }
+```
+
+---
+
+## 6. DOCKER COMPOSE
+
+```yaml
+# docker-compose.yml (фрагмент)
+
+services:
+  analytics-worker:
+    build: ./analytics-worker
+    container_name: analytics-worker
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+```
+
+---
+
+## 7. ЧЕК-ЛИСТ ПРИЁМКИ
+
+### 7.1. Функциональные требования
+
+- [ ] Feedback Processor обрабатывает обратную связь
+- [ ] Feedback Processor обновляет агрегаты
+- [ ] Index Calibrator оптимизирует веса индексов
+- [ ] Index Calibrator вычисляет validation_score
+- [ ] Window Optimizer находит оптимальные пороги
+- [ ] Report Generator генерирует еженедельные отчёты
+- [ ] Report Generator генерирует ежемесячные отчёты
+
+### 7.2. Данные
+
+- [ ] Таблицы в схеме analytics созданы
+- [ ] Индексы добавлены
+- [ ] Данные сохраняются в MinIO
+
+### 7.3. Производительность
+
+- [ ] Обработка feedback < 100 мс
+- [ ] Калибровка < 5 минут
+- [ ] Оптимизация окон < 2 минуты
+
+---
+
+## 8. ЗАКЛЮЧЕНИЕ
+
+**Analytics Worker v2.0** — это сервис обучения системы:
+
+| Компонент | Что делает | Частота |
+|-----------|------------|---------|
+| **Feedback Processor** | Сбор и агрегация обратной связи | Real-time |
+| **Index Calibrator** | Калибровка весов индексов | Еженедельно |
+| **Window Optimizer** | Оптимизация порогов окон | Ежемесячно |
+| **Report Generator** | Генерация отчётов | Еженедельно/ежемесячно |
+
+**Ключевое отличие от старого подхода:**
+- Старый: корреляция астро-факторов с MMPI
+- Новый: feedback-loop на основе реальных исходов
+
+**Готово к разработке.**

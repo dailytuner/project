@@ -1,0 +1,1241 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ FRONTEND v4.0
+
+## «Интерфейс для модели Наблюдатель → Субъект → Фон»
+
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Назначение документа
+
+Документ описывает архитектуру, экраны, компоненты и API для реализации **Frontend v4.0** — пользовательского интерфейса, который:
+
+- Отображает состояние пользователя (3 метрики + осознанность)
+- Показывает индексы достижения по 4 категориям
+- Визуализирует окна возможностей
+- Предоставляет персонализированные рекомендации
+- Собирает обратную связь
+- Работает с новой логикой Psychometry Service v4.0
+
+**Сервис работает в связке с:**
+- **API Gateway** — единая точка входа
+- **Psychometry Service** — состояния, индексы, окна, рекомендации
+- **Astro Service** — биоритмы, транзиты (опционально)
+- **Analytics Worker** — обратная связь
+
+### 1.2. Философское основание
+
+**От прогноза к состоянию:**
+
+```
+СТАРЫЙ ПОДХОД:
+Пользователь → Прогноз (что будет) → Действие
+
+НОВЫЙ ПОДХОД:
+Пользователь → Состояние (что сейчас) → Осознание → Действие
+```
+
+**Ключевой принцип:** Интерфейс не предсказывает будущее. Он помогает пользователю **осознать текущее состояние** и принять решение.
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    FRONTEND (React/Vue)                               │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   1. MAIN DASHBOARD                            │   │
+│  │  • Состояние (3 метрики + осознанность)                        │   │
+│  │  • Краткие индексы                                             │   │
+│  │  • Окно возможностей                                           │   │
+│  │  • Рекомендации дня                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   2. STATE DETAIL                              │   │
+│  │  • Детальные метрики                                            │   │
+│  │  • График динамики                                              │   │
+│  │  • Осознанность + практики                                      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   3. ACHIEVEMENTS                               │   │
+│  │  • 4 категории с уровнями                                       │   │
+│  │  • Детали по категориям                                         │   │
+│  │  • Рекомендации по категориям                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   4. WINDOW                                     │   │
+│  │  • Текущее окно                                                 │   │
+│  │  • Отклонения по категориям                                     │   │
+│  │  • Практика и игра                                              │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   5. RECOMMENDATIONS                            │   │
+│  │  • Список рекомендаций с приоритетами                           │   │
+│  │  • Выполненные/не выполненные                                   │   │
+│  │  • История                                                      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   6. FEEDBACK                                   │   │
+│  │  • Оценка рекомендаций                                          │   │
+│  │  • Комментарии                                                  │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    API GATEWAY                                        │
+│  /api/v4/state → Psychometry Service                                  │
+│  /api/v4/achievements → Psychometry Service                           │
+│  /api/v4/window → Psychometry Service                                 │
+│  /api/v4/recommendations → Psychometry Service                        │
+│  /api/v4/feedback → Psychometry Service                               │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. ЭКРАНЫ И КОМПОНЕНТЫ
+
+### 2.1. Главный дашборд (Dashboard)
+
+**Цель:** Дать пользователю мгновенное понимание своего состояния.
+
+**Компоненты:**
+
+| Компонент | Описание | Данные |
+|-----------|----------|--------|
+| **Состояние** | 3 метрики (эмоции, тревога, энергия) | `/api/v4/state` |
+| **Осознанность** | Уровень + совет | `/api/v4/state` |
+| **Окно** | Текущее состояние + иконка | `/api/v4/window` |
+| **Индексы** | 4 категории (мини-карточки) | `/api/v4/achievements` |
+| **Рекомендации** | Топ-3 рекомендации дня | `/api/v4/recommendations` |
+
+**Макет:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🔔 Уведомления                          👤 Профиль   ⚙️ Настройки     │
+└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📊 ВАШЕ СОСТОЯНИЕ                                                     │
+│                                                                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                    │
+│  │   Эмоции    │  │  Тревога    │  │   Энергия   │                    │
+│  │  🟡 0.65   │  │  🟢 0.32   │  │  🔴 0.28   │                    │
+│  │  "повышен"  │  │  "норма"    │  │  "снижена"  │                    │
+│  └─────────────┘  └─────────────┘  └─────────────┘                    │
+│                                                                        │
+│  🧘 Осознанность: СРЕДНИЙ                                             │
+│  "Вам помогает практика наблюдения за телом"                          │
+│                                                                        │
+│  📈 Динамика за 7 дней →                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🌤️ ОКНО ВОЗМОЖНОСТЕЙ                                                 │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  🟡 ПРИОТКРЫТО (0.52)                                          │   │
+│  │  "Готовься, но не торопись"                                   │   │
+│  │                                                                 │   │
+│  │  Отклонения:                                                    │   │
+│  │  • Семья:   🔺 +0.08                                            │   │
+│  │  • Работа:  🔻 -0.06                                            │   │
+│  │  • Здоровье: ➡️ +0.02                                           │   │
+│  │  • Саморазвитие: 🔻 -0.04                                       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📈 ИНДЕКСЫ ДОСТИЖЕНИЯ                                                │
+│                                                                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │  👨‍👩‍👧‍👦 Семья │  │  💼 Работа  │  │  ❤️ Здоровье│  │  🧘 Self   │  │
+│  │  🔥 0.72   │  │  🟡 0.45   │  │  🔴 0.38   │  │  🔥 0.65   │  │
+│  │  "высокий"  │  │  "средний" │  │  "низкий"  │  │  "высокий" │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  │
+│                                                                        │
+│  📊 Подробнее →                                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📋 РЕКОМЕНДАЦИИ НА СЕГОДНЯ                                           │
+│                                                                        │
+│  1. 🔴 15 минут тишины без гаджетов              [Выполнено]          │
+│     "Эмоциональный фон снижен"                                         │
+│                                                                        │
+│  2. 🟡 Запланируйте вечерний разговор            [Выполнить]          │
+│     "Высокий индекс семьи"                                            │
+│                                                                        │
+│  3. 🟢 Запишите свои идеи                         [Выполнить]          │
+│     "Удачное время для творчества"                                    │
+│                                                                        │
+│  📋 Все рекомендации →                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2.2. Состояние (State Detail)
+
+**Цель:** Детальный анализ состояния пользователя.
+
+**Компоненты:**
+
+| Компонент | Описание | Данные |
+|-----------|----------|--------|
+| **Метрики** | 3 метрики с графиками | `/api/v4/state` |
+| **Динамика** | График изменения за 7/30 дней | `/api/v4/state/history` |
+| **Осознанность** | Уровень + практики | `/api/v4/state` |
+| **Синтез** | Текстовая сводка состояния | `/api/v4/state` |
+
+**Макет:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ← Назад                                     📊 Состояние              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📊 МЕТРИКИ СОСТОЯНИЯ                                                 │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  Эмоциональный фон                                              │   │
+│  │  ████████████████░░░░░░░ 0.65  "повышен"                      │   │
+│  │  ⬆️ +0.08 за неделю                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  Тревожность                                                    │   │
+│  │  ████████░░░░░░░░░░░░░░░ 0.32  "норма"                        │   │
+│  │  ➡️ -0.02 за неделю                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  Энергия                                                        │   │
+│  │  ██████░░░░░░░░░░░░░░░░░ 0.28  "снижена"                      │   │
+│  │  ⬇️ -0.12 за неделю                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📈 ДИНАМИКА ЗА 7 ДНЕЙ                                               │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  ████████████████████████████████████████████████████████████   │   │
+│  │  ████████████████████████████████████████████████████████████   │   │
+│  │  ████████████████████████████████████████████████████████████   │   │
+│  │  ████████████████████████████████████████████████████████████   │   │
+│  │  ████████████████████████████████████████████████████████████   │   │
+│  │  ─── Эмоции    ─── Тревога    ─── Энергия                      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🧘 ОСОЗНАННОСТЬ                                                      │
+│                                                                        │
+│  Уровень: 🟡 СРЕДНИЙ                                                  │
+│  Совет: "Вам помогает практика наблюдения за телом"                   │
+│  Практика: "5 минут дыхания утром и вечером"                         │
+│                                                                        │
+│  📖 Подробнее о практике →                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  💬 СИНТЕЗ СОСТОЯНИЯ                                                  │
+│                                                                        │
+│  "Ваше состояние: эмоциональный фон повышен, тревожность умеренная,    │
+│   энергия снижена. Уровень осознанности: средний.                      │
+│   Рекомендуется практика наблюдения за телом."                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2.3. Индексы достижения (Achievements)
+
+**Цель:** Показать сильные стороны и зоны роста.
+
+**Компоненты:**
+
+| Компонент | Описание | Данные |
+|-----------|----------|--------|
+| **Категории** | 4 категории с уровнями | `/api/v4/achievements` |
+| **Детали** | Разбор индекса по компонентам | `/api/v4/achievements/{category}` |
+| **Рекомендации** | По категориям | `/api/v4/achievements` |
+
+**Макет:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ← Назад                                     📈 Индексы достижения    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  👨‍👩‍👧‍👦 СЕМЬЯ 🔥 0.72                                                │
+│                                                                        │
+│  Уровень: ВЫСОКИЙ                                                     │
+│  "Отличное время для укрепления отношений"                            │
+│                                                                        │
+│  Компоненты:                                                          │
+│  • Ясность:     0.80 ████████████████████░░░░░░░                      │
+│  • Синхронность: 0.70 ██████████████████░░░░░░░░                      │
+│  • Ресурс:      0.65 ████████████████░░░░░░░░░                       │
+│  • Инерция:     0.25 ██████░░░░░░░░░░░░░░░░░░                       │
+│                                                                        │
+│  📊 Подробнее →                                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  💼 РАБОТА 🟡 0.45                                                    │
+│                                                                        │
+│  Уровень: СРЕДНИЙ                                                     │
+│  "Хорошее время для текущих задач, без риска"                         │
+│                                                                        │
+│  Компоненты:                                                          │
+│  • Ясность:     0.50 ████████████░░░░░░░░░░░░░                       │
+│  • Синхронность: 0.55 ██████████████░░░░░░░░░░░                      │
+│  • Ресурс:      0.40 ██████████░░░░░░░░░░░░░░                       │
+│  • Инерция:     0.35 ████████░░░░░░░░░░░░░░░                       │
+│                                                                        │
+│  📊 Подробнее →                                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ❤️ ЗДОРОВЬЕ 🔴 0.38                                                  │
+│                                                                        │
+│  Уровень: НИЗКИЙ                                                      │
+│  "Время восстановления"                                               │
+│                                                                        │
+│  Компоненты:                                                          │
+│  • Ясность:     0.30 ████████░░░░░░░░░░░░░░░                        │
+│  • Синхронность: 0.35 █████████░░░░░░░░░░░░░░                       │
+│  • Ресурс:      0.45 ████████████░░░░░░░░░░░░                       │
+│  • Инерция:     0.55 ██████████████░░░░░░░░░░                       │
+│                                                                        │
+│  📊 Подробнее →                                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🧘 САМОРАЗВИТИЕ 🔥 0.65                                              │
+│                                                                        │
+│  Уровень: ВЫСОКИЙ                                                     │
+│  "Удачное время для обучения"                                         │
+│                                                                        │
+│  Компоненты:                                                          │
+│  • Ясность:     0.70 ██████████████████░░░░░░░░                      │
+│  • Синхронность: 0.65 ████████████████░░░░░░░░░                       │
+│  • Ресурс:      0.60 ████████████████░░░░░░░░░                       │
+│  • Инерция:     0.30 ████████░░░░░░░░░░░░░░░                        │
+│                                                                        │
+│  📊 Подробнее →                                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2.4. Рекомендации (Recommendations)
+
+**Цель:** Дать пользователю конкретные действия.
+
+**Компоненты:**
+
+| Компонент | Описание | Данные |
+|-----------|----------|--------|
+| **Список** | Все рекомендации с приоритетами | `/api/v4/recommendations` |
+| **Статус** | Выполнено/Не выполнено | Local state |
+| **История** | Выполненные рекомендации | Local state |
+
+**Макет:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ← Назад                                     📋 Рекомендации          │
+│  [Все] [Высокий приоритет] [Средний] [Низкий]                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🔴 ВЫСОКИЙ ПРИОРИТЕТ                                                  │
+│                                                                        │
+│  ✅ 15 минут тишины без гаджетов                    [Выполнено]       │
+│     "Эмоциональный фон снижен"                                        │
+│     ⏱️ 15 мин                                                         │
+│                                                                        │
+│  ☐ Сделайте глубокий вдох и выдох 5 раз             [Выполнить]       │
+│     "Тревожность умеренная"                                           │
+│     ⏱️ 2 мин                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🟡 СРЕДНИЙ ПРИОРИТЕТ                                                  │
+│                                                                        │
+│  ☐ Запланируйте вечерний разговор с близкими       [Выполнить]       │
+│     "Высокий индекс семьи"                                            │
+│     ⏱️ 10 мин                                                         │
+│                                                                        │
+│  ☐ Пересмотрите свои заметки за неделю             [Выполнить]       │
+│     "Удачное время для творчества"                                    │
+│     ⏱️ 20 мин                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🟢 НИЗКИЙ ПРИОРИТЕТ                                                   │
+│                                                                        │
+│  ☐ Запишите свои идеи                               [Выполнить]       │
+│     "Удачное время для творчества"                                    │
+│     ⏱️ 5 мин                                                          │
+│                                                                        │
+│  ☐ Прогуляйтесь 10 минут                         [Выполнить]         │
+│     "Энергия снижена"                                                 │
+│     ⏱️ 10 мин                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2.5. Обратная связь (Feedback)
+
+**Цель:** Собрать обратную связь для обучения системы.
+
+**Компоненты:**
+
+| Компонент | Описание | Данные |
+|-----------|----------|--------|
+| **Оценка** | Рейтинг рекомендации | `/api/v4/feedback` |
+| **Комментарий** | Текстовый отзыв | `/api/v4/feedback` |
+| **Категория** | К чему относится | `/api/v4/feedback` |
+
+**Макет:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ← Назад                                     💬 Обратная связь       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  💬 ОЦЕНИТЕ РЕКОМЕНДАЦИЮ                                               │
+│                                                                        │
+│  "15 минут тишины без гаджетов"                                       │
+│                                                                        │
+│  Помогла ли вам эта рекомендация?                                     │
+│                                                                        │
+│  ⭐ 1    ⭐⭐ 2    ⭐⭐⭐ 3    ⭐⭐⭐⭐ 4    ⭐⭐⭐⭐⭐ 5                 │
+│                                                                        │
+│  [Выберите оценку]                                                     │
+│                                                                        │
+│  💬 Ваш комментарий (необязательно):                                   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                                                                 │   │
+│  │                                                                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  [Отправить]                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. КОМПОНЕНТЫ ДЛЯ ПОВТОРНОГО ИСПОЛЬЗОВАНИЯ
+
+### 3.1. MetricCard
+
+```tsx
+// components/MetricCard.tsx
+
+interface MetricCardProps {
+  label: string;
+  value: number;
+  level: 'high' | 'medium' | 'low';
+  trend: 'up' | 'down' | 'stable';
+  change: number;
+  icon: string;
+}
+
+const MetricCard: React.FC<MetricCardProps> = ({
+  label,
+  value,
+  level,
+  trend,
+  change,
+  icon
+}) => {
+  const levelColor = {
+    high: 'text-red-500',
+    medium: 'text-yellow-500',
+    low: 'text-green-500'
+  };
+  
+  const trendIcon = {
+    up: '↑',
+    down: '↓',
+    stable: '→'
+  };
+  
+  return (
+    <div className="metric-card">
+      <div className="metric-header">
+        <span className="metric-icon">{icon}</span>
+        <span className="metric-label">{label}</span>
+      </div>
+      <div className="metric-value">
+        <span className={`metric-number ${levelColor[level]}`}>
+          {value}
+        </span>
+        <span className="metric-trend">
+          {trendIcon[trend]} {Math.abs(change)}%
+        </span>
+      </div>
+      <div className="metric-bar">
+        <div 
+          className="metric-bar-fill" 
+          style={{ width: `${value * 100}%` }}
+        />
+      </div>
+    </div>
+  );
+};
+```
+
+### 3.2. AchievementCard
+
+```tsx
+// components/AchievementCard.tsx
+
+interface AchievementCardProps {
+  category: string;
+  name: string;
+  value: number;
+  level: 'HIGH' | 'MEDIUM' | 'LOW' | 'CRITICAL';
+  recommendation: string;
+  icon: string;
+  onClick: () => void;
+}
+
+const AchievementCard: React.FC<AchievementCardProps> = ({
+  category,
+  name,
+  value,
+  level,
+  recommendation,
+  icon,
+  onClick
+}) => {
+  const levelColor = {
+    HIGH: 'text-green-500',
+    MEDIUM: 'text-yellow-500',
+    LOW: 'text-red-500',
+    CRITICAL: 'text-red-700'
+  };
+  
+  const levelEmoji = {
+    HIGH: '🔥',
+    MEDIUM: '🟡',
+    LOW: '🔴',
+    CRITICAL: '⚠️'
+  };
+  
+  return (
+    <div className="achievement-card" onClick={onClick}>
+      <div className="achievement-header">
+        <span className="achievement-icon">{icon}</span>
+        <span className="achievement-name">{name}</span>
+        <span className={`achievement-level ${levelColor[level]}`}>
+          {levelEmoji[level]} {level}
+        </span>
+      </div>
+      <div className="achievement-value">
+        <span className="achievement-number">{value}</span>
+      </div>
+      <div className="achievement-bar">
+        <div 
+          className="achievement-bar-fill" 
+          style={{ width: `${value * 100}%` }}
+        />
+      </div>
+      <div className="achievement-recommendation">
+        {recommendation}
+      </div>
+    </div>
+  );
+};
+```
+
+### 3.3. RecommendationItem
+
+```tsx
+// components/RecommendationItem.tsx
+
+interface RecommendationItemProps {
+  action: string;
+  reason: string;
+  priority: 1 | 2 | 3;
+  duration: string;
+  completed: boolean;
+  onToggle: () => void;
+}
+
+const RecommendationItem: React.FC<RecommendationItemProps> = ({
+  action,
+  reason,
+  priority,
+  duration,
+  completed,
+  onToggle
+}) => {
+  const priorityColor = {
+    1: 'border-red-500',
+    2: 'border-yellow-500',
+    3: 'border-green-500'
+  };
+  
+  const priorityEmoji = {
+    1: '🔴',
+    2: '🟡',
+    3: '🟢'
+  };
+  
+  return (
+    <div className={`recommendation-item ${priorityColor[priority]}`}>
+      <div className="recommendation-check">
+        <input 
+          type="checkbox" 
+          checked={completed}
+          onChange={onToggle}
+        />
+      </div>
+      <div className="recommendation-content">
+        <div className="recommendation-action">
+          {priorityEmoji[priority]} {action}
+        </div>
+        <div className="recommendation-reason">
+          {reason}
+        </div>
+        <div className="recommendation-meta">
+          <span className="recommendation-duration">⏱️ {duration}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+### 3.4. WindowIndicator
+
+```tsx
+// components/WindowIndicator.tsx
+
+interface WindowIndicatorProps {
+  value: number;
+  level: 'OPEN' | 'PARTIAL' | 'CLOSED';
+  deviations: Record<string, number>;
+}
+
+const WindowIndicator: React.FC<WindowIndicatorProps> = ({
+  value,
+  level,
+  deviations
+}) => {
+  const levelConfig = {
+    OPEN: {
+      emoji: '🌤️',
+      color: 'text-green-500',
+      bg: 'bg-green-50',
+      advice: 'Действуй! Сейчас хорошее время'
+    },
+    PARTIAL: {
+      emoji: '🟡',
+      color: 'text-yellow-500',
+      bg: 'bg-yellow-50',
+      advice: 'Готовься, но не торопись'
+    },
+    CLOSED: {
+      emoji: '🌧️',
+      color: 'text-red-500',
+      bg: 'bg-red-50',
+      advice: 'Наблюдай и восстанавливайся'
+    }
+  };
+  
+  const config = levelConfig[level];
+  
+  return (
+    <div className={`window-indicator ${config.bg}`}>
+      <div className="window-header">
+        <span className="window-emoji">{config.emoji}</span>
+        <span className={`window-level ${config.color}`}>
+          {level} ({value})
+        </span>
+        <span className="window-advice">{config.advice}</span>
+      </div>
+      <div className="window-bar">
+        <div 
+          className="window-bar-fill" 
+          style={{ width: `${value * 100}%` }}
+        />
+      </div>
+      <div className="window-deviations">
+        {Object.entries(deviations).map(([category, deviation]) => (
+          <span key={category}>
+            {category}: {deviation > 0 ? '🔺' : '🔻'} {deviation}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+```
+
+### 3.5. AwarenessBadge
+
+```tsx
+// components/AwarenessBadge.tsx
+
+interface AwarenessBadgeProps {
+  level: 'HIGH' | 'MEDIUM' | 'LOW';
+  tip: string;
+  practice: string;
+}
+
+const AwarenessBadge: React.FC<AwarenessBadgeProps> = ({
+  level,
+  tip,
+  practice
+}) => {
+  const levelConfig = {
+    HIGH: {
+      emoji: '🌟',
+      color: 'text-green-500',
+      bg: 'bg-green-50',
+    },
+    MEDIUM: {
+      emoji: '🟡',
+      color: 'text-yellow-500',
+      bg: 'bg-yellow-50',
+    },
+    LOW: {
+      emoji: '🌱',
+      color: 'text-red-500',
+      bg: 'bg-red-50',
+    }
+  };
+  
+  const config = levelConfig[level];
+  
+  return (
+    <div className={`awareness-badge ${config.bg}`}>
+      <div className="awareness-header">
+        <span className="awareness-emoji">{config.emoji}</span>
+        <span className={`awareness-level ${config.color}`}>
+          Осознанность: {level}
+        </span>
+      </div>
+      <div className="awareness-tip">
+        {tip}
+      </div>
+      <div className="awareness-practice">
+        🧘 {practice}
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+## 4. API INTEGRATION
+
+### 4.1. API Client
+
+```typescript
+// services/api.ts
+
+import axios from 'axios';
+
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+const api = axios.create({
+  baseURL: API_BASE,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.REACT_APP_API_KEY || '',
+  },
+});
+
+// ============================================================
+// STATE
+// ============================================================
+
+export interface StateMetrics {
+  emotional_score: number;
+  anxiety_score: number;
+  energy_score: number;
+}
+
+export interface Awareness {
+  level: 'HIGH' | 'MEDIUM' | 'LOW';
+  tip: string;
+  practice: string;
+}
+
+export interface UserState {
+  user_id: string;
+  calculated_at: string;
+  metrics: StateMetrics;
+  state_level: 'HIGH' | 'MEDIUM' | 'LOW';
+  state_summary: string;
+  awareness: Awareness;
+}
+
+export const getState = async (userId: string, date?: string) => {
+  const response = await api.get(`/api/v4/state`, {
+    params: { user_id: userId, date }
+  });
+  return response.data.state;
+};
+
+// ============================================================
+// ACHIEVEMENTS
+// ============================================================
+
+export interface AchievementIndex {
+  value: number;
+  level: 'HIGH' | 'MEDIUM' | 'LOW' | 'CRITICAL';
+  clarity: number;
+  synchronicity: number;
+  resource: number;
+  inertia: number;
+  recommendation: string;
+}
+
+export interface Achievements {
+  user_id: string;
+  calculated_at: string;
+  indices: Record<string, AchievementIndex>;
+}
+
+export const getAchievements = async (userId: string, date?: string) => {
+  const response = await api.get(`/api/v4/achievements`, {
+    params: { user_id: userId, date }
+  });
+  return response.data.achievements;
+};
+
+// ============================================================
+// WINDOW
+// ============================================================
+
+export interface OpportunityWindow {
+  user_id: string;
+  calculated_at: string;
+  value: number;
+  level: 'OPEN' | 'PARTIAL' | 'CLOSED';
+  deviations: Record<string, number>;
+  practice_recommendation: string;
+  play_recommendation: string;
+}
+
+export const getWindow = async (userId: string, date?: string) => {
+  const response = await api.get(`/api/v4/window`, {
+    params: { user_id: userId, date }
+  });
+  return response.data.window;
+};
+
+// ============================================================
+// RECOMMENDATIONS
+// ============================================================
+
+export interface Recommendation {
+  action: string;
+  reason: string;
+  priority: 1 | 2 | 3;
+  duration: string;
+}
+
+export const getRecommendations = async (userId: string, date?: string) => {
+  const response = await api.get(`/api/v4/recommendations`, {
+    params: { user_id: userId, date }
+  });
+  return response.data.recommendations;
+};
+
+// ============================================================
+// FEEDBACK
+// ============================================================
+
+export interface FeedbackRequest {
+  user_id: string;
+  category_id?: string;
+  forecast_date: string;
+  actual_outcome: number;
+  user_comment?: string;
+  rating?: number;
+}
+
+export const submitFeedback = async (feedback: FeedbackRequest) => {
+  const response = await api.post(`/api/v4/feedback`, feedback);
+  return response.data;
+};
+```
+
+### 4.2. State Management (Zustand/Redux)
+
+```typescript
+// store/useAppStore.ts
+
+import { create } from 'zustand';
+import {
+  UserState,
+  Achievements,
+  OpportunityWindow,
+  Recommendation
+} from '../services/api';
+
+interface AppState {
+  // State  state: UserState | null;
+  achievements: Achievements | null;
+  window: OpportunityWindow | null;
+  recommendations: Recommendation[];
+  
+  // Loading
+  isLoading: boolean;
+  error: string | null;
+  
+  // Actions
+  fetchAll: (userId: string, date?: string) => Promise<void>;
+  fetchState: (userId: string, date?: string) => Promise<void>;
+  fetchAchievements: (userId: string, date?: string) => Promise<void>;
+  fetchWindow: (userId: string, date?: string) => Promise<void>;
+  fetchRecommendations: (userId: string, date?: string) => Promise<void>;
+  submitFeedback: (feedback: FeedbackRequest) => Promise<void>;
+  toggleRecommendation: (index: number) => void;
+}
+
+export const useAppStore = create<AppState>((set, get) => ({
+  state: null,
+  achievements: null,
+  window: null,
+  recommendations: [],
+  isLoading: false,
+  error: null,
+  
+  fetchAll: async (userId, date) => {
+    set({ isLoading: true, error: null });
+    try {
+      const [state, achievements, window, recommendations] = await Promise.all([
+        getState(userId, date),
+        getAchievements(userId, date),
+        getWindow(userId, date),
+        getRecommendations(userId, date)
+      ]);
+      set({
+        state,
+        achievements,
+        window,
+        recommendations,
+        isLoading: false
+      });
+    } catch (error) {
+      set({ error: error.message, isLoading: false });
+    }
+  },
+  
+  fetchState: async (userId, date) => {
+    const state = await getState(userId, date);
+    set({ state });
+  },
+  
+  // ... другие actions
+  
+  toggleRecommendation: (index) => {
+    set((state) => ({
+      recommendations: state.recommendations.map((rec, i) =>
+        i === index ? { ...rec, completed: !rec.completed } : rec
+      )
+    }));
+  },
+  
+  submitFeedback: async (feedback) => {
+    await submitFeedback(feedback);
+    // Обработка успеха
+  }
+}));
+```
+
+---
+
+## 5. СТРУКТУРА ПРОЕКТА
+
+```
+src/
+├── api/
+│   └── index.ts                    # API клиент
+│
+├── components/
+│   ├── common/
+│   │   ├── MetricCard.tsx
+│   │   ├── AchievementCard.tsx
+│   │   ├── RecommendationItem.tsx
+│   │   ├── WindowIndicator.tsx
+│   │   └── AwarenessBadge.tsx
+│   │
+│   ├── dashboard/
+│   │   ├── Dashboard.tsx
+│   │   ├── StateSummary.tsx
+│   │   ├── AchievementsSummary.tsx
+│   │   ├── WindowSummary.tsx
+│   │   └── RecommendationsSummary.tsx
+│   │
+│   ├── state/
+│   │   ├── StateDetail.tsx
+│   │   ├── MetricsChart.tsx
+│   │   └── AwarenessDetail.tsx
+│   │
+│   ├── achievements/
+│   │   ├── AchievementsList.tsx
+│   │   ├── AchievementDetail.tsx
+│   │   └── CategoryCard.tsx
+│   │
+│   ├── recommendations/
+│   │   ├── RecommendationsList.tsx
+│   │   ├── RecommendationFilters.tsx
+│   │   └── RecommendationHistory.tsx
+│   │
+│   ├── feedback/
+│   │   ├── FeedbackForm.tsx
+│   │   └── FeedbackHistory.tsx
+│   │
+│   └── layout/
+│       ├── Header.tsx
+│       ├── Footer.tsx
+│       └── Navigation.tsx
+│
+├── hooks/
+│   ├── useStateData.ts
+│   ├── useAchievements.ts
+│   ├── useWindow.ts
+│   └── useRecommendations.ts
+│
+├── store/
+│   └── useAppStore.ts
+│
+├── types/
+│   └── index.ts
+│
+├── utils/
+│   ├── formatters.ts
+│   └── validators.ts
+│
+├── styles/
+│   └── globals.css
+│
+├── App.tsx
+├── main.tsx
+└── vite.config.ts
+```
+
+---
+
+## 6. СТИЛИ И UI КИТ
+
+### 6.1. Цветовая схема
+
+```css
+/* styles/globals.css */
+
+:root {
+  /* Основные цвета */
+  --color-primary: #4F46E5;
+  --color-primary-light: #818CF8;
+  --color-primary-dark: #3730A3;
+  
+  /* Состояния */
+  --color-high: #22C55E;
+  --color-medium: #EAB308;
+  --color-low: #EF4444;
+  --color-critical: #DC2626;
+  
+  /* Уровни осознанности */
+  --color-awareness-high: #22C55E;
+  --color-awareness-medium: #EAB308;
+  --color-awareness-low: #EF4444;
+  
+  /* Окна */
+  --color-window-open: #22C55E;
+  --color-window-partial: #EAB308;
+  --color-window-closed: #6B7280;
+  
+  /* Фоны */
+  --color-bg-primary: #F8FAFC;
+  --color-bg-secondary: #FFFFFF;
+  --color-bg-card: #FFFFFF;
+  
+  /* Текст */
+  --color-text-primary: #1E293B;
+  --color-text-secondary: #64748B;
+  --color-text-light: #94A3B8;
+}
+
+/* Тёмная тема (опционально) */
+[data-theme="dark"] {
+  --color-bg-primary: #0F172A;
+  --color-bg-secondary: #1E293B;
+  --color-bg-card: #1E293B;
+  --color-text-primary: #F1F5F9;
+  --color-text-secondary: #94A3B8;
+}
+```
+
+### 6.2. Анимации
+
+```css
+/* styles/animations.css */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+```
+
+---
+
+## 7. ТЕСТИРОВАНИЕ
+
+### 7.1. Unit-тесты
+
+```typescript
+// tests/components/MetricCard.test.tsx
+
+import { render, screen } from '@testing-library/react';
+import { MetricCard } from './MetricCard';
+
+describe('MetricCard', () => {
+  it('renders with correct label and value', () => {
+    render(
+      <MetricCard
+        label="Эмоции"
+        value={0.65}
+        level="medium"
+        trend="up"
+        change={0.08}
+        icon="😊"
+      />
+    );
+    
+    expect(screen.getByText('Эмоции')).toBeInTheDocument();
+    expect(screen.getByText('0.65')).toBeInTheDocument();
+  });
+});
+```
+
+### 7.2. E2E-тесты (Cypress)
+
+```typescript
+// cypress/e2e/dashboard.cy.ts
+
+describe('Dashboard', () => {
+  beforeEach(() => {
+    cy.intercept('GET', '/api/v4/state*', {
+      fixture: 'state.json'
+    }).as('getState');
+    
+    cy.visit('/dashboard');
+    cy.wait('@getState');
+  });
+  
+  it('displays state metrics', () => {
+    cy.contains('Эмоции').should('be.visible');
+    cy.contains('Тревога').should('be.visible');
+    cy.contains('Энергия').should('be.visible');
+  });
+  
+  it('displays achievements', () => {
+    cy.contains('Семья').should('be.visible');
+    cy.contains('Работа').should('be.visible');
+  });
+  
+  it('displays recommendations', () => {
+    cy.contains('15 минут тишины').should('be.visible');
+  });
+});
+```
+
+---
+
+## 8. ЧЕК-ЛИСТ ПРИЁМКИ
+
+### 8.1. Функциональные требования
+
+- [ ] Главный дашборд отображает все компоненты
+- [ ] Состояние показывает 3 метрики + осознанность
+- [ ] Индексы показывают 4 категории с уровнями
+- [ ] Окно показывает состояние + отклонения
+- [ ] Рекомендации показывают список с приоритетами
+- [ ] Обратная связь работает корректно
+
+### 8.2. Технические требования
+
+- [ ] API клиент работает со всеми эндпоинтами
+- [ ] State management работает корректно
+- [ ] Анимации и переходы плавные
+- [ ] Адаптивная вёрстка работает на всех устройствах
+- [ ] Тёмная тема работает (если реализована)
+
+### 8.3. UX требования
+
+- [ ] Загрузка отображается при ожидании данных
+- [ ] Ошибки отображаются понятно
+- [ ] Все кликабельные элементы имеют обратную связь
+- [ ] Навигация интуитивно понятна
+
+---
+
+## 9. ЗАКЛЮЧЕНИЕ
+
+**Frontend v4.0** — это интерфейс для новой модели:
+
+| Экран | Что показывает |
+|-------|----------------|
+| **Дашборд** | Состояние, индексы, окно, рекомендации |
+| **Состояние** | Детальные метрики + график + осознанность |
+| **Индексы** | 4 категории с деталями |
+| **Рекомендации** | Список действий с приоритетами |
+| **Обратная связь** | Оценка рекомендаций |
+
+**Ключевые принципы:**
+- Показывать состояние, а не предсказывать будущее
+- Давать конкретные действия, а не общие советы
+- Собирать обратную связь для обучения системы
+
+**Готово к разработке.**

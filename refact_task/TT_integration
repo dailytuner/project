@@ -1,0 +1,990 @@
+# СВОДНЫЙ ДОКУМЕНТ ПО ИНТЕГРАЦИИ
+
+## Адаптивная астропсихологическая система v4.0
+
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Назначение документа
+
+Документ описывает **взаимодействие всех сервисов** системы, их контракты, форматы данных и сценарии использования. Является **единым источником истины** для разработчиков при интеграции компонентов.
+
+### 1.2. Общая архитектура
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (React/Vue)                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        API GATEWAY                                    │
+│                    /api/v3/* → Astro Service                          │
+│                    /api/v4/* → Psychometry Service                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┬───────────────┬───────────────┐
+              ▼               ▼               ▼               ▼               ▼
+┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+│   ASTRO SERVICE     │ │  PSYCHOMETRY        │ │  ALIGNMENT ENGINE   │ │  ANALYTICS WORKER   │ │  FINAL TUNER        │
+│   (v2.0)            │ │  SERVICE (v4.0)     │ │  (v1.0)             │ │  (v2.0)             │ │  (v1.0)             │
+└──────────┬──────────┘ └──────────┬──────────┘ └──────────┬──────────┘ └──────────┬──────────┘ └──────────┬──────────┘
+           │                       │                       │                       │                       │
+           └───────────────────────┼───────────────────────┼───────────────────────┼───────────────────────┘
+                                   ▼                       ▼                       ▼
+           ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+           │                                      POSTGRESQL                                                │
+           │                                                                                                │
+           │  • astro schema (транзиты, биоритмы, эфемериды)                                               │
+           │  • psych schema (состояния, индексы, окна, рекомендации, feedback)                            │
+           │  • alignment schema (когерентность, резонанс)                                                  │
+           │  • analytics schema (калибровки, отчёты)                                                       │
+           │  • tuner schema (оптимизации, A/B-тесты)                                                       │
+           └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+           ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+           │                                      MINIO (DATA LAKE)                                        │
+           │                                                                                                │
+           │  • raw/   — сырые данные (MMPI, IAT, астрология)                                              │
+           │  • processed/ — состояния, индексы, окна                                                       │
+           │  • analytics/ — feedback, калибровки, отчёты                                                  │
+           │  • alignment/ — когерентность, резонанс                                                        │
+           └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+           ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+           │                                      REDIS (КЭШ)                                               │
+           │  • ephemeris_cache (TTL 1h)                                                                   │
+           │  • state_cache (TTL 5min)                                                                     │
+           │  • alignment_cache (TTL 1h)                                                                   │
+           └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.3. Список сервисов и их порты
+
+| Сервис | Порт | Описание |
+|--------|------|----------|
+| **API Gateway** | 8000 | Единая точка входа |
+| **Astro Service** | 8001 | Астрология, биоритмы |
+| **Psychometry Service** | 8002 | Состояние, индексы, окна, рекомендации |
+| **Alignment Engine** | 8003 | Когерентность, резонанс |
+| **Final Tuner** | 8004 | Итоговая калибровка |
+| **Analytics Worker** | - | Batch-обработка (не имеет HTTP) |
+| **PostgreSQL** | 5432 | База данных |
+| **MinIO** | 9000/9001 | Data Lake |
+| **Redis** | 6379 | Кэш |
+
+---
+
+## 2. API КОНТРАКТЫ
+
+### 2.1. API Gateway → Сервисы
+
+#### 2.1.1. Маршрутизация
+
+| Метод | Путь | Целевой сервис |
+|-------|------|----------------|
+| GET | `/api/v3/forecast` | Astro Service |
+| GET | `/api/v4/state` | Psychometry Service |
+| GET | `/api/v4/achievements` | Psychometry Service |
+| GET | `/api/v4/window` | Psychometry Service |
+| GET | `/api/v4/recommendations` | Psychometry Service |
+| POST | `/api/v4/feedback` | Psychometry Service |
+| GET | `/api/v4/alignment/coherence` | Alignment Engine |
+| POST | `/api/v4/tuner/*` | Final Tuner |
+
+---
+
+### 2.2. Psychometry Service → Внешние сервисы
+
+#### 2.2.1. Psychometry → Forecast Service
+
+```http
+GET /api/v3/forecast?user_id={uuid}&date={date}&force_recalculate={bool}
+```
+
+**Headers:**
+```
+X-Internal-API-Key: ${INTERNAL_API_KEY}
+X-Service-Name: psychometry-service
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "forecast": {
+    "id": "uuid",
+    "axes": {
+      "energy_will": 0.65,
+      "health_physical": 0.70,
+      "intellect_logic": 0.45,
+      "emotions_intuition": 0.55,
+      "work_discipline": 0.60,
+      "luck_talent": 0.50,
+      "social_relations": 0.40,
+      "karma_cycles": 0.55,
+      "destiny_mission": 0.65
+    }
+  }
+}
+```
+
+#### 2.2.2. Psychometry → Astro Service
+
+```http
+GET /internal/v4/users/{user_id}/biorhythms?date={date}
+```
+
+**Headers:**
+```
+X-Internal-API-Key: ${INTERNAL_API_KEY}
+X-Service-Name: psychometry-service
+```
+
+**Response:**
+```json
+{
+  "user_id": "uuid",
+  "calculated_at": "2026-09-02T12:00:00Z",
+  "biorhythms": {
+    "physical": 0.32,
+    "emotional": -0.45,
+    "intellectual": 0.78
+  },
+  "phases": {
+    "physical": "rising",
+    "emotional": "falling",
+    "intellectual": "peak"
+  },
+  "interpretation": "Биоритмы: физический на подъёме (32%), эмоциональный на спаде (-45%), интеллектуальный в пике (78%)."
+}
+```
+
+```http
+GET /internal/v4/users/{user_id}/transits?date={date}
+```
+
+**Response:**
+```json
+{
+  "user_id": "uuid",
+  "calculated_at": "2026-09-02T12:00:00Z",
+  "transits": {
+    "Saturn": {"sign": "Pisces", "degree": 12.5, "house": 8, "strength": 0.7, "retrograde": false},
+    "Jupiter": {"sign": "Taurus", "degree": 15.2, "house": 5, "strength": 0.6, "retrograde": false}
+  },
+  "planet_strengths": {
+    "Sun": 0.75,
+    "Moon": 0.62,
+    "Mars": 0.48,
+    "Mercury": 0.55,
+    "Venus": 0.68,
+    "Jupiter": 0.82,
+    "Saturn": 0.45,
+    "Rahu": 0.32,
+    "Ketu": 0.28
+  }
+}
+```
+
+#### 2.2.3. Psychometry → Alignment Engine
+
+```http
+GET /api/v4/alignment/coherence?user_id={uuid}&date={date}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "user_id": "uuid",
+  "calculated_at": "2026-09-02T12:00:00Z",
+  "coherence": {
+    "score": 0.68,
+    "level": "MEDIUM",
+    "description": "Ваши профили частично согласованы, есть зоны роста"
+  },
+  "components": {
+    "house": 0.75,
+    "dasha": 0.65,
+    "retro": 0.55,
+    "resonance": 0.70
+  },
+  "dissonances": [
+    {
+      "type": "house",
+      "source": "saturn_house_8",
+      "description": "Сатурн в 8-м доме, но SC ниже ожидаемого",
+      "severity": 0.6
+    }
+  ]
+}
+```
+
+#### 2.2.4. Psychometry → MinIO (Data Lake)
+
+```http
+PUT /s3://personal-assistant-lake/processed/states/year={year}/month={month}/day={day}/user_{user_id}_{timestamp}.parquet
+```
+
+**Body:** Parquet file with state data
+
+**Schema:**
+```python
+{
+    'user_id': 'uuid',
+    'calculated_at': 'timestamp_ms',
+    'emotional_score': 'float',
+    'anxiety_score': 'float',
+    'energy_score': 'float',
+    'awareness_level': 'string',
+    'awareness_tip': 'string',
+    'awareness_practice': 'string',
+    'window_value': 'float',
+    'window_level': 'string',
+    'recommendations': 'json'
+}
+```
+
+#### 2.2.5. Psychometry → Analytics Worker
+
+**Поток через событие (Event Bus) или прямой вызов:**
+
+```http
+POST /api/v4/feedback
+```
+
+**Body:**
+```json
+{
+  "user_id": "uuid",
+  "category_id": "family",
+  "forecast_date": "2026-09-01",
+  "actual_outcome": 0.72,
+  "rating": 4,
+  "comment": "Рекомендация помогла!"
+}
+```
+
+---
+
+### 2.3. Alignment Engine → Внешние сервисы
+
+#### 2.3.1. Alignment → Psychometry Service
+
+```http
+GET /api/v4/psych/scores?user_id={uuid}&date={date}
+```
+
+**Response:**
+```json
+{
+  "user_id": "uuid",
+  "scores": {
+    "d_score": 65.2,
+    "pt_score": 55.0,
+    "pa_score": 48.5,
+    "ma_score": 43.0,
+    "si_score": 52.0
+  }
+}
+```
+
+#### 2.3.2. Alignment → Astro Service
+
+```http
+GET /internal/v4/users/{user_id}/dasha?date={date}
+```
+
+**Response:**
+```json
+{
+  "maha": "Saturn",
+  "antar": "Jupiter",
+  "pratyantar": "Mercury",
+  "maha_progress": 0.65,
+  "antar_progress": 0.32
+}
+```
+
+---
+
+### 2.4. Analytics Worker → Внешние сервисы
+
+#### 2.4.1. Analytics → Psychometry Service
+
+```http
+POST /api/v4/config/update
+```
+
+**Body:**
+```json
+{
+  "category": "family",
+  "weights": {
+    "clarity": 0.32,
+    "synchronicity": 0.28,
+    "resource": 0.31,
+    "inertia": 0.09
+  }
+}
+```
+
+---
+
+### 2.5. Final Tuner → Внешние сервисы
+
+#### 2.5.1. Final Tuner → Psychometry Service
+
+```http
+POST /api/v4/config/apply
+```
+
+**Body:**
+```json
+{
+  "weights": {
+    "family": {"clarity": 0.32, "synchronicity": 0.28, "resource": 0.31, "inertia": 0.09},
+    "work": {"clarity": 0.30, "synchronicity": 0.32, "resource": 0.28, "inertia": 0.10}
+  },
+  "thresholds": {
+    "open": 0.72,
+    "partial": 0.38,
+    "closed": 0.18
+  }
+}
+```
+
+#### 2.5.2. Final Tuner → MinIO
+
+```http
+PUT /s3://personal-assistant-lake/analytics/calibrations/calibration_{version}.parquet
+```
+
+---
+
+## 3. СХЕМЫ ДАННЫХ (ОБЩИЕ)
+
+### 3.1. UserState
+
+```yaml
+UserState:
+  user_id: string (uuid)
+  calculated_at: string (datetime)
+  metrics:
+    emotional_score: number (0-1)
+    anxiety_score: number (0-1)
+    energy_score: number (0-1)
+  state_level: enum [HIGH, MEDIUM, LOW]
+  state_summary: string
+  awareness:
+    level: enum [HIGH, MEDIUM, LOW]
+    tip: string
+    practice: string
+  sources:
+    mmpi_id: string (uuid)
+    iat_id: string (uuid)
+    forecast_id: string (uuid)
+```
+
+### 3.2. AchievementIndex
+
+```yaml
+AchievementIndex:
+  user_id: string (uuid)
+  category: enum [family, work, health, self]
+  value: number (0-1)
+  level: enum [HIGH, MEDIUM, LOW, CRITICAL]
+  components:
+    clarity: number (0-1)
+    synchronicity: number (0-1)
+    resource: number (0-1)
+    inertia: number (0-1)
+  recommendation: string
+  seasonal_boost: number
+```
+
+### 3.3. OpportunityWindow
+
+```yaml
+OpportunityWindow:
+  user_id: string (uuid)
+  calculated_at: string (datetime)
+  value: number (0-1)
+  level: enum [OPEN, PARTIAL, CLOSED]
+  deviations:
+    family: number
+    work: number
+    health: number
+    self: number
+  practice_recommendation: string
+  play_recommendation: string
+```
+
+### 3.4. Recommendation
+
+```yaml
+Recommendation:
+  action: string
+  reason: string
+  priority: integer (1-3)
+  duration: string
+  category: string
+  completed: boolean
+```
+
+### 3.5. Feedback
+
+```yaml
+Feedback:
+  user_id: string (uuid)
+  category_id: string
+  forecast_date: string (date)
+  actual_outcome: number (0-1)
+  rating: integer (1-5)
+  comment: string
+```
+
+### 3.6. CoherenceScore
+
+```yaml
+CoherenceScore:
+  score: number (0-1)
+  level: enum [HIGH, MEDIUM, LOW]
+  description: string
+  components:
+    house: number
+    dasha: number
+    retro: number
+    resonance: number
+  dissonances:
+    - type: string
+      source: string
+      description: string
+      severity: number
+```
+
+---
+
+## 4. ПОРЯДОК ЗАПУСКА
+
+### 4.1. Docker Compose (все сервисы)
+
+```yaml
+# docker-compose-integration.yml
+
+version: '3.8'
+
+services:
+  # ============================================================
+  # INFRASTRUCTURE
+  # ============================================================
+  
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_DB: personal_assistant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ============================================================
+  # SERVICES
+  # ============================================================
+  
+  astro-service:
+    build: ./astro-service
+    container_name: astro-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  psychometry-service:
+    build: ./psychometry-service
+    container_name: psychometry-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      FORECAST_URL: http://astro-service:8000
+      ASTRO_URL: http://astro-service:8000
+      ALIGNMENT_URL: http://alignment-engine:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  alignment-engine:
+    build: ./alignment-engine
+    container_name: alignment-engine
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      ASTRO_URL: http://astro-service:8000
+      FORECAST_URL: http://astro-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  analytics-worker:
+    build: ./analytics-worker
+    container_name: analytics-worker
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  final-tuner:
+    build: ./final-tuner
+    container_name: final-tuner
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8004:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    environment:
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      PSYCHOMETRY_SERVICE_URL: http://psychometry-service:8000
+      ALIGNMENT_SERVICE_URL: http://alignment-engine:8000
+      TUNER_SERVICE_URL: http://final-tuner:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      astro-service:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+      alignment-engine:
+        condition: service_healthy
+      final-tuner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  app-network:
+    driver: bridge
+```
+
+### 4.2. Переменные окружения
+
+```bash
+# .env
+
+# PostgreSQL
+POSTGRES_PASSWORD=secure_password_here
+
+# MinIO
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=secure_minio_password
+
+# Internal API
+INTERNAL_API_KEY=32_byte_hex_internal_key
+
+# Redis
+REDIS_PASSWORD=secure_redis_password
+
+# Astro Service
+HOUSE_SYSTEM=W
+EPHEMERIS_CACHE_TTL=3600
+
+# Psychometry Service
+MMPI_INTERVAL_DAYS=90
+IAT_INTERVAL_DAYS=30
+
+# Analytics Worker
+SOFT_UPDATE_MIN_N=30
+HARD_UPDATE_MIN_N=80
+
+# Final Tuner
+OPTIMIZATION_METHOD=differential_evolution
+SIMULATION_MODE=false
+```
+
+---
+
+## 5. HEALTH CHECKS
+
+### 5.1. Формат Health Check
+
+Все сервисы должны предоставлять эндпоинт `/health`:
+
+```http
+GET /health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-09-02T12:00:00Z",
+  "components": {
+    "database": "healthy",
+    "redis": "healthy",
+    "minio": "healthy"
+  }
+}
+```
+
+### 5.2. Docker Health Check
+
+Каждый сервис в Docker Compose должен иметь:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+```
+
+---
+
+## 6. СЦЕНАРИИ ИНТЕГРАЦИИ
+
+### 6.1. Сценарий 1: Получение состояния пользователя
+
+```
+1. FRONTEND → API Gateway: GET /api/v4/state?user_id={id}&date={date}
+2. API Gateway → Psychometry Service: GET /api/v4/state?user_id={id}&date={date}
+3. Psychometry → PostgreSQL: SELECT * FROM psych.mmpi_results WHERE user_id = {id} ORDER BY completed_at DESC LIMIT 1
+4. Psychometry → Forecast Service: GET /api/v3/forecast?user_id={id}&date={date}
+5. Psychometry → Astro Service: GET /internal/v4/users/{id}/biorhythms?date={date}
+6. Psychometry → Alignment Engine: GET /api/v4/alignment/coherence?user_id={id}&date={date}
+7. Psychometry → MinIO: PUT /processed/states/year={year}/month={month}/day={day}/user_{id}_{timestamp}.parquet
+8. Psychometry → Redis: SET state:{user_id}:{date} {state_data} EX 300
+9. Psychometry → API Gateway → FRONTEND: { state: {...} }
+```
+
+### 6.2. Сценарий 2: Прохождение MMPI
+
+```
+1. FRONTEND → API Gateway: POST /api/v4/mmpi
+2. API Gateway → Psychometry Service: POST /api/v4/mmpi
+3. Psychometry → Astro Service: GET /internal/v4/users/{id}/biorhythms?date={date}
+4. Psychometry → Forecast Service: GET /api/v3/forecast?user_id={id}&date={date}
+5. Psychometry → PostgreSQL: INSERT INTO psych.mmpi_results ...
+6. Psychometry → MinIO: PUT /raw/mmpi/year={year}/month={month}/day={day}/user_{id}_{timestamp}.parquet
+7. Psychometry → Alignment Engine: (опционально) GET /api/v4/alignment/coherence?user_id={id}&date={date}
+8. Psychometry → Event Bus: publish mmpi.completed event
+9. Psychometry → API Gateway → FRONTEND: { success: true, scores: {...} }
+```
+
+### 6.3. Сценарий 3: Обратная связь
+
+```
+1. FRONTEND → API Gateway: POST /api/v4/feedback
+2. API Gateway → Psychometry Service: POST /api/v4/feedback
+3. Psychometry → PostgreSQL: INSERT INTO psych.feedback ...
+4. Psychometry → MinIO: PUT /analytics/feedback/year={year}/month={month}/day={day}/user_{id}_{timestamp}.parquet
+5. Psychometry → Event Bus: publish feedback.received event
+6. Psychometry → API Gateway → FRONTEND: { success: true }
+7. Analytics Worker → Event Bus: consume feedback.received
+8. Analytics Worker → PostgreSQL: UPDATE psych.feedback_aggregates ...
+9. Analytics Worker → Psychometry Service: (если нужно) POST /api/v4/config/update
+```
+
+### 6.4. Сценарий 4: Калибровка весов
+
+```
+1. ADMIN → Final Tuner: POST /api/v4/tuner/weights/optimize/family
+2. Final Tuner → Analytics Worker: GET /api/v4/analytics/feedback/aggregates?category=family
+3. Final Tuner → MinIO: GET /analytics/feedback/year=*/month=*/day=*/*.parquet
+4. Final Tuner → PostgreSQL: INSERT INTO tuner.weight_optimizations ...
+5. Final Tuner → MinIO: PUT /analytics/calibrations/calibration_v1.parquet
+6. ADMIN → Final Tuner: POST /api/v4/tuner/apply
+7. Final Tuner → Psychometry Service: POST /api/v4/config/apply
+8. Psychometry Service → PostgreSQL: UPDATE psych.achievement_indices SET weights = {...}
+9. ADMIN → FINAL TUNER: { success: true, applied: true }
+```
+
+---
+
+## 7. ТЕСТИРОВАНИЕ ИНТЕГРАЦИИ
+
+### 7.1. Проверка работоспособности всех сервисов
+
+```bash
+# Проверка всех health checks
+curl -f http://localhost:8000/health
+curl -f http://localhost:8001/health
+curl -f http://localhost:8002/health
+curl -f http://localhost:8003/health
+curl -f http://localhost:8004/health
+```
+
+### 7.2. Проверка контрактов
+
+```python
+# tests/integration/test_contracts.py
+
+import pytest
+import httpx
+
+class TestContracts:
+    """Проверка API контрактов между сервисами."""
+    
+    async def test_psychometry_to_forecast(self):
+        """Psychometry → Forecast Service"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "http://localhost:8002/internal/v1/forecast",
+                params={"user_id": "test-uuid", "date": "2026-09-02"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "axes" in data
+            assert "energy_will" in data["axes"]
+    
+    async def test_psychometry_to_astro(self):
+        """Psychometry → Astro Service"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "http://localhost:8002/internal/v4/biorhythms",
+                params={"user_id": "test-uuid", "date": "2026-09-02"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "biorhythms" in data
+            assert "physical" in data["biorhythms"]
+    
+    async def test_full_flow(self):
+        """Полный цикл: MMPI → Состояние → Индексы → Рекомендации"""
+        # 1. Прохождение MMPI
+        # 2. Получение состояния
+        # 3. Получение индексов
+        # 4. Получение рекомендаций
+        # 5. Обратная связь
+        pass
+```
+
+### 7.3. Мониторинг интеграции
+
+```bash
+# Проверка логов всех сервисов
+docker-compose logs -f
+
+# Проверка метрик
+curl http://localhost:9090/metrics  # если настроен Prometheus
+```
+
+---
+
+## 8. УСТРАНЕНИЕ НЕИСПРАВНОСТЕЙ
+
+### 8.1. Частые проблемы
+
+| Проблема | Решение |
+|----------|---------|
+| Psychometry не может подключиться к Forecast | Проверить FORECAST_URL в .env |
+| MinIO недоступен | Проверить credentials и доступность порта 9000 |
+| Redis timeout | Увеличить TTL или проверить Redis health |
+| Миграции не накатываются | Запустить alembic upgrade head вручную |
+| Несовместимость схем | Проверить версии в shared-schemas.yaml |
+
+### 8.2. Отладка
+
+```bash
+# Подключиться к контейнеру
+docker-compose exec psychometry-service bash
+
+# Проверить подключение к БД
+psql -U postgres -h postgres -d personal_assistant
+
+# Проверить кэш
+redis-cli -h redis ping
+
+# Проверить MinIO
+mc admin info minio
+```
+
+---
+
+## 9. ЗАКЛЮЧЕНИЕ
+
+### 9.1. Ключевые контракты
+
+| От | К | Метод | Путь |
+|----|---|-------|------|
+| Psychometry | Forecast | GET | `/api/v3/forecast` |
+| Psychometry | Astro | GET | `/internal/v4/biorhythms` |
+| Psychometry | Astro | GET | `/internal/v4/transits` |
+| Psychometry | Alignment | GET | `/api/v4/alignment/coherence` |
+| Psychometry | MinIO | PUT | `/processed/states/...` |
+| Alignment | Psychometry | GET | `/api/v4/psych/scores` |
+| Analytics | Psychometry | POST | `/api/v4/config/update` |
+| Final Tuner | Psychometry | POST | `/api/v4/config/apply` |
+
+### 9.2. Ключевые схемы данных
+
+- `UserState` — состояние пользователя
+- `AchievementIndex` — индекс достижения
+- `OpportunityWindow` — окно возможностей
+- `Recommendation` — рекомендация
+- `Feedback` — обратная связь
+- `CoherenceScore` — когерентность
+
+### 9.3. Порядок запуска
+
+1. PostgreSQL
+2. MinIO
+3. Redis
+4. Astro Service
+5. Psychometry Service
+6. Alignment Engine
+7. Analytics Worker
+8. Final Tuner
+9. API Gateway
+
+**Готово к интеграции.**

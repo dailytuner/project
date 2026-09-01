@@ -1,0 +1,939 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ/ДОПОЛНЕНИЕ ASTRO SERVICE v2.0
+
+## «Упрощённый астрологический фон для Psychometry Service»
+
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Назначение документа
+
+Документ описывает **дополнения и упрощения** существующего **Astro Service** для поддержки новой логики **Psychometry Service v4.0**.
+
+**Существующий Astro Service** продолжает выполнять свои функции для **Forecast Service** (9 осей Magic Profile, веса слоёв, Blind Protocol). **Новые функции** добавляются без нарушения существующей логики.
+
+### 1.2. Цели и задачи
+
+| Цель | Описание |
+|------|----------|
+| **Добавить биоритмы** | Расчёт циклов 23/28/33 дня для Psychometry Service |
+| **Упростить транзиты** | Передать только силу планет (без сложных аспектов) |
+| **Добавить сезонные бусты** | Сезонные корректировки для индексов достижения |
+| **Сохранить существующее** | Forecast Service продолжает работать без изменений |
+| **Кэшировать эфемериды** | Ускорить расчёты для новых эндпоинтов |
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    EXISTING SERVICES                                   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  FORECAST SERVICE (существующий)                               │   │
+│  │  • 9 осей Magic Profile                                       │   │
+│  │  • Веса слоёв                                                  │   │
+│  │  • Blind Protocol                                              │   │
+│  │  • /api/v3/forecast                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  ASTRO SERVICE (существующий + дополнения)                     │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────────────────────────────────────────┐   │   │
+│  │  │  СУЩЕСТВУЮЩЕЕ (не трогаем)                              │   │   │
+│  │  │  • Эфемериды (swe.calc_ut)                             │   │   │
+│  │  │  • Аспекты, дома, орбисы                                │   │   │
+│  │  │  • Даши                                                 │   │   │
+│  │  │  • Blind Protocol                                       │   │   │
+│  │  │  • /api/v3/forecast (через Forecast Service)            │   │   │
+│  │  └─────────────────────────────────────────────────────────┘   │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────────────────────────────────────────┐   │   │
+│  │  │  НОВОЕ (дополнения)                                     │   │   │
+│  │  │  • Biorhythm Core (23/28/33)                           │   │   │
+│  │  │  • Simplified Transit Calculator                       │   │   │
+│  │  │  • Seasonal Booster                                    │   │   │
+│  │  │  • /internal/v4/biorhythms                             │   │   │
+│  │  │  • /internal/v4/transits                               │   │   │
+│  │  └─────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PSYCHOMETRY SERVICE (новый)                         │
+│  • Использует биоритмы, транзиты, сезонные бусты                     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. МОДЕЛЬ ДАННЫХ
+
+### 2.1. Новая таблица биоритмов
+
+```sql
+-- ============================================================
+-- 1. БИОРИТМЫ (НОВАЯ ТАБЛИЦА В СХЕМЕ `astro`)
+-- ============================================================
+
+CREATE TABLE astro.biorhythms (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Циклы (-1.0 .. 1.0)
+    physical FLOAT NOT NULL,
+    emotional FLOAT NOT NULL,
+    intellectual FLOAT NOT NULL,
+    
+    -- Фаза
+    phase_physical TEXT,    -- rising, falling, critical, peak, trough
+    phase_emotional TEXT,
+    phase_intellectual TEXT,
+    
+    -- Интерпретация (упрощённая)
+    interpretation TEXT,
+    
+    -- Ссылка на прогноз (если есть)
+    forecast_id UUID,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_biorhythms_user (user_id),
+    INDEX idx_biorhythms_date (calculated_at)
+);
+```
+
+### 2.2. Новая таблица транзитов (упрощённых)
+
+```sql
+-- ============================================================
+-- 2. ТРАНЗИТЫ (УПРОЩЁННЫЕ)
+-- ============================================================
+
+CREATE TABLE astro.simplified_transits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Позиции планет (упрощённо)
+    transits JSONB NOT NULL,
+    -- { "Saturn": { "sign": "Pisces", "degree": 12.5, "house": 8, "strength": 0.7 }, ... }
+    
+    -- Сила планет
+    planet_strengths JSONB NOT NULL,
+    -- { "sun": 0.75, "moon": 0.62, "mars": 0.48, ... }
+    
+    -- Ссылка на прогноз
+    forecast_id UUID,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_transits_user (user_id),
+    INDEX idx_transits_date (calculated_at)
+);
+```
+
+### 2.3. Кэш эфемерид (существующий, дополняется)
+
+```sql
+-- ============================================================
+-- 3. КЭШ ЭФЕМЕРИД (СУЩЕСТВУЮЩИЙ, ДОПОЛНЯЕТСЯ)
+-- ============================================================
+
+-- Добавляем поле strength в существующую таблицу
+ALTER TABLE astro.ephemeris_cache 
+ADD COLUMN strength FLOAT DEFAULT 0.5;
+
+-- Индекс для быстрого доступа по силе
+CREATE INDEX idx_ephemeris_strength ON astro.ephemeris_cache(strength);
+```
+
+---
+
+## 3. CORE МОДУЛИ
+
+### 3.1. Biorhythm Core
+
+```python
+# src/core/biorhythm_core.py
+
+import math
+from datetime import date, datetime, timedelta
+from typing import Dict, Optional
+from uuid import UUID
+
+class BiorhythmCore:
+    """
+    Расчёт биоритмов (23/28/33 дня).
+    """
+    
+    # Длительность циклов в днях
+    CYCLES = {
+        'physical': 23,
+        'emotional': 28,
+        'intellectual': 33
+    }
+    
+    # Названия фаз
+    PHASE_NAMES = {
+        'rising': 'подъём',
+        'falling': 'спад',
+        'critical': 'критическая',
+        'peak': 'пик',
+        'trough': 'низшая точка'
+    }
+    
+    @classmethod
+    def calculate(
+        cls,
+        birth_date: date,
+        target_date: date
+    ) -> Dict[str, Dict]:
+        """
+        Рассчитывает значения биоритмов для target_date.
+        
+        Returns:
+            {
+                "physical": {"value": 0.32, "phase": "rising"},
+                "emotional": {"value": -0.45, "phase": "falling"},
+                "intellectual": {"value": 0.78, "phase": "peak"}
+            }
+        """
+        days_alive = (target_date - birth_date).days
+        
+        result = {}
+        for name, cycle_days in cls.CYCLES.items():
+            angle = 2 * math.pi * (days_alive % cycle_days) / cycle_days
+            value = math.sin(angle)
+            
+            phase = cls._get_phase(value)
+            
+            result[name] = {
+                'value': round(value, 3),
+                'phase': phase,
+                'phase_name': cls.PHASE_NAMES.get(phase, 'неизвестно'),
+                'cycle_day': (days_alive % cycle_days) + 1,
+                'total_days': cycle_days
+            }
+        
+        return result
+    
+    @classmethod
+    def _get_phase(cls, value: float) -> str:
+        """Определяет фазу цикла."""
+        if value > 0.85:
+            return 'peak'
+        elif value < -0.85:
+            return 'trough'
+        elif value > 0:
+            return 'rising'
+        elif value < 0:
+            return 'falling'
+        return 'critical'
+    
+    @classmethod
+    def get_interpretation(cls, biorhythms: Dict) -> str:
+        """
+        Генерирует текстовую интерпретацию биоритмов.
+        """
+        parts = []
+        
+        for name, data in biorhythms.items():
+            value = data['value']
+            phase_name = data['phase_name']
+            
+            if value > 0.5:
+                parts.append(f"{name} на {phase_name} ({value:.0%})")
+            elif value < -0.5:
+                parts.append(f"{name} на {phase_name} ({value:.0%})")
+            else:
+                parts.append(f"{name} в нейтральной фазе")
+        
+        interpretation = f"Биоритмы: {', '.join(parts)}."
+        
+        # Добавляем совет
+        if biorhythms['physical']['value'] > 0.5:
+            interpretation += " Хорошее время для физической активности."
+        if biorhythms['emotional']['value'] < -0.5:
+            interpretation += " Эмоциональный спад — будьте внимательны."
+        if biorhythms['intellectual']['value'] > 0.5:
+            interpretation += " Отличное время для интеллектуальной работы."
+        
+        return interpretation
+```
+
+### 3.2. Simplified Transit Calculator
+
+```python
+# src/core/transit_core.py
+
+import math
+from datetime import date
+from typing import Dict, Optional
+from uuid import UUID
+
+class SimplifiedTransitCore:
+    """
+    Упрощённый расчёт транзитов для Psychometry Service.
+    Возвращает только силу планет и их положение.
+    """
+    
+    # Знаки зодиака
+    SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo',
+             'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces']
+    
+    # Экзальтации
+    EXALTATIONS = {
+        'Sun': 'Aries',
+        'Moon': 'Taurus',
+        'Mars': 'Capricorn',
+        'Mercury': 'Virgo',
+        'Jupiter': 'Cancer',
+        'Venus': 'Pisces',
+        'Saturn': 'Libra',
+    }
+    
+    # Дебилитации
+    DEBILITIES = {
+        'Sun': 'Libra',
+        'Moon': 'Scorpio',
+        'Mars': 'Cancer',
+        'Mercury': 'Pisces',
+        'Jupiter': 'Capricorn',
+        'Venus': 'Virgo',
+        'Saturn': 'Aries',
+    }
+    
+    # Сила планет по домам (упрощённо)
+    HOUSE_POWER = {
+        1: 1.0,  2: 0.7, 3: 0.4, 4: 1.0,
+        5: 0.7,  6: 0.4, 7: 1.0, 8: 0.7,
+        9: 0.4, 10: 1.0, 11: 0.7, 12: 0.4
+    }
+    
+    def __init__(self, ephemeris_service):
+        self.ephemeris_service = ephemeris_service
+    
+    async def calculate_transits(
+        self,
+        user_id: UUID,
+        target_date: date,
+        natal_houses: Optional[Dict] = None
+    ) -> Dict:
+        """
+        Рассчитывает упрощённые транзиты.
+        
+        Returns:
+            {
+                "transits": {
+                    "Saturn": {"sign": "Pisces", "degree": 12.5, "house": 8, "strength": 0.7},
+                    ...
+                },
+                "planet_strengths": {"sun": 0.75, "moon": 0.62, ...}
+            }
+        """
+        # 1. Получаем позиции планет
+        positions = await self._get_planet_positions(target_date)
+        
+        # 2. Вычисляем дома (если есть натальная карта)
+        houses = await self._get_houses(positions, natal_houses)
+        
+        # 3. Вычисляем силу планет
+        strengths = await self._calculate_planet_strengths(positions, houses)
+        
+        # 4. Формируем ответ
+        transits = {}
+        for planet, pos in positions.items():
+            sign = self.SIGNS[int(pos['longitude'] / 30)]
+            degree = pos['longitude'] % 30
+            
+            transits[planet] = {
+                'sign': sign,
+                'degree': round(degree, 1),
+                'house': houses.get(planet, 0),
+                'strength': strengths.get(planet, 0.5),
+                'retrograde': pos.get('speed', 0) < 0
+            }
+        
+        return {
+            'transits': transits,
+            'planet_strengths': strengths
+        }
+    
+    async def _get_planet_positions(self, target_date: date) -> Dict:
+        """
+        Получает позиции планет из кэша эфемерид.
+        """
+        planets = ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars',
+                   'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto']
+        
+        positions = {}
+        for planet in planets:
+            pos = await self.ephemeris_service.get_planet_position(
+                planet=planet,
+                date=target_date
+            )
+            positions[planet] = {
+                'longitude': pos.longitude,
+                'speed': pos.longitude_speed
+            }
+        
+        return positions
+    
+    async def _get_houses(
+        self,
+        positions: Dict,
+        natal_houses: Optional[Dict]
+    ) -> Dict[str, int]:
+        """
+        Определяет дома для планет.
+        Если натальная карта есть — использует её, иначе — эвристика.
+        """
+        if natal_houses and 'asc' in natal_houses:
+            # Используем натальные дома
+            asc = natal_houses['asc']
+            houses = {}
+            for planet, pos in positions.items():
+                degree = pos['longitude']
+                house = int(((degree - asc) % 360) / 30) + 1
+                houses[planet] = house
+            return houses
+        
+        # Упрощённая эвристика (без натальной карты)
+        # Используем дома по умолчанию
+        default_houses = {
+            'Sun': 5, 'Moon': 4, 'Mercury': 3, 'Venus': 7,
+            'Mars': 1, 'Jupiter': 9, 'Saturn': 10,
+            'Uranus': 11, 'Neptune': 12, 'Pluto': 8
+        }
+        return default_houses
+    
+    async def _calculate_planet_strengths(
+        self,
+        positions: Dict,
+        houses: Dict[str, int]
+    ) -> Dict[str, float]:
+        """
+        Вычисляет силу планет (0..1) на основе знака и дома.
+        """
+        strengths = {}
+        
+        for planet, pos in positions.items():
+            sign = self.SIGNS[int(pos['longitude'] / 30)]
+            house = houses.get(planet, 0)
+            
+            # 1. Влияние экзальтации/дебилитации
+            if sign == self.EXALTATIONS.get(planet):
+                dignity = 1.0
+            elif sign == self.DEBILITIES.get(planet):
+                dignity = 0.2
+            else:
+                dignity = 0.6
+            
+            # 2. Влияние дома
+            house_power = self.HOUSE_POWER.get(house, 0.5)
+            
+            # 3. Финальная сила
+            strength = dignity * 0.6 + house_power * 0.4
+            
+            # 4. Корректировка на ретроградность
+            if pos.get('speed', 0) < 0:
+                strength *= 0.8
+            
+            strengths[planet] = round(max(0.1, min(1.0, strength)), 2)
+        
+        return strengths
+```
+
+### 3.3. Seasonal Booster
+
+```python
+# src/core/seasonal_booster.py
+
+from datetime import datetime
+from typing import Dict, Optional
+
+class SeasonalBooster:
+    """
+    Сезонные корректировки для индексов достижения.
+    """
+    
+    # Сезонные бусты по категориям и месяцам
+    SEASONAL_BOOSTS = {
+        'family': {
+            1: 0.1, 2: 0.1, 3: 0.0, 4: 0.0,
+            5: 0.0, 6: 0.0, 7: 0.05, 8: 0.05,
+            9: 0.0, 10: 0.0, 11: 0.05, 12: 0.1
+        },
+        'work': {
+            1: 0.0, 2: 0.0, 3: 0.1, 4: 0.1,
+            5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0,
+            9: 0.1, 10: 0.1, 11: 0.0, 12: 0.0
+        },
+        'health': {
+            1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0,
+            5: 0.1, 6: 0.1, 7: 0.1, 8: 0.1,
+            9: 0.0, 10: 0.0, 11: 0.0, 12: 0.0
+        },
+        'self': {
+            1: 0.05, 2: 0.05, 3: 0.0, 4: 0.0,
+            5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0,
+            9: 0.1, 10: 0.1, 11: 0.05, 12: 0.05
+        }
+    }
+    
+    @classmethod
+    def get_boost(cls, category: str, date: datetime) -> float:
+        """
+        Возвращает сезонный буст для категории в указанную дату.
+        """
+        month = date.month
+        category_boosts = cls.SEASONAL_BOOSTS.get(category, {})
+        return category_boosts.get(month, 0.0)
+    
+    @classmethod
+    def get_all_boosts(cls, date: datetime) -> Dict[str, float]:
+        """
+        Возвращает бусты для всех категорий.
+        """
+        month = date.month
+        boosts = {}
+        for category, category_boosts in cls.SEASONAL_BOOSTS.items():
+            boosts[category] = category_boosts.get(month, 0.0)
+        return boosts
+    
+    @classmethod
+    def get_season_name(cls, date: datetime) -> str:
+        """
+        Возвращает название сезона для даты.
+        """
+        month = date.month
+        if month in [12, 1, 2]:
+            return 'зима'
+        elif month in [3, 4, 5]:
+            return 'весна'
+        elif month in [6, 7, 8]:
+            return 'лето'
+        else:
+            return 'осень'
+```
+
+---
+
+## 4. SERVICE LAYER
+
+### 4.1. Biorhythm Service
+
+```python
+# src/services/biorhythm_service.py
+
+from datetime import datetime, date
+from typing import Dict, Optional
+from uuid import UUID
+
+from ..core.biorhythm_core import BiorhythmCore
+from ..models import BiorhythmResult
+
+class BiorhythmService:
+    """
+    Сервис для работы с биоритмами.
+    """
+    
+    def __init__(self):
+        self.core = BiorhythmCore
+    
+    async def calculate(
+        self,
+        user_id: UUID,
+        target_date: Optional[date] = None
+    ) -> BiorhythmResult:
+        """
+        Рассчитывает биоритмы для пользователя.
+        """
+        if target_date is None:
+            target_date = date.today()
+        
+        # 1. Получаем дату рождения пользователя
+        birth_date = await self._get_birth_date(user_id)
+        
+        if not birth_date:
+            # Если дата рождения неизвестна — возвращаем нейтральные значения
+            return self._neutral_biorhythms(user_id)
+        
+        # 2. Рассчитываем биоритмы
+        biorhythms = self.core.calculate(birth_date, target_date)
+        
+        # 3. Генерируем интерпретацию
+        interpretation = self.core.get_interpretation(biorhythms)
+        
+        # 4. Сохраняем в БД
+        result = await self._save_biorhythms(
+            user_id=user_id,
+            biorhythms=biorhythms,
+            interpretation=interpretation
+        )
+        
+        return result
+    
+    def _neutral_biorhythms(self, user_id: UUID) -> Dict:
+        """
+        Возвращает нейтральные биоритмы (когда нет даты рождения).
+        """
+        return {
+            'user_id': user_id,
+            'calculated_at': datetime.now(),
+            'physical': 0.0,
+            'emotional': 0.0,
+            'intellectual': 0.0,
+            'phase_physical': 'neutral',
+            'phase_emotional': 'neutral',
+            'phase_intellectual': 'neutral',
+            'interpretation': 'Дата рождения не указана — биоритмы не рассчитаны'
+        }
+```
+
+### 4.2. Transit Service (упрощённый)
+
+```python
+# src/services/transit_service.py
+
+from datetime import date
+from typing import Dict, Optional
+from uuid import UUID
+
+from ..core.transit_core import SimplifiedTransitCore
+from ..core.ephemeris import EphemerisService
+
+class TransitService:
+    """
+    Сервис для упрощённых транзитов.
+    """
+    
+    def __init__(self, ephemeris_service: EphemerisService):
+        self.ephemeris_service = ephemeris_service
+        self.core = SimplifiedTransitCore(ephemeris_service)
+    
+    async def get_transits(
+        self,
+        user_id: UUID,
+        target_date: date
+    ) -> Dict:
+        """
+        Возвращает упрощённые транзиты для пользователя.
+        """
+        # 1. Получаем натальную карту пользователя (если есть)
+        natal_houses = await self._get_natal_houses(user_id)
+        
+        # 2. Рассчитываем транзиты
+        transits = await self.core.calculate_transits(
+            user_id=user_id,
+            target_date=target_date,
+            natal_houses=natal_houses
+        )
+        
+        # 3. Сохраняем в БД
+        await self._save_transits(user_id, target_date, transits)
+        
+        return transits
+```
+
+---
+
+## 5. API INTERFACES
+
+### 5.1. Новые внутренние эндпоинты
+
+```python
+# src/api/routes_internal.py
+
+from fastapi import APIRouter, Depends, Query
+from uuid import UUID
+from datetime import date, datetime
+from typing import Optional
+
+router = APIRouter(prefix="/internal/v4", tags=["Internal"])
+
+
+@router.get("/users/{user_id}/biorhythms")
+async def get_biorhythms(
+    user_id: UUID,
+    date: Optional[date] = Query(None, description="Дата расчёта"),
+    service: BiorhythmService = Depends(get_biorhythm_service)
+):
+    """
+    Возвращает биоритмы пользователя.
+    
+    Используется Psychometry Service для синтеза состояния.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    result = await service.calculate(user_id, date)
+    
+    return {
+        "user_id": str(user_id),
+        "calculated_at": datetime.now().isoformat(),
+        "biorhythms": {
+            "physical": result.physical,
+            "emotional": result.emotional,
+            "intellectual": result.intellectual,
+            "phases": {
+                "physical": result.phase_physical,
+                "emotional": result.phase_emotional,
+                "intellectual": result.phase_intellectual
+            }
+        },
+        "interpretation": result.interpretation
+    }
+
+
+@router.get("/users/{user_id}/transits")
+async def get_simplified_transits(
+    user_id: UUID,
+    date: Optional[date] = Query(None, description="Дата расчёта"),
+    service: TransitService = Depends(get_transit_service)
+):
+    """
+    Возвращает упрощённые транзиты.
+    
+    Используется Psychometry Service для расчёта синхронности.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    result = await service.get_transits(user_id, date)
+    
+    return {
+        "user_id": str(user_id),
+        "calculated_at": datetime.now().isoformat(),
+        "transits": result["transits"],
+        "planet_strengths": result["planet_strengths"]
+    }
+
+
+@router.get("/seasonal-boosts")
+async def get_seasonal_boosts(
+    date: Optional[date] = Query(None, description="Дата для расчёта")
+):
+    """
+    Возвращает сезонные бусты для всех категорий.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    boosts = SeasonalBooster.get_all_boosts(date)
+    season = SeasonalBooster.get_season_name(date)
+    
+    return {
+        "date": date.isoformat(),
+        "season": season,
+        "boosts": boosts
+    }
+```
+
+### 5.2. Health Check
+
+```python
+@router.get("/health")
+async def health_check():
+    """
+    Проверка состояния сервиса.
+    """
+    status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "components": {}
+    }
+    
+    # 1. Проверка БД
+    try:
+        # Проверка подключения
+        status["components"]["database"] = "healthy"
+    except Exception as e:
+        status["components"]["database"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    # 2. Проверка эфемеридного кэша
+    try:
+        # Проверка кэша
+        status["components"]["ephemeris_cache"] = "healthy"
+    except Exception as e:
+        status["components"]["ephemeris_cache"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    return status
+```
+
+---
+
+## 6. КЭШИРОВАНИЕ ЭФЕМЕРИД
+
+### 6.1. Обновлённый Ephemeris Service
+
+```python
+# src/core/ephemeris.py (дополнение)
+
+from functools import lru_cache
+from datetime import date, datetime
+from typing import Dict, Optional
+import swisseph as swe
+
+class EphemerisService:
+    """
+    Сервис эфемерид с кэшированием.
+    """
+    
+    def __init__(self, session):
+        self.session = session
+        self.cache_ttl = 3600  # 1 час
+    
+    @lru_cache(maxsize=128)
+    async def get_planet_position(
+        self,
+        planet: str,
+        date: date,
+        force_recalc: bool = False
+    ) -> Dict:
+        """
+        Возвращает позицию планеты с кэшированием.
+        """
+        # 1. Проверяем кэш
+        if not force_recalc:
+            cached = await self._get_from_cache(date, planet)
+            if cached:
+                return cached
+        
+        # 2. Рассчитываем
+        jd = swe.julday(date.year, date.month, date.day, 12.0)
+        planet_num = self._get_planet_number(planet)
+        pos, speed = swe.calc_ut(jd, planet_num)
+        
+        result = {
+            'longitude': pos[0],
+            'latitude': pos[1],
+            'distance': pos[2],
+            'speed': speed[0],
+            'longitude_speed': speed[0],
+            'latitude_speed': speed[1],
+            'distance_speed': speed[2]
+        }
+        
+        # 3. Сохраняем в кэш
+        await self._save_to_cache(date, planet, result)
+        
+        return result
+    
+    def _get_planet_number(self, planet: str) -> int:
+        """Возвращает номер планеты для Swiss Ephemeris."""
+        planets = {
+            'Sun': swe.SUN,
+            'Moon': swe.MOON,
+            'Mercury': swe.MERCURY,
+            'Venus': swe.VENUS,
+            'Mars': swe.MARS,
+            'Jupiter': swe.JUPITER,
+            'Saturn': swe.SATURN,
+            'Uranus': swe.URANUS,
+            'Neptune': swe.NEPTUNE,
+            'Pluto': swe.PLUTO,
+        }
+        return planets.get(planet, swe.SUN)
+    
+    async def _get_from_cache(self, date: date, planet: str) -> Optional[Dict]:
+        """Получает позицию из кэша."""
+        # Реализация с PostgreSQL
+        pass
+    
+    async def _save_to_cache(self, date: date, planet: str, position: Dict):
+        """Сохраняет позицию в кэш."""
+        # Реализация с PostgreSQL
+        pass
+```
+
+---
+
+## 7. DOCKER COMPOSE
+
+```yaml
+# docker-compose.yml (фрагмент для Astro Service)
+
+services:
+  astro-service:
+    build: ./astro-service
+    container_name: astro-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      EPHEMERIS_CACHE_TTL: 3600
+      HOUSE_SYSTEM: W
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./ephemeris_data:/app/ephemeris_data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+```
+
+---
+
+## 8. ЧЕК-ЛИСТ ПРИЁМКИ
+
+### 8.1. Функциональные требования
+
+- [ ] Biorhythm Core рассчитывает 23/28/33 дня
+- [ ] Biorhythm Core определяет фазы (rising, falling, critical, peak, trough)
+- [ ] Simplified Transit Core рассчитывает силу планет (0-1)
+- [ ] Simplified Transit Core определяет экзальтацию/дебилитацию
+- [ ] Seasonal Booster возвращает бусты для всех категорий
+- [ ] Кэш эфемерид работает (TTL 1 час)
+- [ ] Все новые внутренние эндпоинты работают
+
+### 8.2. Совместимость
+
+- [ ] Существующий Forecast Service продолжает работать
+- [ ] Существующие эндпоинты /api/v3/forecast не изменились
+- [ ] Новые эндпоинты не конфликтуют с существующими
+- [ ] База данных дополнена без потери данных
+
+### 8.3. Производительность
+
+- [ ] Запрос биоритмов < 50 мс
+- [ ] Запрос транзитов < 100 мс
+- [ ] Кэш эфемерид > 90% hit rate
+
+---
+
+## 9. ЗАКЛЮЧЕНИЕ
+
+**Astro Service дополняется** новыми функциями для поддержки Psychometry Service v4.0:
+
+| Что добавляется | Для чего |
+|-----------------|----------|
+| **Biorhythm Core** | Расчёт 23/28/33 дней для синтеза состояния |
+| **Simplified Transit Calculator** | Сила планет для синхронности |
+| **Seasonal Booster** | Сезонные корректировки индексов |
+| **Internal API** | Эндпоинты для Psychometry Service |
+
+**Что остаётся без изменений:**
+- Эфемериды и аспекты (для Forecast Service)
+- Даши
+- Blind Protocol
+- /api/v3/forecast
+
+**Существующий Astro Service продолжает работать как раньше.** Новые функции добавляются без нарушения существующей логики.
+
+**Статус:** Готово к разработке.

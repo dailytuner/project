@@ -1,0 +1,1699 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ PSYCHOMETRY SERVICE v4.0
+
+## «Архитектура распознавания состояния и стратегического проектирования»
+
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Назначение документа
+
+Документ описывает архитектуру, модель данных, алгоритмы и API для реализации **Psychometry Service** — микросервиса, который:
+
+- Собирает и интерпретирует данные MMPI и IAT
+- Синтезирует состояние пользователя (3 метрики + осознанность)
+- Рассчитывает индексы достижения по 4 категориям
+- Вычисляет окна возможностей
+- Генерирует персонализированные рекомендации
+- Собирает обратную связь для обучения системы
+
+**Сервис работает в связке с:**
+- **Astro Service** — биоритмы, упрощённые транзиты
+- **Forecast Service** — 9 осей Magic Profile (существующий)
+- **MinIO (Data Lake)** — хранение состояний и индексов
+- **Alignment Engine** — сопоставление профилей (отдельный сервис)
+- **Analytics Worker** — feedback-loop (отдельный сервис)
+
+### 1.2. Философское основание
+
+Модель базируется на трёх слоях:
+
+| Слой | Описание |
+| :--- | :--- |
+| **Наблюдатель** | Чистое присутствие, не вовлекается. Имплицитно — целевое состояние |
+| **Субъект** | Личность, восприятие, выбор. Измеряется через MMPI, IAT |
+| **Фон** | Контекст, циклы, среда. Измеряется через биоритмы, транзиты, сезон |
+
+**Аксиология:** Переход от "предсказаний" к "распознаванию состояния". Вместо вопроса "что будет?" — вопрос "что сейчас?"
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (React/Vue)                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        API GATEWAY                                    │
+│  /api/v4/state → Psychometry Service                                 │
+│  /api/v4/achievements → Psychometry Service                          │
+│  /api/v4/recommendations → Psychometry Service                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PSYCHOMETRY SERVICE v4.0                           │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     CONTROLLER LAYER                            │   │
+│  │  /state, /achievements, /recommendations, /feedback            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     SERVICE LAYER                               │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────┐  ┌─────────────────────────────────┐   │   │
+│  │  │  Context Synthesizer │  │  Awareness Recognizer          │   │   │
+│  │  │  (3 метрики + 1     │  │  (уровень + совет + практика)  │   │   │
+│  │  │   абзац)            │  │                                 │   │   │
+│  │  └─────────────────────┘  └─────────────────────────────────┘   │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────┐  ┌─────────────────────────────────┐   │   │
+│  │  │  Achievement Calc   │  │  Window Calculator             │   │   │
+│  │  │  (4 категории)      │  │  (окна + отклонения)           │   │   │
+│  │  └─────────────────────┘  └─────────────────────────────────┘   │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────┐  ┌─────────────────────────────────┐   │   │
+│  │  │  Strategy Engine    │  │  Feedback Collector            │   │   │
+│  │  │  (3-5 рекомендаций) │  │  (сбор обратной связи)         │   │   │
+│  │  └─────────────────────┘  └─────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     CORE LAYER                                  │   │
+│  │                                                                 │   │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐   │   │
+│  │  │ MMPI Core   │ │ IAT Core    │ │ Forecast Client         │   │   │
+│  │  │ T-scores + K│ │ D-score     │ │ (9 осей)               │   │   │
+│  │  └─────────────┘ └─────────────┘ └─────────────────────────┘   │   │
+│  │                                                                 │   │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐   │   │
+│  │  │ Astro Client│ │ Lake Client │ │ Alignment Client        │   │   │
+│  │  │ (биоритмы)  │ │ (MinIO)     │ │ (когерентность)         │   │   │
+│  │  └─────────────┘ └─────────────┘ └─────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    INFRASTRUCTURE                                      │
+│                                                                        │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────────────┐   │
+│  │ PostgreSQL  │ │ MinIO       │ │ Redis (кэш)                    │   │
+│  │ (psych)     │ │ (Data Lake) │ │ (TTL 1h)                       │   │
+│  └─────────────┘ └─────────────┘ └─────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. МОДЕЛЬ ДАННЫХ (СХЕМА `psych`)
+
+### 2.1. Полное описание таблиц
+
+```sql
+-- ============================================================
+-- 1. ПОЛЬЗОВАТЕЛИ И ПРОФИЛИ
+-- ============================================================
+
+CREATE TABLE psych.user_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE,
+    
+    -- Дата рождения (для биоритмов)
+    birth_date DATE,
+    birth_time TIME,
+    birth_location TEXT,
+    
+    -- Профиль убеждений (из MMPI/IAT)
+    beliefs JSONB DEFAULT '{}',
+    -- Структура: { "optimism": 0.7, "trust": 0.4, "extraversion": 0.6, "anxiety": 0.3 }
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- 2. СЕССИИ
+-- ============================================================
+
+CREATE TABLE psych.sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    session_type TEXT NOT NULL,  -- 'mmpi', 'iat', 'full'
+    status TEXT NOT NULL DEFAULT 'started',
+    started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMP,
+    context JSONB DEFAULT '{}',  -- метка-фокус
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- 3. MMPI РЕЗУЛЬТАТЫ
+-- ============================================================
+
+CREATE TABLE psych.mmpi_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    session_id UUID NOT NULL,
+    completed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Сырые ответы (передаются в MinIO)
+    lake_uri TEXT,  -- ссылка на raw ответы в озере
+    
+    -- T-scores с K-коррекцией
+    scores JSONB NOT NULL,
+    -- { "L": 45, "F": 52, "K": 48, "1": 60, "2": 55, ... }
+    
+    -- Ключевые метрики
+    d_score FLOAT,   -- депрессия (шкала 2)
+    pt_score FLOAT,  -- тревожность (шкала 7)
+    pa_score FLOAT,  -- паранойя (шкала 6)
+    ma_score FLOAT,  -- энергия (шкала 9)
+    si_score FLOAT,  -- интроверсия (шкала 0)
+    
+    -- Валидность
+    is_valid BOOLEAN,
+    validity_details JSONB,  -- { "l": 45, "f": 52, "k": 48 }
+    
+    -- Осознанность (из ответов)
+    awareness_level VARCHAR(10),  -- HIGH, MEDIUM, LOW
+    awareness_tip TEXT,
+    awareness_practice TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_mmpi_user (user_id),
+    INDEX idx_mmpi_session (session_id)
+);
+
+-- ============================================================
+-- 4. IAT РЕЗУЛЬТАТЫ
+-- ============================================================
+
+CREATE TABLE psych.iat_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    session_id UUID NOT NULL,
+    completed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Сырые данные (в MinIO)
+    lake_uri TEXT,
+    
+    -- D-score
+    d_score FLOAT NOT NULL,
+    effect_size TEXT,  -- small, medium, large
+    
+    -- Тип ассоциации
+    association_type TEXT,
+    
+    session_seed INTEGER,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_iat_user (user_id),
+    INDEX idx_iat_session (session_id)
+);
+
+-- ============================================================
+-- 5. СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЯ (НОВОЕ!)
+-- ============================================================
+
+CREATE TABLE psych.user_states (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- 3 метрики состояния
+    emotional_score FLOAT CHECK (emotional_score BETWEEN 0 AND 1),
+    anxiety_score FLOAT CHECK (anxiety_score BETWEEN 0 AND 1),
+    energy_score FLOAT CHECK (energy_score BETWEEN 0 AND 1),
+    
+    -- Уровень и совет
+    state_level VARCHAR(10),  -- HIGH, MEDIUM, LOW
+    state_summary TEXT,  -- 1 абзац
+    
+    -- Осознанность
+    awareness_level VARCHAR(10),  -- HIGH, MEDIUM, LOW
+    awareness_tip TEXT,
+    awareness_practice TEXT,
+    
+    -- Источники данных
+    mmpi_result_id UUID,
+    iat_result_id UUID,
+    astro_context_id UUID,
+    forecast_id UUID,  -- из существующего Forecast
+    
+    -- Полный синтез (для будущего)
+    full_synthesis JSONB,
+    
+    -- Ссылка на MinIO
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_states_user (user_id),
+    INDEX idx_states_date (calculated_at)
+);
+
+-- ============================================================
+-- 6. ИНДЕКСЫ ДОСТИЖЕНИЯ (НОВОЕ!)
+-- ============================================================
+
+CREATE TABLE psych.achievement_indices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    category_id TEXT NOT NULL,  -- family, work, health, self
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Индекс и уровень
+    index_value FLOAT CHECK (index_value BETWEEN 0 AND 1),
+    level VARCHAR(10) CHECK (level IN ('HIGH', 'MEDIUM', 'LOW', 'CRITICAL')),
+    
+    -- Компоненты
+    clarity FLOAT CHECK (clarity BETWEEN 0 AND 1),
+    synchronicity FLOAT CHECK (synchronicity BETWEEN 0 AND 1),
+    resource FLOAT CHECK (resource BETWEEN 0 AND 1),
+    inertia FLOAT CHECK (inertia BETWEEN 0 AND 1),
+    
+    -- Рекомендация
+    recommendation TEXT,
+    seasonal_boost FLOAT,
+    
+    -- Ссылка на состояние
+    state_id UUID REFERENCES psych.user_states(id),
+    
+    lake_uri TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, category_id, calculated_at),
+    INDEX idx_achievements_user (user_id),
+    INDEX idx_achievements_category (category_id)
+);
+
+-- ============================================================
+-- 7. ОКНА ВОЗМОЖНОСТЕЙ (НОВОЕ!)
+-- ============================================================
+
+CREATE TABLE psych.opportunity_windows (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Общее окно
+    window_value FLOAT CHECK (window_value BETWEEN 0 AND 1),
+    window_level VARCHAR(20) CHECK (window_level IN ('OPEN', 'PARTIAL', 'CLOSED')),
+    
+    -- Отклонения по категориям
+    deviations JSONB,  -- { "family": 0.08, "work": -0.06, "health": 0.02, "self": -0.04 }
+    
+    -- Компоненты
+    background_resistance FLOAT,
+    subject_resource FLOAT,
+    synergy FLOAT,
+    inertia_residue FLOAT,
+    
+    -- Практика и игра
+    practice_recommendation TEXT,
+    play_recommendation TEXT,
+    
+    -- Ссылка на состояние
+    state_id UUID REFERENCES psych.user_states(id),
+    
+    lake_uri TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_windows_user (user_id),
+    INDEX idx_windows_date (calculated_at)
+);
+
+-- ============================================================
+-- 8. РЕКОМЕНДАЦИИ (НОВОЕ!)
+-- ============================================================
+
+CREATE TABLE psych.recommendations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    state_id UUID REFERENCES psych.user_states(id),
+    generated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Список рекомендаций
+    recommendations JSONB NOT NULL,
+    -- [{"action": "...", "reason": "...", "priority": 1, "duration": "15 мин"}, ...]
+    
+    -- Источник
+    source TEXT,  -- 'state', 'achievement', 'window'
+    
+    -- Применено
+    applied BOOLEAN DEFAULT false,
+    applied_at TIMESTAMP,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_recommendations_user (user_id)
+);
+
+-- ============================================================
+-- 9. ОБРАТНАЯ СВЯЗЬ (НОВОЕ!)
+-- ============================================================
+
+CREATE TABLE psych.feedback (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    category_id TEXT,
+    forecast_date DATE,
+    
+    -- Оценка
+    actual_outcome FLOAT CHECK (actual_outcome BETWEEN 0 AND 1),
+    user_comment TEXT,
+    rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+    
+    -- Метаданные
+    state_id UUID REFERENCES psych.user_states(id),
+    recommendation_id UUID REFERENCES psych.recommendations(id),
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_feedback_user (user_id),
+    INDEX idx_feedback_date (forecast_date)
+);
+
+-- ============================================================
+-- 10. ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
+-- ============================================================
+
+CREATE INDEX idx_states_user_date ON psych.user_states(user_id, calculated_at);
+CREATE INDEX idx_achievements_user_date ON psych.achievement_indices(user_id, calculated_at);
+CREATE INDEX idx_windows_user_date ON psych.opportunity_windows(user_id, calculated_at);
+CREATE INDEX idx_recommendations_user_date ON psych.recommendations(user_id, generated_at);
+
+-- ============================================================
+-- 11. ТРИГГЕРЫ ДЛЯ UPDATED_AT
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION psych.update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_profiles_updated_at
+    BEFORE UPDATE ON psych.user_profiles
+    FOR EACH ROW EXECUTE FUNCTION psych.update_updated_at();
+```
+
+---
+
+## 3. PYDANTIC MODELS
+
+```python
+# src/models.py
+
+from datetime import datetime, date
+from typing import Optional, Dict, List, Literal, Any
+from pydantic import BaseModel, Field
+from uuid import UUID
+
+
+# ============================================================
+# 1. СОСТОЯНИЕ
+# ============================================================
+
+class StateMetrics(BaseModel):
+    """3 метрики состояния"""
+    emotional_score: float = Field(..., ge=0, le=1)
+    anxiety_score: float = Field(..., ge=0, le=1)
+    energy_score: float = Field(..., ge=0, le=1)
+
+
+class Awareness(BaseModel):
+    """Осознанность"""
+    level: Literal['HIGH', 'MEDIUM', 'LOW']
+    tip: str
+    practice: str
+
+
+class UserState(BaseModel):
+    """Полное состояние пользователя"""
+    user_id: UUID
+    calculated_at: datetime
+    
+    metrics: StateMetrics
+    state_level: Literal['HIGH', 'MEDIUM', 'LOW']
+    state_summary: str
+    
+    awareness: Awareness
+    
+    sources: Dict[str, Any]  # mmpi_result_id, iat_result_id, forecast_id, etc.
+    
+    lake_uri: Optional[str] = None
+
+
+# ============================================================
+# 2. ИНДЕКСЫ ДОСТИЖЕНИЯ
+# ============================================================
+
+class AchievementIndex(BaseModel):
+    """Индекс достижения по категории"""
+    category: Literal['family', 'work', 'health', 'self']
+    value: float = Field(..., ge=0, le=1)
+    level: Literal['HIGH', 'MEDIUM', 'LOW', 'CRITICAL']
+    
+    clarity: float = Field(..., ge=0, le=1)
+    synchronicity: float = Field(..., ge=0, le=1)
+    resource: float = Field(..., ge=0, le=1)
+    inertia: float = Field(..., ge=0, le=1)
+    
+    recommendation: str
+    seasonal_boost: Optional[float] = None
+
+
+class AchievementResponse(BaseModel):
+    """Все индексы достижения"""
+    user_id: UUID
+    calculated_at: datetime
+    indices: Dict[str, AchievementIndex]  # по категориям
+
+
+# ============================================================
+# 3. ОКНА ВОЗМОЖНОСТЕЙ
+# ============================================================
+
+class OpportunityWindow(BaseModel):
+    """Окно возможностей"""
+    user_id: UUID
+    calculated_at: datetime
+    
+    value: float = Field(..., ge=0, le=1)
+    level: Literal['OPEN', 'PARTIAL', 'CLOSED']
+    
+    deviations: Dict[str, float]  # отклонения по категориям
+    
+    background_resistance: float
+    subject_resource: float
+    synergy: float
+    inertia_residue: float
+    
+    practice_recommendation: str
+    play_recommendation: str
+
+
+# ============================================================
+# 4. РЕКОМЕНДАЦИИ
+# ============================================================
+
+class Recommendation(BaseModel):
+    """Одна рекомендация"""
+    action: str
+    reason: str
+    priority: int = Field(..., ge=1, le=3)
+    duration: str  # "15 мин", "30 мин"
+    category: Optional[str] = None
+
+
+class RecommendationsResponse(BaseModel):
+    """Все рекомендации"""
+    user_id: UUID
+    generated_at: datetime
+    recommendations: List[Recommendation]
+
+
+# ============================================================
+# 5. ОБРАТНАЯ СВЯЗЬ
+# ============================================================
+
+class FeedbackRequest(BaseModel):
+    """Запрос обратной связи"""
+    user_id: UUID
+    category_id: Optional[str] = None
+    forecast_date: date
+    actual_outcome: float = Field(..., ge=0, le=1)
+    user_comment: Optional[str] = None
+    rating: Optional[int] = Field(None, ge=1, le=5)
+
+
+# ============================================================
+# 6. API ЗАПРОСЫ/ОТВЕТЫ
+# ============================================================
+
+class StateResponse(BaseModel):
+    """Ответ на запрос состояния"""
+    success: bool
+    state: UserState
+    timestamp: datetime
+
+
+class AchievementsResponse(BaseModel):
+    """Ответ на запрос индексов"""
+    success: bool
+    achievements: AchievementResponse
+    timestamp: datetime
+
+
+class WindowResponse(BaseModel):
+    """Ответ на запрос окна"""
+    success: bool
+    window: OpportunityWindow
+    timestamp: datetime
+
+
+class RecommendationsResponse(BaseModel):
+    """Ответ на запрос рекомендаций"""
+    success: bool
+    recommendations: RecommendationsResponse
+    timestamp: datetime
+```
+
+---
+
+## 4. CORE МОДУЛИ
+
+### 4.1. MMPI Core
+
+```python
+# src/core/mmpi_core.py
+
+from typing import Dict, List, Optional
+import numpy as np
+
+class MMPICore:
+    """
+    Расчёт T-scores и K-коррекция для MMPI.
+    """
+    
+    # K-коррекция: шкалы, которые корректируются
+    K_CORRECTION = {
+        '1': 0.5,   # Hypochondriasis
+        '4': 0.4,   # Psychopathic deviate
+        '7': 0.2,   # Psychasthenia
+        '8': 0.2,   # Schizophrenia
+        '9': 0.2,   # Hypomania
+    }
+    
+    @classmethod
+    def calculate_t_scores(
+        cls,
+        answers: Dict[str, bool],
+        gender: str = 'female'
+    ) -> Dict[str, float]:
+        """
+        Рассчитывает T-scores по сырым ответам.
+        """
+        # 1. Суммируем баллы по шкалам
+        raw_scores = cls._sum_raw_scores(answers)
+        
+        # 2. Добавляем K-коррекцию
+        corrected_scores = cls._apply_k_correction(raw_scores)
+        
+        # 3. Преобразуем в T-scores
+        t_scores = {}
+        for scale, raw_score in corrected_scores.items():
+            t_scores[scale] = cls._raw_to_t(raw_score, scale, gender)
+        
+        return t_scores
+    
+    @classmethod
+    def extract_key_metrics(cls, t_scores: Dict[str, float]) -> Dict[str, float]:
+        """
+        Извлекает ключевые метрики из T-scores.
+        """
+        return {
+            'd_score': t_scores.get('2', 50),   # депрессия
+            'pt_score': t_scores.get('7', 50),  # тревожность
+            'pa_score': t_scores.get('6', 50),  # паранойя
+            'ma_score': t_scores.get('9', 50),  # энергия
+            'si_score': t_scores.get('0', 50),  # интроверсия
+        }
+    
+    @classmethod
+    def validate(cls, t_scores: Dict[str, float]) -> Dict:
+        """
+        Проверяет валидность ответов по шкалам L, F, K.
+        """
+        l = t_scores.get('L', 50)
+        f = t_scores.get('F', 50)
+        k = t_scores.get('K', 50)
+        
+        is_valid = (
+            l <= 65 and  # не слишком высокая ложь
+            f <= 70 and  # не слишком много необычных ответов
+            k <= 65      # не слишком защитная позиция
+        )
+        
+        return {
+            'is_valid': is_valid,
+            'l_score': l,
+            'f_score': f,
+            'k_score': k,
+            'details': {
+                'l': 'ok' if l <= 65 else 'high',
+                'f': 'ok' if f <= 70 else 'high',
+                'k': 'ok' if k <= 65 else 'high',
+            }
+        }
+    
+    @classmethod
+    def _sum_raw_scores(cls, answers: Dict[str, bool]) -> Dict[str, float]:
+        """Суммирует сырые баллы по ключам MMPI."""
+        # Реализация MMPI-ключа (вопросы → шкалы)
+        # В реальном проекте — загрузка из конфига или БД
+        keys = {
+            '1': ['q1', 'q2', 'q3', ...],  # Hypochondriasis
+            '2': ['q5', 'q6', 'q7', ...],  # Depression
+            # ...
+        }
+        raw = {}
+        for scale, questions in keys.items():
+            raw[scale] = sum(1 for q in questions if answers.get(q, False))
+        return raw
+    
+    @classmethod
+    def _apply_k_correction(cls, raw_scores: Dict[str, float]) -> Dict[str, float]:
+        """Применяет K-коррекцию."""
+        k = raw_scores.get('K', 0)
+        corrected = raw_scores.copy()
+        for scale, coefficient in cls.K_CORRECTION.items():
+            if scale in corrected:
+                corrected[scale] += coefficient * k
+        return corrected
+    
+    @classmethod
+    def _raw_to_t(cls, raw_score: float, scale: str, gender: str) -> float:
+        """Преобразует сырой балл в T-score."""
+        # Реализация через таблицы MMPI
+        # В реальном проекте — загрузка из CSV
+        # Упрощённо: T = 50 + 10 * (raw - mean) / std
+        means = {
+            'male': {'1': 8.5, '2': 19.2, '3': 22.4, ...},
+            'female': {'1': 9.2, '2': 20.5, '3': 23.1, ...}
+        }
+        stds = {
+            'male': {'1': 5.2, '2': 5.8, '3': 6.1, ...},
+            'female': {'1': 5.4, '2': 6.0, '3': 6.3, ...}
+        }
+        
+        mean = means.get(gender, {}).get(scale, 50)
+        std = stds.get(gender, {}).get(scale, 10)
+        
+        if std == 0:
+            return 50
+        
+        t = 50 + 10 * (raw_score - mean) / std
+        return max(20, min(80, t))  # Ограничиваем
+```
+
+### 4.2. IAT Core
+
+```python
+# src/core/iat_core.py
+
+import numpy as np
+from typing import List, Dict
+
+class IATCore:
+    """
+    Расчёт D-score по алгоритму Greenwald (2003).
+    """
+    
+    @classmethod
+    def calculate_d_score(cls, trials: List[Dict]) -> float:
+        """
+        Рассчитывает D-score для IAT.
+        """
+        # 1. Разделяем по блокам
+        blocks = cls._split_blocks(trials)
+        
+        # 2. Очищаем практические блоки
+        cleaned = cls._clean_practice_trials(blocks)
+        
+        # 3. Вычисляем средние и SD
+        means, stds = cls._calculate_stats(cleaned)
+        
+        # 4. Вычисляем D-score
+        combined_mean = (means['block_3'] + means['block_5']) / 2
+        combined_std = (stds['block_3'] + stds['block_5']) / 2
+        
+        d1 = (means['block_5'] - means['block_3']) / combined_std
+        d2 = (means['block_6'] - means['block_4']) / combined_std
+        
+        return (d1 + d2) / 2
+    
+    @classmethod
+    def get_effect_size(cls, d_score: float) -> str:
+        """Определяет размер эффекта."""
+        if abs(d_score) >= 0.65:
+            return 'large'
+        elif abs(d_score) >= 0.35:
+            return 'medium'
+        else:
+            return 'small'
+    
+    @classmethod
+    def _split_blocks(cls, trials: List[Dict]) -> Dict[str, List[float]]:
+        """Разделяет попытки по блокам IAT."""
+        blocks = {}
+        for trial in trials:
+            block_id = trial.get('block_id')
+            if block_id not in blocks:
+                blocks[block_id] = []
+            blocks[block_id].append(trial.get('rt_ms', 0))
+        return blocks
+    
+    @classmethod
+    def _clean_practice_trials(cls, blocks: Dict) -> Dict:
+        """Удаляет первые две попытки в практических блоках."""
+        cleaned = {}
+        for block_id, rts in blocks.items():
+            # Для практических блоков (1, 2, 4) — удаляем первые 2
+            if block_id in [1, 2, 4]:
+                cleaned[block_id] = rts[2:]
+            else:
+                cleaned[block_id] = rts
+        return cleaned
+    
+    @classmethod
+    def _calculate_stats(cls, blocks: Dict) -> tuple:
+        """Вычисляет средние и стандартные отклонения."""
+        means = {}
+        stds = {}
+        for block_id, rts in blocks.items():
+            if rts:
+                means[block_id] = np.mean(rts)
+                stds[block_id] = np.std(rts)
+            else:
+                means[block_id] = 500
+                stds[block_id] = 100
+        return means, stds
+```
+
+### 4.3. Awareness Recognizer
+
+```python
+# src/core/awareness_recognizer.py
+
+from typing import Dict, List
+import re
+
+class AwarenessRecognizer:
+    """
+    Распознавание уровня осознанности на основе ответов MMPI.
+    """
+    
+    # Маркеры осознанности (Правда-факты)
+    AWARENESS_MARKERS = [
+        r'я (чувствую|ощущаю) (в|внутри)',
+        r'(сейчас|прямо сейчас)',
+        r'я заметил(а)?',
+        r'это (происходит|случилось)',
+        r'моё тело',
+        r'я дышу',
+    ]
+    
+    @classmethod
+    def recognize(cls, answers: Dict[str, bool], t_scores: Dict[str, float]) -> Dict:
+        """
+        Определяет уровень осознанности.
+        """
+        # 1. Извлекаем текстовые ответы (если есть)
+        text_responses = cls._extract_text_responses(answers)
+        
+        # 2. Считаем маркеры осознанности
+        awareness_count = 0
+        for text in text_responses:
+            for marker in cls.AWARENESS_MARKERS:
+                if re.search(marker, text, re.IGNORECASE):
+                    awareness_count += 1
+                    break
+        
+        # 3. Корректируем на основе MMPI
+        # Шкала 0 (интроверсия) — чем выше, тем больше осознанности
+        # Шкала 3 (истерия) — чем выше, тем меньше осознанности
+        si = t_scores.get('0', 50)
+        hy = t_scores.get('3', 50)
+        
+        awareness_score = (si - hy + 100) / 200  # 0-1
+        
+        # 4. Финальный уровень
+        if awareness_count >= 3 or awareness_score > 0.7:
+            level = 'HIGH'
+            tip = "Вы хорошо различаете свои чувства и потребности"
+            practice = "Продолжайте наблюдать за телом в течение дня"
+        elif awareness_count >= 1 or awareness_score > 0.4:
+            level = 'MEDIUM'
+            tip = "Вам помогает практика наблюдения за телом"
+            practice = "5 минут дыхания утром и вечером"
+        else:
+            level = 'LOW'
+            tip = "Начните с простого: 5 минут дыхания утром"
+            practice = "Упражнение 'Здесь и сейчас': называйте, что видите"
+        
+        return {
+            'level': level,
+            'tip': tip,
+            'practice': practice,
+            'score': awareness_score,
+            'markers_found': awareness_count
+        }
+    
+    @classmethod
+    def _extract_text_responses(cls, answers: Dict[str, bool]) -> List[str]:
+        """Извлекает текстовые ответы (комментарии)."""
+        # В стандартном MMPI комментариев нет, но могут быть в вашей реализации
+        return answers.get('comments', [])
+```
+
+---
+
+## 5. SERVICE LAYER
+
+### 5.1. Context Synthesizer
+
+```python
+# src/services/synthesizer.py
+
+from datetime import datetime
+from typing import Optional, Dict, Any
+from uuid import UUID
+import numpy as np
+
+from ..core.mmpi_core import MMPICore
+from ..core.awareness_recognizer import AwarenessRecognizer
+from ..clients.forecast_client import ForecastClient
+from ..clients.astro_client import AstroClient
+
+class ContextSynthesizer:
+    """
+    Синтезатор состояния — объединяет все данные в единый объект.
+    """
+    
+    def __init__(
+        self,
+        forecast_client: ForecastClient,
+        astro_client: AstroClient
+    ):
+        self.forecast_client = forecast_client
+        self.astro_client = astro_client
+    
+    async def synthesize(
+        self,
+        user_id: UUID,
+        mmpi_result: Optional[Dict] = None,
+        iat_result: Optional[Dict] = None,
+        date: Optional[datetime] = None
+    ) -> Dict:
+        """
+        Синтезирует состояние пользователя.
+        """
+        if date is None:
+            date = datetime.now()
+        
+        # 1. Получаем прогноз (9 осей) из Forecast Service
+        forecast = await self.forecast_client.get_forecast(
+            user_id=user_id,
+            date=date.date()
+        )
+        axes = forecast.get('axes', {})
+        
+        # 2. Получаем биоритмы из Astro Service
+        biorhythms = await self.astro_client.get_biorhythms(
+            user_id=user_id,
+            date=date
+        )
+        
+        # 3. Извлекаем ключевые метрики
+        metrics = self._extract_metrics(mmpi_result, axes, biorhythms)
+        
+        # 4. Рассчитываем осознанность
+        awareness = self._calculate_awareness(mmpi_result, axes)
+        
+        # 5. Формируем состояние
+        return {
+            'metrics': metrics,
+            'state_level': self._get_state_level(metrics),
+            'state_summary': self._generate_summary(metrics, awareness),
+            'awareness': awareness,
+            'sources': {
+                'forecast_id': forecast.get('id'),
+                'mmpi_id': mmpi_result.get('id') if mmpi_result else None,
+                'iat_id': iat_result.get('id') if iat_result else None,
+            }
+        }
+    
+    def _extract_metrics(
+        self,
+        mmpi_result: Optional[Dict],
+        axes: Dict[str, float],
+        biorhythms: Dict[str, float]
+    ) -> Dict[str, float]:
+        """
+        Извлекает 3 метрики состояния.
+        """
+        # Из MMPI (приоритет)
+        if mmpi_result:
+            scores = mmpi_result.get('scores', {})
+            d_score = self._normalize_score(scores.get('2', 50))
+            anxiety = self._normalize_score(scores.get('7', 50))
+            energy = self._normalize_score(scores.get('9', 50))
+        else:
+            # Fallback: из осей Magic Profile
+            d_score = 1 - axes.get('emotions_intuition', 0.5)
+            anxiety = 1 - axes.get('karma_cycles', 0.5)
+            energy = axes.get('energy_will', 0.5)
+        
+        # Корректировка по биоритмам
+        if biorhythms:
+            emotional_bio = (biorhythms.get('emotional', 0) + 1) / 2
+            physical_bio = (biorhythms.get('physical', 0) + 1) / 2
+            
+            # Смешивание
+            d_score = d_score * 0.7 + (1 - emotional_bio) * 0.3
+            energy = energy * 0.7 + physical_bio * 0.3
+        
+        return {
+            'emotional_score': max(0, min(1, d_score)),
+            'anxiety_score': max(0, min(1, anxiety)),
+            'energy_score': max(0, min(1, energy))
+        }
+    
+    def _normalize_score(self, t_score: float) -> float:
+        """
+        Нормализует T-score в диапазон 0-1.
+        """
+        # 50 — среднее, 70+ — высокое, 30- — низкое
+        normalized = (t_score - 30) / 60
+        return max(0, min(1, normalized))
+    
+    def _get_state_level(self, metrics: Dict[str, float]) -> str:
+        """
+        Определяет уровень состояния.
+        """
+        avg = (metrics['emotional_score'] + 
+               metrics['anxiety_score'] + 
+               metrics['energy_score']) / 3
+        
+        if avg >= 0.7:
+            return 'HIGH'
+        elif avg >= 0.4:
+            return 'MEDIUM'
+        else:
+            return 'LOW'
+    
+    def _generate_summary(self, metrics: Dict, awareness: Dict) -> str:
+        """
+        Генерирует краткую сводку состояния.
+        """
+        emotional = metrics['emotional_score']
+        anxiety = metrics['anxiety_score']
+        energy = metrics['energy_score']
+        awareness_level = awareness.get('level', 'MEDIUM')
+        
+        parts = []
+        
+        if emotional >= 0.6:
+            parts.append("эмоциональный фон повышен")
+        elif emotional <= 0.3:
+            parts.append("эмоциональный фон снижен")
+        else:
+            parts.append("эмоциональный фон в норме")
+        
+        if anxiety >= 0.6:
+            parts.append("тревожность повышена")
+        elif anxiety <= 0.3:
+            parts.append("тревожность снижена")
+        else:
+            parts.append("тревожность умеренная")
+        
+        if energy >= 0.6:
+            parts.append("энергия на подъёме")
+        elif energy <= 0.3:
+            parts.append("энергия снижена")
+        else:
+            parts.append("энергия в норме")
+        
+        summary = f"Ваше состояние: {', '.join(parts)}. "
+        summary += f"Уровень осознанности: {awareness_level.lower()}."
+        
+        return summary
+```
+
+### 5.2. Achievement Calculator
+
+```python
+# src/services/achievement_calculator.py
+
+from typing import Dict, List
+from uuid import UUID
+from datetime import datetime
+import math
+
+from ..core.mmpi_core import MMPICore
+
+class AchievementCalculator:
+    """
+    Расчёт индексов достижения по 4 категориям.
+    """
+    
+    # Категории и их параметры
+    CATEGORIES = {
+        'family': {
+            'name': 'Семья и отношения',
+            'psych_scales': ['2', '0', '3'],
+            'biorhythm': 'emotional',
+            'planet': 'Venus',
+            'seasonal_boost': {
+                1: 0.1, 2: 0.1, 3: 0.0, 4: 0.0,
+                5: 0.0, 6: 0.0, 7: 0.05, 8: 0.05,
+                9: 0.0, 10: 0.0, 11: 0.05, 12: 0.1
+            }
+        },
+        'work': {
+            'name': 'Работа и карьера',
+            'psych_scales': ['7', '8', '0'],
+            'biorhythm': 'intellectual',
+            'planet': 'Saturn',
+            'seasonal_boost': {
+                1: 0.0, 2: 0.0, 3: 0.1, 4: 0.1,
+                5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0,
+                9: 0.1, 10: 0.1, 11: 0.0, 12: 0.0
+            }
+        },
+        'health': {
+            'name': 'Здоровье',
+            'psych_scales': ['1', '3'],
+            'biorhythm': 'physical',
+            'planet': 'Moon',
+            'seasonal_boost': {
+                1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0,
+                5: 0.1, 6: 0.1, 7: 0.1, 8: 0.1,
+                9: 0.0, 10: 0.0, 11: 0.0, 12: 0.0
+            }
+        },
+        'self': {
+            'name': 'Саморазвитие',
+            'psych_scales': ['8', '9'],
+            'biorhythm': 'intellectual',
+            'planet': 'Sun',
+            'seasonal_boost': {
+                1: 0.05, 2: 0.05, 3: 0.0, 4: 0.0,
+                5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0,
+                9: 0.1, 10: 0.1, 11: 0.05, 12: 0.05
+            }
+        }
+    }
+    
+    def __init__(self):
+        self.categories = self.CATEGORIES
+    
+    async def calculate(
+        self,
+        user_id: UUID,
+        state: Dict,
+        mmpi_scores: Dict[str, float],
+        biorhythms: Dict[str, float],
+        date: datetime
+    ) -> Dict[str, Dict]:
+        """
+        Рассчитывает индексы по всем категориям.
+        """
+        indices = {}
+        
+        for category_id, config in self.categories.items():
+            index = self._calculate_category(
+                category_id,
+                config,
+                mmpi_scores,
+                biorhythms,
+                date
+            )
+            indices[category_id] = index
+        
+        return indices
+    
+    def _calculate_category(
+        self,
+        category_id: str,
+        config: Dict,
+        mmpi_scores: Dict[str, float],
+        biorhythms: Dict[str, float],
+        date: datetime
+    ) -> Dict:
+        """
+        Рассчитывает индекс для одной категории.
+        """
+        # 1. Ясность
+        clarity = self._calculate_clarity(mmpi_scores, config)
+        
+        # 2. Синхронность
+        synchronicity = self._calculate_synchronicity(
+            biorhythms, config, date
+        )
+        
+        # 3. Ресурс
+        resource = self._calculate_resource(biorhythms, config)
+        
+        # 4. Инерция
+        inertia = self._calculate_inertia(mmpi_scores, config)
+        
+        # 5. Индекс
+        raw_index = (
+            clarity * 0.3 +
+            synchronicity * 0.3 +
+            resource * 0.3 -
+            inertia * 0.1
+        )
+        
+        # 6. Сезонный буст
+        month = date.month
+        seasonal_boost = config.get('seasonal_boost', {}).get(month, 0)
+        
+        index_value = max(0, min(1, raw_index + seasonal_boost * 0.2))
+        
+        # 7. Уровень
+        if index_value >= 0.75:
+            level = 'HIGH'
+            recommendation = self._get_recommendation(category_id, 'high')
+        elif index_value >= 0.50:
+            level = 'MEDIUM'
+            recommendation = self._get_recommendation(category_id, 'medium')
+        elif index_value >= 0.25:
+            level = 'LOW'
+            recommendation = self._get_recommendation(category_id, 'low')
+        else:
+            level = 'CRITICAL'
+            recommendation = self._get_recommendation(category_id, 'critical')
+        
+        return {
+            'value': round(index_value, 3),
+            'level': level,
+            'clarity': round(clarity, 3),
+            'synchronicity': round(synchronicity, 3),
+            'resource': round(resource, 3),
+            'inertia': round(inertia, 3),
+            'recommendation': recommendation,
+            'seasonal_boost': round(seasonal_boost, 3)
+        }
+    
+    def _calculate_clarity(
+        self,
+        mmpi_scores: Dict[str, float],
+        config: Dict
+    ) -> float:
+        """Рассчитывает ясность желания."""
+        scales = config.get('psych_scales', [])
+        if not scales:
+            return 0.5
+        
+        # Нормализуем шкалы
+        values = []
+        for scale in scales:
+            t = mmpi_scores.get(scale, 50)
+            # Чем ниже шкала, тем выше ясность (для большинства шкал)
+            normalized = 1 - ((t - 30) / 70)
+            values.append(max(0, min(1, normalized)))
+        
+        return sum(values) / len(values)
+    
+    def _calculate_synchronicity(
+        self,
+        biorhythms: Dict[str, float],
+        config: Dict,
+        date: datetime
+    ) -> float:
+        """Рассчитывает синхронность с Фоном."""
+        cycle = config.get('biorhythm', 'emotional')
+        bio_value = biorhythms.get(cycle, 0)
+        
+        # Преобразуем -1..1 в 0..1
+        synchronicity = (bio_value + 1) / 2
+        
+        # Добавляем сезонную составляющую
+        month = date.month
+        # Сезонная поддержка (упрощённо)
+        if month in [3, 4, 5]:  # весна
+            synchronicity += 0.05
+        elif month in [10, 11, 12]:  # осень-зима
+            synchronicity -= 0.05
+        
+        return max(0, min(1, synchronicity))
+    
+    def _calculate_resource(
+        self,
+        biorhythms: Dict[str, float],
+        config: Dict
+    ) -> float:
+        """Рассчитывает ресурсное состояние."""
+        cycle = config.get('biorhythm', 'emotional')
+        bio_value = biorhythms.get(cycle, 0)
+        
+        # Ресурс = среднее всех биоритмов с весом целевого
+        all_bio = [
+            (biorhythms.get('physical', 0) + 1) / 2,
+            (biorhythms.get('emotional', 0) + 1) / 2,
+            (biorhythms.get('intellectual', 0) + 1) / 2,
+        ]
+        avg_resource = sum(all_bio) / len(all_bio)
+        
+        # Усиливаем целевой цикл
+        target = (bio_value + 1) / 2
+        resource = avg_resource * 0.5 + target * 0.5
+        
+        return max(0, min(1, resource))
+    
+    def _calculate_inertia(
+        self,
+        mmpi_scores: Dict[str, float],
+        config: Dict
+    ) -> float:
+        """Рассчитывает инерцию препятствий."""
+        scales = config.get('psych_scales', [])
+        if not scales:
+            return 0.2
+        
+        # Чем выше шкалы, тем больше инерция
+        values = []
+        for scale in scales:
+            t = mmpi_scores.get(scale, 50)
+            normalized = (t - 30) / 70
+            values.append(max(0, min(1, normalized)))
+        
+        return sum(values) / len(values)
+    
+    def _get_recommendation(self, category_id: str, level: str) -> str:
+        """Возвращает рекомендацию для категории и уровня."""
+        recommendations = {
+            'family': {
+                'high': 'Отличное время для укрепления отношений и создания семьи',
+                'medium': 'Хорошее время для разговоров и сближения',
+                'low': 'Пока не форсируйте события в отношениях',
+                'critical': 'Лучше пока побыть наедине с собой'
+            },
+            'work': {
+                'high': 'Отличное время для карьерных решений и новых проектов',
+                'medium': 'Хорошее время для текущих задач',
+                'low': 'Отложите крупные карьерные решения',
+                'critical': 'Сосредоточьтесь на рутинных задачах'
+            },
+            'health': {
+                'high': 'Отличное время для спорта и укрепления здоровья',
+                'medium': 'Хорошее время для профилактики',
+                'low': 'Обратите внимание на восстановление',
+                'critical': 'Время отдыха и накопления сил'
+            },
+            'self': {
+                'high': 'Отличное время для творчества, обучения, путешествий',
+                'medium': 'Хорошее время для новых проектов',
+                'low': 'Отложите грандиозные планы',
+                'critical': 'Просто отдыхайте и восстанавливайтесь'
+            }
+        }
+        return recommendations.get(category_id, {}).get(level, '')
+```
+
+---
+
+## 6. API INTERFACES
+
+### 6.1. Основные эндпоинты
+
+```python
+# src/api/routes.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+from datetime import date, datetime
+from typing import Optional
+
+router = APIRouter(prefix="/api/v4", tags=["Psychometry"])
+
+
+@router.get("/state")
+async def get_state(
+    user_id: UUID,
+    date: Optional[date] = None,
+    service: PsychometryService = Depends(get_psychometry_service)
+):
+    """
+    Получить текущее состояние пользователя.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    state = await service.get_state(user_id, date)
+    
+    return {
+        "success": True,
+        "state": state,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/achievements")
+async def get_achievements(
+    user_id: UUID,
+    date: Optional[date] = None,
+    service: PsychometryService = Depends(get_psychometry_service)
+):
+    """
+    Получить индексы достижения по всем категориям.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    achievements = await service.get_achievements(user_id, date)
+    
+    return {
+        "success": True,
+        "achievements": achievements,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/window")
+async def get_window(
+    user_id: UUID,
+    date: Optional[date] = None,
+    service: PsychometryService = Depends(get_psychometry_service)
+):
+    """
+    Получить текущее окно возможностей.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    window = await service.get_window(user_id, date)
+    
+    return {
+        "success": True,
+        "window": window,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/recommendations")
+async def get_recommendations(
+    user_id: UUID,
+    date: Optional[date] = None,
+    service: PsychometryService = Depends(get_psychometry_service)
+):
+    """
+    Получить персонализированные рекомендации.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    recommendations = await service.get_recommendations(user_id, date)
+    
+    return {
+        "success": True,
+        "recommendations": recommendations,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    service: PsychometryService = Depends(get_psychometry_service)
+):
+    """
+    Отправить обратную связь.
+    """
+    await service.submit_feedback(request)
+    
+    return {
+        "success": True,
+        "message": "Feedback received",
+        "timestamp": datetime.now().isoformat()
+    }
+```
+
+---
+
+## 7. ИНТЕГРАЦИЯ С ДРУГИМИ СЕРВИСАМИ
+
+### 7.1. Forecast Client
+
+```python
+# src/clients/forecast_client.py
+
+import httpx
+from typing import Dict, Optional
+from uuid import UUID
+from datetime import date
+
+class ForecastClient:
+    """
+    Клиент для взаимодействия с Forecast Service.
+    """
+    
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float = 10.0
+    ):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.timeout = timeout
+    
+    async def get_forecast(
+        self,
+        user_id: UUID,
+        date: date,
+        force_recalculate: bool = False
+    ) -> Dict:
+        """
+        Получает прогноз из Forecast Service.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v3/forecast",
+                params={
+                    "user_id": str(user_id),
+                    "date": date.isoformat(),
+                    "force_recalculate": force_recalculate
+                },
+                headers={"X-API-Key": self.api_key}
+            )
+            response.raise_for_status()
+            return response.json()
+```
+
+### 7.2. Astro Client
+
+```python
+# src/clients/astro_client.py
+
+import httpx
+from typing import Dict
+from uuid import UUID
+from datetime import datetime
+
+class AstroClient:
+    """
+    Клиент для взаимодействия с Astro Service.
+    """
+    
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float = 10.0
+    ):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.timeout = timeout
+    
+    async def get_biorhythms(
+        self,
+        user_id: UUID,
+        date: datetime
+    ) -> Dict[str, float]:
+        """
+        Получает биоритмы пользователя.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                f"{self.base_url}/internal/v1/users/{user_id}/biorhythms",
+                params={"date": date.isoformat()},
+                headers={"X-Internal-API-Key": self.api_key}
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def get_transits(
+        self,
+        user_id: UUID,
+        date: datetime
+    ) -> Dict:
+        """
+        Получает транзиты (упрощённые).
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                f"{self.base_url}/internal/v1/users/{user_id}/transits",
+                params={"date": date.isoformat()},
+                headers={"X-Internal-API-Key": self.api_key}
+            )
+            response.raise_for_status()
+            return response.json()
+```
+
+### 7.3. Lake Client
+
+```python
+# src/clients/lake_client.py
+
+import aioboto3
+from typing import Dict, Any
+from io import BytesIO
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+class LakeClient:
+    """
+    Клиент для взаимодействия с Data Lake (MinIO).
+    """
+    
+    def __init__(
+        self,
+        endpoint: str,
+        access_key: str,
+        secret_key: str,
+        bucket: str = "personal-assistant-lake"
+    ):
+        self.endpoint = endpoint
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.bucket = bucket
+        self._session = aioboto3.Session()
+    
+    async def upload_state(
+        self,
+        user_id: UUID,
+        data: Dict[str, Any],
+        timestamp: datetime
+    ) -> str:
+        """
+        Сохраняет состояние пользователя в озеро.
+        """
+        key = (
+            f"processed/states/"
+            f"year={timestamp.year}/"
+            f"month={timestamp.month:02d}/"
+            f"day={timestamp.day:02d}/"
+            f"user_{user_id}_{timestamp.strftime('%Y%m%d%H%M%S')}.parquet"
+        )
+        
+        table = pa.Table.from_pydict(data)
+        buffer = BytesIO()
+        pq.write_table(table, buffer, compression='snappy')
+        buffer.seek(0)
+        
+        async with self._session.client(
+            's3',
+            endpoint_url=f"http://{self.endpoint}",
+            aws_access_key_id=self.access_key,
+            aws_secret_access_key=self.secret_key
+        ) as s3:
+            await s3.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=buffer.getvalue()
+            )
+        
+        return f"s3://{self.bucket}/{key}"
+```
+
+---
+
+## 8. DOCKER COMPOSE
+
+```yaml
+# docker-compose.yml (фрагмент)
+
+services:
+  psychometry-service:
+    build: ./psychometry-service
+    container_name: psychometry-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      FORECAST_SERVICE_URL: http://forecast-service:8000
+      ASTRO_SERVICE_URL: http://astro-service:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      forecast-service:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+```
+
+---
+
+## 9. ЧЕК-ЛИСТ ПРИЁМКИ
+
+### 9.1. Core Modules
+
+- [ ] MMPI Core считает T-scores с K-коррекцией
+- [ ] IAT Core считает D-score по Greenwald
+- [ ] Awareness Recognizer определяет уровень осознанности
+- [ ] Context Synthesizer синтезирует состояние
+
+### 9.2. Service Layer
+
+- [ ] Achievement Calculator считает индексы по 4 категориям
+- [ ] Window Calculator вычисляет окна возможностей
+- [ ] Strategy Engine генерирует рекомендации
+- [ ] Feedback Collector сохраняет обратную связь
+
+### 9.3. Интеграция
+
+- [ ] Forecast Client получает прогноз (9 осей)
+- [ ] Astro Client получает биоритмы
+- [ ] Lake Client сохраняет состояния в MinIO
+- [ ] Все API эндпоинты работают
+
+### 9.4. База данных
+
+- [ ] Все таблицы созданы
+- [ ] Индексы добавлены
+- [ ] Триггеры работают
+
+---
+
+## 10. ЗАКЛЮЧЕНИЕ
+
+**Psychometry Service v4.0** — это ядро новой логики системы. Он:
+
+1. **Синтезирует состояние** пользователя из MMPI, Forecast и биоритмов
+2. **Рассчитывает индексы** достижения по 4 категориям
+3. **Вычисляет окна** возможностей
+4. **Генерирует рекомендации** (3-5 действий)
+5. **Собирает обратную связь** для обучения
+
+**Зависимости:**
+- Forecast Service (существующий) — источник 9 осей
+- Astro Service — биоритмы и транзиты
+- MinIO — хранение состояний
+
+**Статус:** Готово к разработке.

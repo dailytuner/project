@@ -1,0 +1,1060 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ ALIGNMENT ENGINE v1.0
+
+## «Сопоставление профилей и расчёт когерентности»
+
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Назначение документа
+
+Документ описывает архитектуру, модель данных, алгоритмы и API для реализации **Alignment Engine** — микросервиса, который:
+
+- Сопоставляет астрологический и психологический профили пользователя
+- Рассчитывает когерентность между профилями
+- Выявляет диссонансы (расхождения)
+- Вычисляет скрытый резонанс между Субъектом и Фоном
+
+**Сервис работает в связке с:**
+- **Psychometry Service** — состояния, индексы, окна
+- **Astro Service** — биоритмы, транзиты
+- **Forecast Service** — 9 осей Magic Profile
+- **Analytics Worker** — обратная связь для калибровки
+
+### 1.2. Философское основание
+
+**От корреляции к когерентности:**
+
+```
+СТАРАЯ ПАРАДИГМА:
+Астрология → Психология (причинно-следственная связь)
+
+НОВАЯ ПАРАДИГМА:
+Астро-профиль ←─── КОГЕРЕНТНОСТЬ ───→ Психо-профиль
+(согласованность, а не причинность)
+```
+
+**Ключевой принцип:** Система не ищет "почему". Система оценивает, насколько профили **согласованы**. Если согласованы — рекомендации по действию. Если нет — рекомендации по наблюдению.
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    FORECAST SERVICE (существующий)                    │
+│  • 9 осей Magic Profile                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ASTRO SERVICE (дополненный)                        │
+│  • Биоритмы, транзиты, сезонные бусты                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PSYCHOMETRY SERVICE (новый)                        │
+│  • Состояния, индексы, окна, рекомендации                             │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ALIGNMENT ENGINE (НОВЫЙ)                           │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    1. HOUSE ALIGNER                            │   │
+│  │  • Сопоставление Сатурн/Юпитер в домах → психология           │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    2. DASHA ALIGNER                            │   │
+│  │  • Сопоставление даш → фундаментальный фон                    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    3. RETRO ALIGNER                            │   │
+│  │  • Сопоставление ретроградности → когнитивный стиль           │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    4. RESONANCE CALCULATOR                     │   │
+│  │  • Скрытый резонанс (не показывается пользователю)            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    5. COHERENCE SCORE                          │   │
+│  │  • Итоговая метрика когерентности (0-1)                       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PSYCHOMETRY SERVICE (результат)                    │
+│  • Использует Coherence Score для улучшения рекомендаций              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. МОДЕЛЬ ДАННЫХ
+
+### 2.1. Таблицы в схеме `alignment`
+
+```sql
+-- ============================================================
+-- 1. РЕЗУЛЬТАТЫ СОПОСТАВЛЕНИЯ
+-- ============================================================
+
+CREATE TABLE alignment.alignment_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Общая когерентность
+    coherence_score FLOAT NOT NULL CHECK (coherence_score BETWEEN 0 AND 1),
+    coherence_level TEXT CHECK (coherence_level IN ('HIGH', 'MEDIUM', 'LOW')),
+    
+    -- Детали по типам сопоставления
+    house_alignments JSONB,
+    dasha_alignments JSONB,
+    retro_alignments JSONB,
+    
+    -- Скрытый резонанс (не показывается пользователю)
+    resonance_value FLOAT,
+    resonance_source TEXT,  -- 'bio', 'astro', 'history'
+    
+    -- Диссонансы
+    dissonances JSONB,
+    
+    -- Ссылка на состояние Psychometry
+    state_id UUID,
+    
+    -- Ссылка на озеро
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_alignment_user (user_id),
+    INDEX idx_alignment_date (calculated_at),
+    INDEX idx_alignment_coherence (coherence_score)
+);
+
+-- ============================================================
+-- 2. ИСТОРИЯ ИЗМЕНЕНИЙ КОГЕРЕНТНОСТИ
+-- ============================================================
+
+CREATE TABLE alignment.coherence_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    coherence_score FLOAT NOT NULL,
+    coherence_change FLOAT,  -- изменение с предыдущего замера
+    trend TEXT,  -- improving, stable, declining
+    
+    -- Ссылка на предыдущий результат
+    previous_id UUID,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_coherence_user (user_id),
+    INDEX idx_coherence_date (calculated_at)
+);
+
+-- ============================================================
+-- 3. КОНФИГУРАЦИЯ СОПОСТАВЛЕНИЯ
+-- ============================================================
+
+CREATE TABLE alignment.alignment_config (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    version TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Веса для разных типов сопоставления
+    house_weight FLOAT DEFAULT 0.35,
+    dasha_weight FLOAT DEFAULT 0.30,
+    retro_weight FLOAT DEFAULT 0.20,
+    resonance_weight FLOAT DEFAULT 0.15,
+    
+    -- Пороги когерентности
+    high_threshold FLOAT DEFAULT 0.7,
+    medium_threshold FLOAT DEFAULT 0.4,
+    
+    -- Карты сопоставления
+    house_psych_map JSONB,
+    dasha_psych_map JSONB,
+    retro_psych_map JSONB,
+    
+    -- Статус
+    status TEXT DEFAULT 'active',
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_config_version (version)
+);
+
+-- ============================================================
+-- 4. ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
+-- ============================================================
+
+CREATE INDEX idx_alignment_user_date ON alignment.alignment_results(user_id, calculated_at);
+CREATE INDEX idx_coherence_user_date ON alignment.coherence_history(user_id, calculated_at);
+```
+
+---
+
+## 3. CORE МОДУЛИ
+
+### 3.1. House Aligner
+
+```python
+# src/core/house_aligner.py
+
+from typing import Dict, List, Optional
+from uuid import UUID
+
+class HouseAligner:
+    """
+    Сопоставление Сатурн/Юпитер в домах с психологическими шкалами.
+    """
+    
+    # Карта: дом → психологическая шкала
+    HOUSE_PSYCH_MAP = {
+        1: {'scale': 'pd_score', 'name': 'self_identity', 'trait': 'идентичность'},
+        4: {'scale': 'd_score', 'name': 'emotional_base', 'trait': 'эмоциональная база'},
+        5: {'scale': 'ma_score', 'name': 'creativity', 'trait': 'творчество'},
+        6: {'scale': 'pt_score', 'name': 'anxiety', 'trait': 'тревожность'},
+        7: {'scale': 'mf_score', 'name': 'relationships', 'trait': 'отношения'},
+        8: {'scale': 'sc_score', 'name': 'transformation', 'trait': 'трансформация'},
+        9: {'scale': 'pa_score', 'name': 'belief', 'trait': 'вера'},
+        12: {'scale': 'si_score', 'name': 'isolation', 'trait': 'изоляция'},
+    }
+    
+    # Ожидаемый эффект Сатурна в доме
+    SATURN_EFFECT = {
+        1: 'increasing',   # идентичность → рост
+        4: 'decreasing',   # эмоциональная база → спад
+        5: 'decreasing',   # творчество → спад
+        6: 'increasing',   # тревожность → рост
+        7: 'decreasing',   # отношения → спад
+        8: 'increasing',   # трансформация → рост
+        9: 'increasing',   # вера → рост
+        12: 'increasing',  # изоляция → рост
+    }
+    
+    # Ожидаемый эффект Юпитера в доме
+    JUPITER_EFFECT = {
+        1: 'increasing',
+        4: 'increasing',
+        5: 'increasing',
+        6: 'decreasing',
+        7: 'increasing',
+        8: 'increasing',
+        9: 'increasing',
+        12: 'decreasing',
+    }
+    
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
+        self.house_psych_map = self.config.get('house_psych_map', self.HOUSE_PSYCH_MAP)
+        self.saturn_effect = self.config.get('saturn_effect', self.SATURN_EFFECT)
+        self.jupiter_effect = self.config.get('jupiter_effect', self.JUPITER_EFFECT)
+    
+    def align(
+        self,
+        saturn_house: int,
+        jupiter_house: int,
+        psych_scores: Dict[str, float]
+    ) -> List[Dict]:
+        """
+        Сопоставляет дома Сатурна и Юпитера с психологией.
+        """
+        alignments = []
+        
+        # 1. Сатурн
+        if saturn_house in self.house_psych_map:
+            mapping = self.house_psych_map[saturn_house]
+            psych_value = psych_scores.get(mapping['scale'], 50)
+            
+            expected = self.saturn_effect.get(saturn_house, 'neutral')
+            alignment_score = self._score_alignment(psych_value, expected)
+            
+            alignments.append({
+                'type': 'saturn_house',
+                'house': saturn_house,
+                'psych_scale': mapping['scale'],
+                'psych_value': round(psych_value, 1),
+                'trait': mapping['trait'],
+                'expected_direction': expected,
+                'alignment_score': round(alignment_score, 3),
+                'interpretation': self._interpret_house(
+                    'saturn', saturn_house, psych_value, expected
+                )
+            })
+        
+        # 2. Юпитер
+        if jupiter_house in self.house_psych_map:
+            mapping = self.house_psych_map[jupiter_house]
+            psych_value = psych_scores.get(mapping['scale'], 50)
+            
+            expected = self.jupiter_effect.get(jupiter_house, 'neutral')
+            alignment_score = self._score_alignment(psych_value, expected)
+            
+            alignments.append({
+                'type': 'jupiter_house',
+                'house': jupiter_house,
+                'psych_scale': mapping['scale'],
+                'psych_value': round(psych_value, 1),
+                'trait': mapping['trait'],
+                'expected_direction': expected,
+                'alignment_score': round(alignment_score, 3),
+                'interpretation': self._interpret_house(
+                    'jupiter', jupiter_house, psych_value, expected
+                )
+            })
+        
+        return alignments
+    
+    def _score_alignment(self, psych_value: float, expected: str) -> float:
+        """
+        Оценивает, насколько психологическое значение соответствует ожидаемому.
+        """
+        # T-scores: 50 - среднее, >65 - высокое, <35 - низкое
+        if psych_value > 65:
+            actual = 'high'
+        elif psych_value < 35:
+            actual = 'low'
+        else:
+            actual = 'normal'
+        
+        if expected == 'increasing':
+            if actual == 'high':
+                return 0.9
+            elif actual == 'normal':
+                return 0.6
+            else:
+                return 0.2
+        elif expected == 'decreasing':
+            if actual == 'low':
+                return 0.9
+            elif actual == 'normal':
+                return 0.6
+            else:
+                return 0.2
+        else:
+            return 0.5  # нейтрально
+    
+    def _interpret_house(
+        self,
+        planet: str,
+        house: int,
+        psych_value: float,
+        expected: str
+    ) -> str:
+        """
+        Генерирует интерпретацию для дома.
+        """
+        trait = self.house_psych_map.get(house, {}).get('trait', '')
+        level = 'высокий' if psych_value > 60 else 'средний' if psych_value > 40 else 'низкий'
+        
+        if expected == 'increasing' and psych_value > 60:
+            return f"{planet.capitalize()} в {house}-м доме соответствует вашей высокой {trait}"
+        elif expected == 'decreasing' and psych_value < 40:
+            return f"{planet.capitalize()} в {house}-м доме отражается в вашей низкой {trait}"
+        elif expected == 'increasing' and psych_value < 40:
+            return f"{planet.capitalize()} в {house}-м доме, но ваша {trait} ниже ожидаемой — возможен диссонанс"
+        else:
+            return f"{planet.capitalize()} в {house}-м доме — нейтральное влияние на {trait}"
+```
+
+### 3.2. Dasha Aligner
+
+```python
+# src/core/dasha_aligner.py
+
+from typing import Dict, List, Optional
+from uuid import UUID
+
+class DashaAligner:
+    """
+    Сопоставление даш с психологическими паттернами.
+    """
+    
+    # Влияние планет в махадаше на психологию
+    DASHA_PSYCH_MAP = {
+        'Saturn': {
+            'scales': ['d_score', 'sc_score'],
+            'effect': 'increasing',
+            'theme': 'структура и дисциплина'
+        },
+        'Jupiter': {
+            'scales': ['ma_score', 'pa_score'],
+            'effect': 'moderate',
+            'theme': 'рост и расширение'
+        },
+        'Rahu': {
+            'scales': ['pd_score', 'ma_score'],
+            'effect': 'unpredictable',
+            'theme': 'иллюзии и неопределённость'
+        },
+        'Ketu': {
+            'scales': ['si_score', 'sc_score'],
+            'effect': 'decreasing',
+            'theme': 'отстранённость и духовность'
+        },
+        'Moon': {
+            'scales': ['d_score', 'pt_score'],
+            'effect': 'variable',
+            'theme': 'эмоциональность и восприимчивость'
+        },
+        'Mars': {
+            'scales': ['ma_score', 'pd_score'],
+            'effect': 'increasing',
+            'theme': 'действие и инициатива'
+        },
+        'Mercury': {
+            'scales': ['pt_score', 'si_score'],
+            'effect': 'variable',
+            'theme': 'коммуникация и анализ'
+        },
+        'Venus': {
+            'scales': ['mf_score', 'hs_score'],
+            'effect': 'moderate',
+            'theme': 'гармония и отношения'
+        },
+        'Sun': {
+            'scales': ['pa_score', 'ma_score'],
+            'effect': 'increasing',
+            'theme': 'самовыражение и лидерство'
+        }
+    }
+    
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
+        self.dasha_psych_map = self.config.get('dasha_psych_map', self.DASHA_PSYCH_MAP)
+    
+    def align(
+        self,
+        dasha_planet: str,
+        psych_scores: Dict[str, float]
+    ) -> List[Dict]:
+        """
+        Сопоставляет дашу с психологическими паттернами.
+        """
+        alignments = []
+        
+        if dasha_planet not in self.dasha_psych_map:
+            return alignments
+        
+        mapping = self.dasha_psych_map[dasha_planet]
+        
+        for scale in mapping.get('scales', []):
+            psych_value = psych_scores.get(scale, 50)
+            
+            alignment_score = self._score_dasha_alignment(
+                psych_value, dasha_planet, scale
+            )
+            
+            alignments.append({
+                'type': 'dasha',
+                'planet': dasha_planet,
+                'psych_scale': scale,
+                'psych_value': round(psych_value, 1),
+                'effect': mapping['effect'],
+                'theme': mapping['theme'],
+                'alignment_score': round(alignment_score, 3),
+                'interpretation': self._interpret_dasha(
+                    dasha_planet, scale, psych_value, mapping['effect']
+                )
+            })
+        
+        return alignments
+    
+    def _score_dasha_alignment(
+        self,
+        psych_value: float,
+        planet: str,
+        scale: str
+    ) -> float:
+        """
+        Оценивает согласованность даши с психологией.
+        """
+        # Для каждого сочетания планета-шкала — свои ожидания
+        expectations = {
+            'Saturn': {'d_score': 'high', 'sc_score': 'moderate'},
+            'Jupiter': {'ma_score': 'high', 'pa_score': 'moderate'},
+            'Rahu': {'pd_score': 'high', 'ma_score': 'moderate'},
+            'Ketu': {'si_score': 'high', 'sc_score': 'moderate'},
+            'Moon': {'d_score': 'variable', 'pt_score': 'variable'},
+            'Mars': {'ma_score': 'high', 'pd_score': 'moderate'},
+            'Mercury': {'pt_score': 'moderate', 'si_score': 'moderate'},
+            'Venus': {'mf_score': 'moderate', 'hs_score': 'moderate'},
+            'Sun': {'pa_score': 'high', 'ma_score': 'high'},
+        }
+        
+        expected = expectations.get(planet, {}).get(scale, 'moderate')
+        
+        if expected == 'high' and psych_value > 60:
+            return 0.9
+        elif expected == 'high' and psych_value > 50:
+            return 0.6
+        elif expected == 'moderate' and 40 <= psych_value <= 60:
+            return 0.9
+        elif expected == 'moderate' and 35 <= psych_value <= 65:
+            return 0.6
+        else:
+            return 0.3
+    
+    def _interpret_dasha(
+        self,
+        planet: str,
+        scale: str,
+        psych_value: float,
+        effect: str
+    ) -> str:
+        """
+        Генерирует интерпретацию даши.
+        """
+        theme = self.dasha_psych_map.get(planet, {}).get('theme', '')
+        level = 'высокий' if psych_value > 60 else 'средний' if psych_value > 40 else 'низкий'
+        
+        if effect == 'increasing' and psych_value > 60:
+            return f"Период {planet} усиливает вашу {theme} (уровень {level})"
+        elif effect == 'decreasing' and psych_value < 40:
+            return f"Период {planet} ослабляет вашу {theme} (уровень {level})"
+        else:
+            return f"Период {planet} — нейтральное влияние на {theme}"
+```
+
+### 3.3. Resonance Calculator
+
+```python
+# src/core/resonance_calculator.py
+
+from typing import Dict, List, Optional
+from datetime import datetime
+from uuid import UUID
+import numpy as np
+
+class ResonanceCalculator:
+    """
+    Расчёт скрытого резонанса между Субъектом и Фоном.
+    Не показывается пользователю, используется внутри.
+    """
+    
+    def calculate(
+        self,
+        biorhythms: Dict[str, float],
+        transits: Dict[str, Dict],
+        psych_scores: Dict[str, float],
+        coherence_score: float
+    ) -> Dict:
+        """
+        Рассчитывает скрытый резонанс.
+        """
+        # 1. Биоритмический резонанс
+        bio_resonance = self._bio_resonance(biorhythms, psych_scores)
+        
+        # 2. Астрологический резонанс
+        astro_resonance = self._astro_resonance(transits, psych_scores)
+        
+        # 3. Исторический резонанс (из когерентности)
+        history_resonance = coherence_score
+        
+        # 4. Итоговый резонанс
+        resonance = (
+            bio_resonance * 0.4 +
+            astro_resonance * 0.35 +
+            history_resonance * 0.25
+        )
+        
+        return {
+            'value': round(min(max(resonance, 0), 1), 3),
+            'bio_component': round(bio_resonance, 3),
+            'astro_component': round(astro_resonance, 3),
+            'history_component': round(history_resonance, 3)
+        }
+    
+    def _bio_resonance(
+        self,
+        biorhythms: Dict[str, float],
+        psych_scores: Dict[str, float]
+    ) -> float:
+        """
+        Резонанс биоритмов с психологией.
+        """
+        # Эмоциональный биоритм ↔ D-шкала (депрессия)
+        emotional = biorhythms.get('emotional', 0)  # -1..1
+        d_score = psych_scores.get('d_score', 50)  # T-score
+        
+        # Нормализуем
+        emotional_norm = (emotional + 1) / 2  # 0..1
+        d_norm = 1 - (d_score - 30) / 70  # 0..1 (высокая D = низкий резонанс)
+        
+        # Энергетический биоритм ↔ MA-шкала (энергия)
+        physical = biorhythms.get('physical', 0)
+        ma_score = psych_scores.get('ma_score', 50)
+        
+        physical_norm = (physical + 1) / 2
+        ma_norm = (ma_score - 30) / 70  # 0..1
+        
+        # Интеллектуальный биоритм ↔ PT-шкала (тревога)
+        intellectual = biorhythms.get('intellectual', 0)
+        pt_score = psych_scores.get('pt_score', 50)
+        
+        intellectual_norm = (intellectual + 1) / 2
+        pt_norm = 1 - (pt_score - 30) / 70  # 0..1 (высокая PT = низкий резонанс)
+        
+        # Средний резонанс
+        return (
+            (1 - abs(emotional_norm - d_norm)) * 0.4 +
+            (1 - abs(physical_norm - ma_norm)) * 0.3 +
+            (1 - abs(intellectual_norm - pt_norm)) * 0.3
+        )
+    
+    def _astro_resonance(
+        self,
+        transits: Dict[str, Dict],
+        psych_scores: Dict[str, float]
+    ) -> float:
+        """
+        Резонанс транзитов с психологией.
+        """
+        # Сила ключевых планет
+        saturn_strength = transits.get('Saturn', {}).get('strength', 0.5)
+        jupiter_strength = transits.get('Jupiter', {}).get('strength', 0.5)
+        moon_strength = transits.get('Moon', {}).get('strength', 0.5)
+        
+        # Психологические корреляты
+        d_score = psych_scores.get('d_score', 50)  # депрессия
+        ma_score = psych_scores.get('ma_score', 50)  # энергия
+        pt_score = psych_scores.get('pt_score', 50)  # тревога
+        
+        # Нормализуем
+        d_norm = (d_score - 30) / 70  # 0..1
+        ma_norm = (ma_score - 30) / 70
+        pt_norm = (pt_score - 30) / 70
+        
+        # Сатурн ↔ депрессия (сильный Сатурн → высокая D)
+        saturn_match = 1 - abs(saturn_strength - d_norm)
+        
+        # Юпитер ↔ энергия (сильный Юпитер → высокая MA)
+        jupiter_match = 1 - abs(jupiter_strength - ma_norm)
+        
+        # Луна ↔ тревога (сильная Луна → низкая PT)
+        moon_match = 1 - abs(moon_strength - (1 - pt_norm))
+        
+        return (saturn_match * 0.4 + jupiter_match * 0.35 + moon_match * 0.25)
+```
+
+### 3.4. Coherence Score
+
+```python
+# src/core/coherence_score.py
+
+from typing import Dict, List, Optional
+from uuid import UUID
+
+class CoherenceScore:
+    """
+    Итоговая метрика когерентности профилей.
+    """
+    
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
+        self.house_weight = self.config.get('house_weight', 0.35)
+        self.dasha_weight = self.config.get('dasha_weight', 0.30)
+        self.retro_weight = self.config.get('retro_weight', 0.20)
+        self.resonance_weight = self.config.get('resonance_weight', 0.15)
+        
+        self.high_threshold = self.config.get('high_threshold', 0.7)
+        self.medium_threshold = self.config.get('medium_threshold', 0.4)
+    
+    def calculate(
+        self,
+        house_alignments: List[Dict],
+        dasha_alignments: List[Dict],
+        retro_alignments: List[Dict],
+        resonance: Dict
+    ) -> Dict:
+        """
+        Рассчитывает итоговую когерентность.
+        """
+        # 1. Средние скоры по каждому типу
+        house_score = self._average_score(house_alignments)
+        dasha_score = self._average_score(dasha_alignments)
+        retro_score = self._average_score(retro_alignments)
+        resonance_value = resonance.get('value', 0.5)
+        
+        # 2. Взвешенная сумма
+        coherence = (
+            house_score * self.house_weight +
+            dasha_score * self.dasha_weight +
+            retro_score * self.retro_weight +
+            resonance_value * self.resonance_weight
+        )
+        
+        coherence = round(min(max(coherence, 0), 1), 3)
+        
+        # 3. Уровень
+        if coherence >= self.high_threshold:
+            level = 'HIGH'
+            description = 'Ваш астрологический и психологический профили согласованы'
+        elif coherence >= self.medium_threshold:
+            level = 'MEDIUM'
+            description = 'Ваши профили частично согласованы, есть зоны роста'
+        else:
+            level = 'LOW'
+            description = 'Ваши профили расходятся — время для наблюдения'
+        
+        # 4. Диссонансы
+        dissonances = self._find_dissonances(
+            house_alignments,
+            dasha_alignments,
+            retro_alignments
+        )
+        
+        return {
+            'score': coherence,
+            'level': level,
+            'description': description,
+            'components': {
+                'house': round(house_score, 3),
+                'dasha': round(dasha_score, 3),
+                'retro': round(retro_score, 3),
+                'resonance': round(resonance_value, 3)
+            },
+            'dissonances': dissonances
+        }
+    
+    def _average_score(self, alignments: List[Dict]) -> float:
+        """Вычисляет средний alignment_score."""
+        if not alignments:
+            return 0.5
+        scores = [a.get('alignment_score', 0.5) for a in alignments]
+        return sum(scores) / len(scores)
+    
+    def _find_dissonances(
+        self,
+        house_alignments: List[Dict],
+        dasha_alignments: List[Dict],
+        retro_alignments: List[Dict]
+    ) -> List[Dict]:
+        """
+        Находит диссонансы (расхождения) в сопоставлениях.
+        """
+        dissonances = []
+        
+        # Диссонансы в домах
+        for ha in house_alignments:
+            if ha.get('alignment_score', 0.5) < 0.3:
+                dissonances.append({
+                    'type': 'house',
+                    'source': f"{ha.get('type')}_house_{ha.get('house')}",
+                    'description': ha.get('interpretation', ''),
+                    'severity': 1 - ha.get('alignment_score', 0.5)
+                })
+        
+        # Диссонансы в дашах
+        for da in dasha_alignments:
+            if da.get('alignment_score', 0.5) < 0.3:
+                dissonances.append({
+                    'type': 'dasha',
+                    'source': f"dasha_{da.get('planet')}",
+                    'description': da.get('interpretation', ''),
+                    'severity': 1 - da.get('alignment_score', 0.5)
+                })
+        
+        return dissonances
+```
+
+---
+
+## 4. SERVICE LAYER
+
+### 4.1. Alignment Service
+
+```python
+# src/services/alignment_service.py
+
+from datetime import datetime
+from typing import Dict, List, Optional
+from uuid import UUID
+
+from ..core.house_aligner import HouseAligner
+from ..core.dasha_aligner import DashaAligner
+from ..core.resonance_calculator import ResonanceCalculator
+from ..core.coherence_score import CoherenceScore
+
+from ..clients.forecast_client import ForecastClient
+from ..clients.astro_client import AstroClient
+from ..clients.psychometry_client import PsychometryClient
+from ..clients.lake_client import LakeClient
+
+class AlignmentService:
+    """
+    Главный сервис сопоставления профилей.
+    """
+    
+    def __init__(
+        self,
+        forecast_client: ForecastClient,
+        astro_client: AstroClient,
+        psychometry_client: PsychometryClient,
+        lake_client: LakeClient,
+        config: Optional[Dict] = None
+    ):
+        self.forecast_client = forecast_client
+        self.astro_client = astro_client
+        self.psychometry_client = psychometry_client
+        self.lake_client = lake_client
+        
+        self.house_aligner = HouseAligner(config)
+        self.dasha_aligner = DashaAligner(config)
+        self.resonance_calculator = ResonanceCalculator()
+        self.coherence_score = CoherenceScore(config)
+    
+    async def calculate_alignment(
+        self,
+        user_id: UUID,
+        date: Optional[datetime] = None
+    ) -> Dict:
+        """
+        Рассчитывает когерентность профилей.
+        """
+        if date is None:
+            date = datetime.now()
+        
+        # 1. Получаем прогноз (9 осей)
+        forecast = await self.forecast_client.get_forecast(user_id, date)
+        
+        # 2. Получаем биоритмы
+        biorhythms = await self.astro_client.get_biorhythms(user_id, date)
+        
+        # 3. Получаем транзиты
+        transits = await self.astro_client.get_transits(user_id, date)
+        
+        # 4. Получаем психологические шкалы (из Psychometry)
+        psych_scores = await self.psychometry_client.get_psych_scores(user_id, date)
+        
+        # 5. Получаем дашу
+        dasha = await self.astro_client.get_dasha(user_id, date)
+        
+        # 6. Сопоставляем дома
+        house_alignments = self.house_aligner.align(
+            saturn_house=transits.get('Saturn', {}).get('house', 0),
+            jupiter_house=transits.get('Jupiter', {}).get('house', 0),
+            psych_scores=psych_scores
+        )
+        
+        # 7. Сопоставляем даши
+        dasha_alignments = self.dasha_aligner.align(
+            dasha_planet=dasha.get('maha', 'Saturn'),
+            psych_scores=psych_scores
+        )
+        
+        # 8. Ретро (упрощённо)
+        retro_alignments = self._align_retro(transits, psych_scores)
+        
+        # 9. Резонанс
+        resonance = self.resonance_calculator.calculate(
+            biorhythms=biorhythms,
+            transits=transits,
+            psych_scores=psych_scores,
+            coherence_score=0.5  # начальное значение
+        )
+        
+        # 10. Когерентность
+        coherence = self.coherence_score.calculate(
+            house_alignments=house_alignments,
+            dasha_alignments=dasha_alignments,
+            retro_alignments=retro_alignments,
+            resonance=resonance
+        )
+        
+        # 11. Сохраняем результат
+        result = {
+            'user_id': user_id,
+            'calculated_at': date,
+            'coherence_score': coherence['score'],
+            'coherence_level': coherence['level'],
+            'house_alignments': house_alignments,
+            'dasha_alignments': dasha_alignments,
+            'retro_alignments': retro_alignments,
+            'resonance': resonance,
+            'dissonances': coherence['dissonances']
+        }
+        
+        await self._save_result(user_id, date, result)
+        
+        return result
+    
+    async def _save_result(
+        self,
+        user_id: UUID,
+        date: datetime,
+        result: Dict
+    ):
+        """
+        Сохраняет результат в БД и озеро.
+        """
+        # 1. Сохраняем в PostgreSQL
+        # ... реализация
+        
+        # 2. Сохраняем в MinIO
+        await self.lake_client.upload(
+            key=f"alignment/year={date.year}/month={date.month:02d}/user_{user_id}_{date.strftime('%Y%m%d')}.parquet",
+            data=result
+        )
+```
+
+---
+
+## 5. API INTERFACES
+
+### 5.1. Основные эндпоинты
+
+```python
+# src/api/routes.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+from datetime import date, datetime
+from typing import Optional
+
+router = APIRouter(prefix="/api/v4/alignment", tags=["Alignment"])
+
+
+@router.get("/coherence")
+async def get_coherence(
+    user_id: UUID,
+    date: Optional[date] = None,
+    service: AlignmentService = Depends(get_alignment_service)
+):
+    """
+    Получить когерентность профилей.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    result = await service.calculate_alignment(user_id, date)
+    
+    return {
+        "success": True,
+        "user_id": str(user_id),
+        "calculated_at": datetime.now().isoformat(),
+        "coherence": {
+            "score": result['coherence_score'],
+            "level": result['coherence_level'],
+            "description": result.get('description', '')
+        },
+        "components": result.get('components', {}),
+        "dissonances": result.get('dissonances', []),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/coherence/history")
+async def get_coherence_history(
+    user_id: UUID,
+    days: int = 30,
+    service: AlignmentService = Depends(get_alignment_service)
+):
+    """
+    Получить историю когерентности.
+    """
+    history = await service.get_coherence_history(user_id, days)
+    
+    return {
+        "success": True,
+        "user_id": str(user_id),
+        "history": history,
+        "timestamp": datetime.now().isoformat()
+    }
+```
+
+---
+
+## 6. DOCKER COMPOSE
+
+```yaml
+# docker-compose.yml (фрагмент)
+
+services:
+  alignment-engine:
+    build: ./alignment-engine
+    container_name: alignment-engine
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      FORECAST_URL: http://forecast-service:8000
+      ASTRO_URL: http://astro-service:8000
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      forecast-service:
+        condition: service_healthy
+      astro-service:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+```
+
+---
+
+## 7. ЧЕК-ЛИСТ ПРИЁМКИ
+
+### 7.1. Функциональные требования
+
+- [ ] House Aligner сопоставляет Сатурн/Юпитер в домах с психологией
+- [ ] Dasha Aligner сопоставляет даши с психологией
+- [ ] Resonance Calculator вычисляет скрытый резонанс
+- [ ] Coherence Score рассчитывает итоговую когерентность
+- [ ] Alignment Service объединяет все компоненты
+
+### 7.2. Данные
+
+- [ ] Таблицы в схеме alignment созданы
+- [ ] Индексы добавлены
+- [ ] Данные сохраняются в MinIO
+
+### 7.3. Интеграция
+
+- [ ] Forecast Client работает
+- [ ] Astro Client работает
+- [ ] Psychometry Client работает
+- [ ] Lake Client работает
+
+---
+
+## 8. ЗАКЛЮЧЕНИЕ
+
+**Alignment Engine** — это сервис сопоставления профилей:
+
+| Компонент | Что делает |
+|-----------|------------|
+| **House Aligner** | Сатурн/Юпитер в домах → психология |
+| **Dasha Aligner** | Даши → фундаментальный фон |
+| **Retro Aligner** | Ретроградность → когнитивный стиль |
+| **Resonance Calculator** | Скрытый резонанс (внутренний) |
+| **Coherence Score** | Итоговая когерентность (0-1) |
+
+**Ключевое отличие:** Система не ищет причины, а оценивает согласованность. Если профили согласованы — рекомендации по действию. Если нет — рекомендации по наблюдению.
+
+**Готово к разработке.**

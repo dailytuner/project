@@ -1,10 +1,49 @@
-# ТЕХНИЧЕСКОЕ ЗАДАНИЕ (ЕДИНОЕ)
+# Отлично! Давайте зафиксируем полное уточнённое ТЗ как единый источник истины.
 
-## Внедрение Psychometry Service v4.0 в существующую систему
+Я создам **единый документ**, объединяющий:
+1. Исходное ТЗ (ваш первый файл)
+2. Ваши дополнения и исправления (второй файл)
+3. Мои рекомендации, которые вы приняли
 
-**Версия документа:** 1.0  
+---
+
+# ПОЛНОЕ ТЕХНИЧЕСКОЕ ЗАДАНИЕ (ЕДИНЫЙ ИСТОЧНИК ИСТИНЫ)
+
+## Внедрение Psychometry Service v4.0 с интеграцией в существующую астрологическую систему
+
+**Версия документа:** 6.0 (финальная, утверждённая)  
 **Дата:** 02.09.2026  
 **Статус:** Утверждён
+
+---
+
+## ОГЛАВЛЕНИЕ
+
+1. [ВВЕДЕНИЕ](#1-введение)
+   - 1.1. Контекст проекта
+   - 1.2. Философская модель
+   - 1.3. Что получает пользователь
+2. [АРХИТЕКТУРА](#2-архитектура)
+   - 2.1. Общая схема
+   - 2.2. Компоненты и их статус
+3. [МОДЕЛЬ ДАННЫХ](#3-модель-данных)
+   - 3.1. Схема `astro` (дополнения)
+   - 3.2. Схема `psych` (новая)
+4. [НОВЫЕ МОДУЛИ ASTRO SERVICE](#4-новые-модули-astro-service)
+   - 4.1. Внутренние эндпоинты
+   - 4.2. Ночной batch
+5. [PSYCHOMETRY SERVICE](#5-psychometry-service)
+   - 5.1. Структура сервиса
+   - 5.2. API Эндпоинты
+   - 5.3. Базовые алгоритмы
+   - 5.4. Fallback стратегии
+6. [FRONTEND](#6-frontend)
+7. [API GATEWAY](#7-api-gateway)
+8. [DOCKER COMPOSE](#8-docker-compose)
+9. [МИГРАЦИИ](#9-миграции)
+10. [ПЛАН ВНЕДРЕНИЯ](#10-план-внедрения)
+11. [ЧЕК-ЛИСТ ПРИЁМКИ](#11-чек-лист-приёмки)
+12. [ЗАКЛЮЧЕНИЕ](#12-заключение)
 
 ---
 
@@ -24,17 +63,18 @@
 - Предоставляет **конкретные рекомендации**
 - Собирает **обратную связь** для улучшения системы
 
-### 1.2. Философская модель
+### 1.2. Философская модель (6 шагов практики)
 
 ```
-Наблюдатель → Субъект → Фон
-     ↓           ↓          ↓
-   Цель      Состояние   Контекст
-     ↓           ↓          ↓
-   Осознание → Действие → Результат
+1. СХВАТЫВАНИЕ  → 2. ПАУЗА  → 3. РАСПОЗНАВАНИЕ  → 4. ВЫБОР  → 5. ЗАПЕЧАТЛЕНИЕ  → 6. ИНТЕГРАЦИЯ
+     ↓              ↓              ↓                ↓              ↓                ↓
+   заметить      остановиться   отличить факт    принять        запомнить      применить
+   импульс       на 15 сек      от интерпрет.    решение        новое          в жизнь
 ```
 
 **Ключевой принцип:** Не предсказывать будущее, а помогать осознать настоящее и принять решение.
+
+**Интерактивный элемент:** Кнопка «Пауза» с таймером 15 секунд и полем ввода: «Что я сейчас автоматически подумал?».
 
 ### 1.3. Что получает пользователь
 
@@ -52,1554 +92,6 @@
 ## 2. АРХИТЕКТУРА
 
 ### 2.1. Общая схема
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     FRONTEND (существующий)                            │
-│  + Вкладка "Моё состояние"                                            │
-│  + Вкладка "Стратегия"                                                │
-└─────────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    API GATEWAY (существующий)                         │
-│  /api/v3/* → Astro Service (как было)                                 │
-│  /api/v4/* → Psychometry Service (новый)                              │
-└─────────────────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-┌─────────────────────────────┐    ┌─────────────────────────────────────┐
-│   ASTRO SERVICE (legacy)   │    │  PSYCHOMETRY SERVICE v4.0           │
-│                             │    │                                     │
-│  • Эфемериды, даши, дома   │───▶│  • Быстрый опросник (10 вопросов)  │
-│  • 9 осей Magic Profile     │    │  • Состояние (3 метрики)            │
-│  • Психоматрица (baseline) │    │  • Окна возможностей                │
-│  • Ночной batch            │    │  • Рекомендации (3 шт)              │
-│  • /internal/v4/bio        │    │  • Индексы (4 категории)            │
-│    /internal/v4/transits   │    │  • Feedback (простой)               │
-│                             │    │  • Alignment (модуль)              │
-└─────────────┬───────────────┘    └────────────────┬────────────────────┘
-              │                                     │
-              └──────────────┬──────────────────────┘
-                             ▼
-              ┌──────────────────────────────────────────────────────────────┐
-              │      POSTGRESQL (existing)                                 │
-              │                                                             │
-              │  • astro schema (есть)                                     │
-              │  • psych schema (новая) — 5 таблиц                        │
-              │  • alignment schema (новая) — 1 таблица                   │
-              │  • analytics schema (новая) — 2 таблицы                   │
-              └──────────────────────────────────────────────────────────────┘
-                             │
-              ┌──────────────┴───────────────┐
-              ▼                              ▼
-        ┌─────────────┐              ┌─────────────┐
-        │   REDIS     │              │   MinIO     │
-        │  (кэш TTL)  │              │ (отложить)  │
-        │  • bio      │              └─────────────┘
-        │  • transits │
-        │  • states   │
-        └─────────────┘
-```
-
-### 2.2. Компоненты
-
-| Компонент | Статус | Описание |
-|-----------|--------|----------|
-| **Astro Service** | ✅ Существующий | + Ночной batch (биоритмы/транзиты в Redis) |
-| **Psychometry Service** | 🆕 Новый | 1 контейнер, FastAPI |
-| **PostgreSQL** | ✅ Существующий | + Схема `psych` (5 таблиц) |
-| **Redis** | 🆕 Новый | Кэш (TTL 48h) |
-| **Frontend** | ✅ Существующий | + 1 вкладка "Моё состояние" |
-| **API Gateway** | ✅ Существующий | + `/api/v4/*` → Psychometry |
-
-**Что отложено:**
-- MinIO — до 100 ГБ данных
-- Alignment Engine как отдельный сервис — модуль внутри Psychometry
-- Analytics Worker как отдельный сервис — Celery Beat внутри Psychometry
-- Final Tuner как сервис — админская команда
-
----
-
-## 3. МОДЕЛЬ ДАННЫХ
-
-### 3.1. Схема `psych` (новая)
-
-```sql
--- ============================================================
--- 1. БЫСТРЫЙ ОПРОСНИК (ежедневно)
--- ============================================================
-
-CREATE TABLE psych.quick_checks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    checked_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- 3 метрики (1-5)
-    energy INTEGER CHECK (energy BETWEEN 1 AND 5),
-    anxiety INTEGER CHECK (anxiety BETWEEN 1 AND 5),
-    emotional INTEGER CHECK (emotional BETWEEN 1 AND 5),
-    
-    -- Комментарий (опционально)
-    comment TEXT,
-    
-    -- Ссылка на астро-контекст
-    astro_context_id UUID,
-    
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    INDEX idx_quick_user (user_id),
-    INDEX idx_quick_date (checked_at)
-);
-
--- ============================================================
--- 2. ПОЛНЫЙ ПРОФИЛЬ (раз в месяц)
--- ============================================================
-
-CREATE TABLE psych.full_profiles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    taken_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- T-scores (на основе 50-100 вопросов)
-    t_scores JSONB NOT NULL,
-    -- { "d": 65.2, "pt": 55.0, "pa": 48.5, "ma": 43.0, "si": 52.0, ... }
-    
-    -- Baseline
-    baseline JSONB,
-    -- { "d_baseline": 60.0, "pt_baseline": 52.0, ... }
-    
-    -- Осознанность
-    awareness_level VARCHAR(10) CHECK (awareness_level IN ('HIGH', 'MEDIUM', 'LOW')),
-    awareness_tip TEXT,
-    awareness_practice TEXT,
-    
-    -- Валидность
-    is_valid BOOLEAN DEFAULT true,
-    validity_details JSONB,
-    
-    -- Ссылка на астро-контекст
-    astro_context_id UUID,
-    
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    INDEX idx_full_user (user_id),
-    INDEX idx_full_date (taken_at)
-);
-
--- ============================================================
--- 3. КЭШ АСТРО-КОНТЕКСТА (предрасчёт)
--- ============================================================
-
-CREATE TABLE psych.astro_cache (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    cache_date DATE NOT NULL,
-    
-    -- Биоритмы
-    biorhythms JSONB NOT NULL,
-    -- { "physical": 0.32, "emotional": -0.45, "intellectual": 0.78 }
-    
-    -- Транзиты (упрощённые)
-    transits JSONB NOT NULL,
-    -- { "saturn_house": 8, "jupiter_house": 5, "saturn_strength": 0.7, ... }
-    
-    -- Сезонные бусты
-    seasonal_boosts JSONB,
-    -- { "family": 0.08, "work": -0.02, "health": 0.05, "self": -0.04 }
-    
-    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, cache_date),
-    INDEX idx_cache_user (user_id),
-    INDEX idx_cache_date (cache_date)
-);
-
--- ============================================================
--- 4. РЕЗУЛЬТАТЫ СОСТОЯНИЯ (на лету + кэш)
--- ============================================================
-
-CREATE TABLE psych.states (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    state_date DATE NOT NULL,
-    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- 3 метрики (0-1)
-    energy_score FLOAT CHECK (energy_score BETWEEN 0 AND 1),
-    anxiety_score FLOAT CHECK (anxiety_score BETWEEN 0 AND 1),
-    emotional_score FLOAT CHECK (emotional_score BETWEEN 0 AND 1),
-    
-    -- Уровень
-    state_level VARCHAR(10) CHECK (state_level IN ('HIGH', 'MEDIUM', 'LOW')),
-    state_summary TEXT,
-    
-    -- Осознанность
-    awareness_level VARCHAR(10),
-    awareness_tip TEXT,
-    awareness_practice TEXT,
-    
-    -- Источники
-    quick_check_id UUID,
-    full_profile_id UUID,
-    astro_cache_id UUID,
-    
-    UNIQUE(user_id, state_date),
-    INDEX idx_states_user (user_id),
-    INDEX idx_states_date (state_date)
-);
-
--- ============================================================
--- 5. ИНДЕКСЫ ДОСТИЖЕНИЯ (на лету)
--- ============================================================
-
-CREATE TABLE psych.achievements (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    state_id UUID REFERENCES psych.states(id),
-    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- Категория
-    category VARCHAR(20) CHECK (category IN ('family', 'work', 'health', 'self')),
-    
-    -- Индекс и уровень
-    value FLOAT CHECK (value BETWEEN 0 AND 1),
-    level VARCHAR(10) CHECK (level IN ('HIGH', 'MEDIUM', 'LOW', 'CRITICAL')),
-    
-    -- Компоненты
-    clarity FLOAT CHECK (clarity BETWEEN 0 AND 1),
-    synchronicity FLOAT CHECK (synchronicity BETWEEN 0 AND 1),
-    resource FLOAT CHECK (resource BETWEEN 0 AND 1),
-    inertia FLOAT CHECK (inertia BETWEEN 0 AND 1),
-    
-    -- Рекомендация
-    recommendation TEXT,
-    
-    UNIQUE(user_id, category, state_id),
-    INDEX idx_achievements_user (user_id),
-    INDEX idx_achievements_category (category)
-);
-
--- ============================================================
--- 6. РЕКОМЕНДАЦИИ (на лету)
--- ============================================================
-
-CREATE TABLE psych.recommendations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    state_id UUID REFERENCES psych.states(id),
-    generated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- Рекомендации (до 5)
-    recommendations JSONB NOT NULL,
-    -- [{"action": "...", "reason": "...", "priority": 1, "duration": "15 мин"}]
-    
-    -- Применено
-    applied BOOLEAN DEFAULT false,
-    applied_at TIMESTAMP,
-    
-    INDEX idx_recommendations_user (user_id)
-);
-
--- ============================================================
--- 7. ОБРАТНАЯ СВЯЗЬ
--- ============================================================
-
-CREATE TABLE psych.feedback (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    recommendation_id UUID REFERENCES psych.recommendations(id),
-    category VARCHAR(20),
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    
-    -- Оценка
-    rating INTEGER CHECK (rating BETWEEN 1 AND 5),
-    outcome FLOAT CHECK (outcome BETWEEN 0 AND 1),
-    comment TEXT,
-    
-    INDEX idx_feedback_user (user_id)
-);
-
--- ============================================================
--- 8. ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
--- ============================================================
-
-CREATE INDEX idx_cache_user_date ON psych.astro_cache(user_id, cache_date);
-CREATE INDEX idx_states_user_date ON psych.states(user_id, state_date);
-CREATE INDEX idx_achievements_user_state ON psych.achievements(user_id, state_id);
-CREATE INDEX idx_feedback_recommendation ON psych.feedback(recommendation_id);
-```
-
----
-
-## 4. PSYCHOMETRY SERVICE
-
-### 4.1. Структура сервиса
-
-```
-psychometry-service/
-├── Dockerfile
-├── requirements.txt
-├── src/
-│   ├── main.py
-│   ├── settings.py
-│   ├── api/
-│   │   ├── routes.py
-│   │   ├── schemas.py
-│   │   └── deps.py
-│   ├── core/
-│   │   ├── scorer.py          # T-scores для полного профиля
-│   │   ├── state_synthesizer.py # Синтез состояния
-│   │   ├── achievement_calc.py  # Индексы
-│   │   ├── window_calc.py       # Окна
-│   │   ├── recommendation_gen.py # Рекомендации
-│   │   └── alignment.py         # Когерентность (модуль)
-│   ├── clients/
-│   │   ├── astro_client.py
-│   │   └── redis_client.py
-│   └── workers/
-│       └── batch.py           # Ночной batch (Celery Beat)
-└── tests/
-    ├── unit/
-    └── integration/
-```
-
-### 4.2. API Эндпоинты
-
-```python
-# src/api/routes.py
-
-from fastapi import APIRouter, Depends, HTTPException
-from uuid import UUID
-from datetime import date, datetime
-from typing import Optional
-
-router = APIRouter(prefix="/api/v4", tags=["Psychometry"])
-
-
-@router.post("/quick-check")
-async def quick_check(
-    user_id: int,
-    energy: int,      # 1-5
-    anxiety: int,     # 1-5
-    emotional: int,   # 1-5
-    comment: Optional[str] = None,
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Быстрый опросник (ежедневно).
-    """
-    result = await service.save_quick_check(
-        user_id, energy, anxiety, emotional, comment
-    )
-    return {"success": True, "result": result}
-
-
-@router.get("/state")
-async def get_state(
-    user_id: int,
-    date: Optional[date] = None,
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Получить текущее состояние.
-    """
-    if date is None:
-        date = datetime.now().date()
-    
-    state = await service.get_state(user_id, date)
-    return {"success": True, "state": state}
-
-
-@router.get("/achievements")
-async def get_achievements(
-    user_id: int,
-    state_id: Optional[UUID] = None,
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Получить индексы достижения.
-    """
-    achievements = await service.get_achievements(user_id, state_id)
-    return {"success": True, "achievements": achievements}
-
-
-@router.get("/window")
-async def get_window(
-    user_id: int,
-    state_id: Optional[UUID] = None,
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Получить окно возможностей.
-    """
-    window = await service.get_window(user_id, state_id)
-    return {"success": True, "window": window}
-
-
-@router.get("/recommendations")
-async def get_recommendations(
-    user_id: int,
-    state_id: Optional[UUID] = None,
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Получить рекомендации.
-    """
-    recommendations = await service.get_recommendations(user_id, state_id)
-    return {"success": True, "recommendations": recommendations}
-
-
-@router.post("/feedback")
-async def submit_feedback(
-    user_id: int,
-    recommendation_id: UUID,
-    rating: int,  # 1-5
-    outcome: Optional[float] = None,  # 0-1
-    comment: Optional[str] = None,
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Отправить обратную связь.
-    """
-    result = await service.submit_feedback(
-        user_id, recommendation_id, rating, outcome, comment
-    )
-    return {"success": True, "result": result}
-
-
-@router.post("/full-profile")
-async def submit_full_profile(
-    user_id: int,
-    answers: dict,  # ключи вопросов → boolean
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Полный профиль (50-100 вопросов).
-    """
-    result = await service.save_full_profile(user_id, answers)
-    return {"success": True, "result": result}
-```
-
-### 4.3. Базовые алгоритмы
-
-#### 4.3.1. Состояние (State Synthesizer)
-
-```python
-# src/core/state_synthesizer.py
-
-from typing import Dict, Optional
-from datetime import date
-
-class StateSynthesizer:
-    """
-    Синтез состояния из быстрого опросника + астро-контекста.
-    """
-    
-    def synthesize(
-        self,
-        quick_check: Dict,      # {energy, anxiety, emotional}
-        astro_context: Dict,   # {biorhythms, transits, seasonal_boosts}
-        baseline: Optional[Dict] = None  # из полного профиля
-    ) -> Dict:
-        """
-        Возвращает состояние: 3 метрики + уровень + сводка.
-        """
-        # 1. Нормализуем быстрый опросник (1-5 → 0-1)
-        energy = (quick_check['energy'] - 1) / 4
-        anxiety = (quick_check['anxiety'] - 1) / 4
-        emotional = (quick_check['emotional'] - 1) / 4
-        
-        # 2. Корректировка по биоритмам (если есть)
-        if astro_context and 'biorhythms' in astro_context:
-            bio = astro_context['biorhythms']
-            energy = energy * 0.7 + ((bio.get('physical', 0) + 1) / 2) * 0.3
-            emotional = emotional * 0.7 + ((bio.get('emotional', 0) + 1) / 2) * 0.3
-        
-        # 3. Уровень
-        avg = (energy + (1 - anxiety) + emotional) / 3
-        if avg >= 0.7:
-            level = 'HIGH'
-        elif avg >= 0.4:
-            level = 'MEDIUM'
-        else:
-            level = 'LOW'
-        
-        # 4. Сводка
-        summary = self._generate_summary(energy, anxiety, emotional, level)
-        
-        return {
-            'energy_score': round(energy, 3),
-            'anxiety_score': round(anxiety, 3),
-            'emotional_score': round(emotional, 3),
-            'state_level': level,
-            'state_summary': summary
-        }
-    
-    def _generate_summary(self, energy, anxiety, emotional, level):
-        """Генерирует текстовую сводку."""
-        parts = []
-        
-        if energy >= 0.6:
-            parts.append("энергия на подъёме")
-        elif energy <= 0.3:
-            parts.append("энергия снижена")
-        else:
-            parts.append("энергия в норме")
-        
-        if anxiety >= 0.6:
-            parts.append("тревожность повышена")
-        elif anxiety <= 0.3:
-            parts.append("тревожность снижена")
-        else:
-            parts.append("тревожность умеренная")
-        
-        if emotional >= 0.6:
-            parts.append("эмоциональный фон повышен")
-        elif emotional <= 0.3:
-            parts.append("эмоциональный фон снижен")
-        else:
-            parts.append("эмоциональный фон в норме")
-        
-        return f"Ваше состояние: {', '.join(parts)}. Уровень: {level.lower()}."
-```
-
-#### 4.3.2. Индексы достижения
-
-```python
-# src/core/achievement_calc.py
-
-from typing import Dict
-
-class AchievementCalculator:
-    """
-    Расчёт индексов достижения по 4 категориям.
-    """
-    
-    CATEGORIES = {
-        'family': {
-            'scales': ['d', 'si'],
-            'biorhythm': 'emotional',
-            'seasonal_boost': {'1': 0.1, '2': 0.1, '7': 0.05, '8': 0.05, '12': 0.1}
-        },
-        'work': {
-            'scales': ['pt', 'ma'],
-            'biorhythm': 'intellectual',
-            'seasonal_boost': {'3': 0.1, '4': 0.1, '9': 0.1, '10': 0.1}
-        },
-        'health': {
-            'scales': ['pa', 'sc'],
-            'biorhythm': 'physical',
-            'seasonal_boost': {'5': 0.1, '6': 0.1, '7': 0.1, '8': 0.1}
-        },
-        'self': {
-            'scales': ['ma', 'pa'],
-            'biorhythm': 'intellectual',
-            'seasonal_boost': {'1': 0.05, '2': 0.05, '9': 0.1, '10': 0.1}
-        }
-    }
-    
-    def calculate(
-        self,
-        state: Dict,
-        astro_context: Dict,
-        t_scores: Optional[Dict] = None
-    ) -> Dict[str, Dict]:
-        """
-        Рассчитывает индексы по всем категориям.
-        """
-        indices = {}
-        
-        for category, config in self.CATEGORIES.items():
-            index = self._calculate_category(
-                category, config, state, astro_context, t_scores
-            )
-            indices[category] = index
-        
-        return indices
-    
-    def _calculate_category(self, category, config, state, astro_context, t_scores):
-        """Рассчитывает индекс для одной категории."""
-        # 1. Ясность (из T-scores)
-        clarity = self._calculate_clarity(t_scores, config.get('scales', []))
-        
-        # 2. Синхронность (из биоритмов)
-        synchronicity = self._calculate_synchronicity(
-            astro_context, config.get('biorhythm')
-        )
-        
-        # 3. Ресурс (из состояния)
-        resource = self._calculate_resource(state, config)
-        
-        # 4. Инерция (из T-scores)
-        inertia = self._calculate_inertia(t_scores, config.get('scales', []))
-        
-        # 5. Сезонный буст
-        seasonal_boost = self._get_seasonal_boost(
-            config.get('seasonal_boost', {})
-        )
-        
-        # 6. Индекс
-        value = (
-            clarity * 0.3 +
-            synchronicity * 0.3 +
-            resource * 0.3 -
-            inertia * 0.1 +
-            seasonal_boost * 0.2
-        )
-        value = max(0, min(1, value))
-        
-        # 7. Уровень
-        if value >= 0.75:
-            level = 'HIGH'
-            recommendation = self._get_recommendation(category, 'high')
-        elif value >= 0.50:
-            level = 'MEDIUM'
-            recommendation = self._get_recommendation(category, 'medium')
-        elif value >= 0.25:
-            level = 'LOW'
-            recommendation = self._get_recommendation(category, 'low')
-        else:
-            level = 'CRITICAL'
-            recommendation = self._get_recommendation(category, 'critical')
-        
-        return {
-            'value': round(value, 3),
-            'level': level,
-            'clarity': round(clarity, 3),
-            'synchronicity': round(synchronicity, 3),
-            'resource': round(resource, 3),
-            'inertia': round(inertia, 3),
-            'recommendation': recommendation
-        }
-    
-    def _calculate_clarity(self, t_scores, scales):
-        """Ясность — чем ниже шкалы, тем выше ясность."""
-        if not t_scores or not scales:
-            return 0.5
-        
-        values = []
-        for scale in scales:
-            score = t_scores.get(scale, 50)
-            # Нормализуем: 30-70 → 1-0
-            normalized = 1 - ((score - 30) / 70)
-            values.append(max(0, min(1, normalized)))
-        
-        return sum(values) / len(values)
-    
-    def _calculate_synchronicity(self, astro_context, biorhythm):
-        """Синхронность с Фоном."""
-        if not astro_context or not biorhythm:
-            return 0.5
-        
-        bio = astro_context.get('biorhythms', {})
-        value = bio.get(biorhythm, 0)
-        return (value + 1) / 2  # -1..1 → 0..1
-    
-    def _calculate_resource(self, state, config):
-        """Ресурс из состояния."""
-        return (state.get('energy_score', 0.5) + (1 - state.get('anxiety_score', 0.5))) / 2
-    
-    def _calculate_inertia(self, t_scores, scales):
-        """Инерция — чем выше шкалы, тем выше инерция."""
-        if not t_scores or not scales:
-            return 0.2
-        
-        values = []
-        for scale in scales:
-            score = t_scores.get(scale, 50)
-            normalized = (score - 30) / 70
-            values.append(max(0, min(1, normalized)))
-        
-        return sum(values) / len(values)
-    
-    def _get_seasonal_boost(self, boosts):
-        """Сезонный буст на текущий месяц."""
-        month = datetime.now().month
-        return boosts.get(str(month), 0)
-    
-    def _get_recommendation(self, category, level):
-        """Рекомендация по уровню."""
-        recs = {
-            'family': {
-                'high': 'Отличное время для укрепления отношений',
-                'medium': 'Хорошее время для разговоров',
-                'low': 'Не форсируйте события',
-                'critical': 'Лучше побыть наедине'
-            },
-            'work': {
-                'high': 'Отличное время для карьерных решений',
-                'medium': 'Хорошее время для текущих задач',
-                'low': 'Отложите крупные решения',
-                'critical': 'Сосредоточьтесь на рутине'
-            },
-            'health': {
-                'high': 'Отличное время для спорта',
-                'medium': 'Хорошее время для профилактики',
-                'low': 'Время восстановления',
-                'critical': 'Обязательный отдых'
-            },
-            'self': {
-                'high': 'Отличное время для творчества',
-                'medium': 'Хорошее время для новых проектов',
-                'low': 'Отложите грандиозные планы',
-                'critical': 'Просто отдыхайте'
-            }
-        }
-        return recs.get(category, {}).get(level, '')
-```
-
-#### 4.3.3. Окна возможностей
-
-```python
-# src/core/window_calc.py
-
-from typing import Dict
-
-class WindowCalculator:
-    """
-    Расчёт окна возможностей.
-    """
-    
-    def calculate(
-        self,
-        state: Dict,
-        achievements: Dict[str, Dict],
-        astro_context: Dict
-    ) -> Dict:
-        """
-        Рассчитывает окно возможностей.
-        """
-        # 1. Фоновое сопротивление
-        bg_resistance = self._calc_background_resistance(astro_context)
-        
-        # 2. Субъектный ресурс
-        subject_resource = self._calc_subject_resource(state)
-        
-        # 3. Синергия
-        synergy = self._calc_synergy(state, achievements, astro_context)
-        
-        # 4. Инерция
-        inertia = state.get('anxiety_score', 0.5)
-        
-        # 5. Окно
-        value = (1 - bg_resistance) * subject_resource * synergy * (1 - inertia)
-        value = max(0, min(1, value))
-        
-        # 6. Уровень
-        if value >= 0.7:
-            level = 'OPEN'
-            practice = 'Действуй! Сейчас хорошее время для новых начинаний'
-            play = 'Отличное время для творчества и риска'
-        elif value >= 0.4:
-            level = 'PARTIAL'
-            practice = 'Готовься, но не торопись'
-            play = 'Попробуй что-то новое с осторожностью'
-        else:
-            level = 'CLOSED'
-            practice = 'Наблюдай и восстанавливайся'
-            play = 'Отдохни, не принимай важных решений'
-        
-        # 7. Отклонения по категориям
-        deviations = {}
-        for cat, idx in achievements.items():
-            avg = sum([
-                achievements.get('family', {}).get('value', 0.5),
-                achievements.get('work', {}).get('value', 0.5),
-                achievements.get('health', {}).get('value', 0.5),
-                achievements.get('self', {}).get('value', 0.5)
-            ]) / 4
-            deviations[cat] = round(idx.get('value', 0.5) - avg, 3)
-        
-        return {
-            'value': round(value, 3),
-            'level': level,
-            'deviations': deviations,
-            'practice_recommendation': practice,
-            'play_recommendation': play
-        }
-    
-    def _calc_background_resistance(self, astro_context):
-        """Фоновое сопротивление."""
-        if not astro_context:
-            return 0.3
-        
-        bio = astro_context.get('biorhythms', {})
-        # Чем ниже биоритмы, тем выше сопротивление
-        phys = (bio.get('physical', 0) + 1) / 2
-        emot = (bio.get('emotional', 0) + 1) / 2
-        intel = (bio.get('intellectual', 0) + 1) / 2
-        
-        return 1 - ((phys + emot + intel) / 3)
-    
-    def _calc_subject_resource(self, state):
-        """Субъектный ресурс."""
-        energy = state.get('energy_score', 0.5)
-        anxiety = state.get('anxiety_score', 0.5)
-        return (energy + (1 - anxiety)) / 2
-    
-    def _calc_synergy(self, state, achievements, astro_context):
-        """Синергия."""
-        # Упрощённо: средний индекс
-        avg_achievement = sum([
-            a.get('value', 0.5) for a in achievements.values()
-        ]) / len(achievements) if achievements else 0.5
-        
-        return (state.get('emotional_score', 0.5) + avg_achievement) / 2
-```
-
-#### 4.3.4. Рекомендации
-
-```python
-# src/core/recommendation_gen.py
-
-from typing import List, Dict
-
-class RecommendationGenerator:
-    """
-    Генерация рекомендаций.
-    """
-    
-    def generate(
-        self,
-        state: Dict,
-        achievements: Dict[str, Dict],
-        window: Dict
-    ) -> List[Dict]:
-        """
-        Генерирует 3-5 рекомендаций.
-        """
-        recommendations = []
-        
-        # 1. Если энергия низкая → восстановление
-        if state.get('energy_score', 0.5) < 0.4:
-            recommendations.append({
-                'action': 'Выделите 15 минут на тишину без гаджетов',
-                'reason': 'Энергия снижена, нужна пауза',
-                'priority': 1,
-                'duration': '15 мин'
-            })
-        
-        # 2. Если тревога высокая → практика
-        if state.get('anxiety_score', 0.5) > 0.6:
-            recommendations.append({
-                'action': 'Сделайте глубокий вдох и выдох 5 раз',
-                'reason': 'Тревожность повышена',
-                'priority': 2,
-                'duration': '2 мин'
-            })
-        
-        # 3. Если эмоции низкие → контакт
-        if state.get('emotional_score', 0.5) < 0.4:
-            recommendations.append({
-                'action': 'Свяжитесь с близким человеком',
-                'reason': 'Эмоциональный фон снижен',
-                'priority': 2,
-                'duration': '10 мин'
-            })
-        
-        # 4. По категориям с высоким индексом
-        for cat, idx in achievements.items():
-            if idx.get('value', 0.5) > 0.7:
-                recommendations.append({
-                    'action': self._get_action(cat, 'high'),
-                    'reason': f'Высокий индекс {self._get_category_name(cat)}',
-                    'priority': 3,
-                    'duration': self._get_duration(cat, 'high')
-                })
-            elif idx.get('value', 0.5) < 0.3:
-                recommendations.append({
-                    'action': self._get_action(cat, 'low'),
-                    'reason': f'Низкий индекс {self._get_category_name(cat)}',
-                    'priority': 2,
-                    'duration': self._get_duration(cat, 'low')
-                })
-        
-        # 5. По окну
-        if window.get('level') == 'OPEN':
-            recommendations.append({
-                'action': 'Запланируйте важное дело на сегодня',
-                'reason': 'Окно открыто',
-                'priority': 1,
-                'duration': '30 мин'
-            })
-        elif window.get('level') == 'CLOSED':
-            recommendations.append({
-                'action': 'Отложите важные решения на завтра',
-                'reason': 'Окно закрыто',
-                'priority': 1,
-                'duration': '—'
-            })
-        
-        # Сортируем по приоритету и оставляем максимум 5
-        recommendations.sort(key=lambda x: x['priority'])
-        return recommendations[:5]
-    
-    def _get_category_name(self, cat):
-        names = {
-            'family': 'семьи',
-            'work': 'работы',
-            'health': 'здоровья',
-            'self': 'саморазвития'
-        }
-        return names.get(cat, cat)
-    
-    def _get_action(self, cat, level):
-        actions = {
-            'family': {
-                'high': 'Запланируйте вечерний разговор с близкими',
-                'low': 'Уделите время тишине и себе'
-            },
-            'work': {
-                'high': 'Начните новый проект',
-                'low': 'Займитесь текущими задачами'
-            },
-            'health': {
-                'high': 'Сходите на прогулку или в спортзал',
-                'low': 'Выделите время на отдых'
-            },
-            'self': {
-                'high': 'Запишите свои идеи и мысли',
-                'low': 'Посмотрите что-то вдохновляющее'
-            }
-        }
-        return actions.get(cat, {}).get(level, '')
-    
-    def _get_duration(self, cat, level):
-        durations = {
-            'family': {'high': '15 мин', 'low': '10 мин'},
-            'work': {'high': '30 мин', 'low': '15 мин'},
-            'health': {'high': '20 мин', 'low': '10 мин'},
-            'self': {'high': '15 мин', 'low': '10 мин'}
-        }
-        return durations.get(cat, {}).get(level, '10 мин')
-```
-
----
-
-## 5. ИНТЕГРАЦИЯ С ASTRO SERVICE
-
-### 5.1. Ночной batch (Celery Beat)
-
-```python
-# src/workers/batch.py
-
-from celery import Celery
-from datetime import date, datetime, timedelta
-from sqlalchemy import select
-
-app = Celery('psychometry', broker='redis://redis:6379/0')
-
-
-@app.task
-def precompute_daily_context():
-    """
-    Каждую ночь в 3:00:
-    1. Для всех активных пользователей
-    2. Получает биоритмы из Astro Service
-    3. Получает транзиты из Astro Service
-    4. Сохраняет в PostgreSQL и Redis
-    """
-    from ..clients.astro_client import AstroClient
-    from ..clients.redis_client import RedisClient
-    from ..models import AstroCache
-    
-    astro = AstroClient()
-    redis = RedisClient()
-    today = date.today()
-    
-    # 1. Находим активных пользователей
-    users = get_active_users()  # пользователи за последние 7 дней
-    
-    for user_id in users:
-        # 2. Биоритмы
-        biorhythms = astro.get_biorhythms(user_id, today)
-        
-        # 3. Транзиты
-        transits = astro.get_transits(user_id, today)
-        
-        # 4. Сезонные бусты
-        seasonal_boosts = astro.get_seasonal_boosts(today)
-        
-        # 5. Сохраняем в PostgreSQL
-        cache = AstroCache(
-            user_id=user_id,
-            cache_date=today,
-            biorhythms=biorhythms,
-            transits=transits,
-            seasonal_boosts=seasonal_boosts
-        )
-        db.session.merge(cache)
-        
-        # 6. Сохраняем в Redis (TTL 48h)
-        key = f"astro:{user_id}:{today.isoformat()}"
-        value = {
-            'biorhythms': biorhythms,
-            'transits': transits,
-            'seasonal_boosts': seasonal_boosts
-        }
-        redis.setex(key, 48 * 3600, json.dumps(value))
-    
-    db.session.commit()
-    logger.info(f"Precomputed context for {len(users)} users")
-
-
-# Celery Beat schedule
-app.conf.beat_schedule = {
-    'precompute-daily-context': {
-        'task': 'src.workers.batch.precompute_daily_context',
-        'schedule': 60 * 60 * 24,  # раз в день
-        'args': (),
-        'options': {'expires': 60 * 60 * 12}  # expires через 12 часов
-    },
-}
-```
-
-### 5.2. Astro Client
-
-```python
-# src/clients/astro_client.py
-
-import httpx
-from typing import Dict
-from datetime import date
-
-class AstroClient:
-    """
-    Клиент для Astro Service.
-    """
-    
-    def __init__(self, base_url: str = "http://astro-service:8000"):
-        self.base_url = base_url
-        self.api_key = os.getenv('INTERNAL_API_KEY')
-    
-    def get_biorhythms(self, user_id: int, target_date: date) -> Dict:
-        """Получает биоритмы из Astro Service."""
-        response = httpx.get(
-            f"{self.base_url}/internal/v4/biorhythms",
-            params={"user_id": user_id, "date": target_date.isoformat()},
-            headers={"X-Internal-API-Key": self.api_key}
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def get_transits(self, user_id: int, target_date: date) -> Dict:
-        """Получает транзиты из Astro Service."""
-        response = httpx.get(
-            f"{self.base_url}/internal/v4/transits",
-            params={"user_id": user_id, "date": target_date.isoformat()},
-            headers={"X-Internal-API-Key": self.api_key}
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def get_seasonal_boosts(self, target_date: date) -> Dict:
-        """Получает сезонные бусты."""
-        response = httpx.get(
-            f"{self.base_url}/internal/v4/seasonal-boosts",
-            params={"date": target_date.isoformat()},
-            headers={"X-Internal-API-Key": self.api_key}
-        )
-        response.raise_for_status()
-        return response.json()
-```
-
-### 5.3. Redis Client
-
-```python
-# src/clients/redis_client.py
-
-import redis
-import json
-from typing import Optional
-
-class RedisClient:
-    """
-    Клиент для Redis.
-    """
-    
-    def __init__(self, url: str = "redis://redis:6379/0"):
-        self.client = redis.from_url(url)
-    
-    def get(self, key: str) -> Optional[Dict]:
-        """Получает данные из кэша."""
-        data = self.client.get(key)
-        if data:
-            return json.loads(data)
-        return None
-    
-    def setex(self, key: str, ttl: int, value: Dict):
-        """Сохраняет данные в кэш с TTL."""
-        self.client.setex(key, ttl, json.dumps(value))
-    
-    def delete(self, key: str):
-        """Удаляет данные из кэша."""
-        self.client.delete(key)
-```
-
----
-
-## 6. FRONTEND (НОВАЯ ВКЛАДКА)
-
-### 6.1. Компоненты
-
-```tsx
-// src/components/StateTab.tsx
-
-import React, { useEffect, useState } from 'react';
-import { MetricCard, AchievementCard, RecommendationItem, WindowIndicator } from './components';
-
-export const StateTab: React.FC = () => {
-  const [state, setState] = useState(null);
-  const [achievements, setAchievements] = useState(null);
-  const [window, setWindow] = useState(null);
-  const [recommendations, setRecommendations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  
-  useEffect(() => {
-    fetchState();
-  }, []);
-  
-  const fetchState = async () => {
-    setLoading(true);
-    try {
-      const [stateRes, achRes, winRes, recRes] = await Promise.all([
-        api.get('/api/v4/state'),
-        api.get('/api/v4/achievements'),
-        api.get('/api/v4/window'),
-        api.get('/api/v4/recommendations')
-      ]);
-      
-      setState(stateRes.data.state);
-      setAchievements(achRes.data.achievements);
-      setWindow(winRes.data.window);
-      setRecommendations(recRes.data.recommendations);
-    } catch (error) {
-      console.error('Failed to fetch state:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  if (loading) return <div className="loading">Загрузка...</div>;
-  
-  return (
-    <div className="state-tab">
-      {/* Состояние */}
-      <section className="state-section">
-        <h2>📊 Ваше состояние</h2>
-        <div className="metrics-grid">
-          <MetricCard
-            label="Энергия"
-            value={state.energy_score}
-            level={state.energy_score > 0.6 ? 'high' : state.energy_score > 0.3 ? 'medium' : 'low'}
-            icon="⚡"
-          />
-          <MetricCard
-            label="Тревога"
-            value={state.anxiety_score}
-            level={state.anxiety_score > 0.6 ? 'high' : state.anxiety_score > 0.3 ? 'medium' : 'low'}
-            icon="🧠"
-          />
-          <MetricCard
-            label="Эмоции"
-            value={state.emotional_score}
-            level={state.emotional_score > 0.6 ? 'high' : state.emotional_score > 0.3 ? 'medium' : 'low'}
-            icon="💫"
-          />
-        </div>
-        <div className="state-summary">
-          <p>{state.state_summary}</p>
-          <div className="awareness-badge">
-            🧘 Осознанность: {state.awareness_level}
-          </div>
-        </div>
-      </section>
-      
-      {/* Окно */}
-      <section className="window-section">
-        <h2>🌤️ Окно возможностей</h2>
-        <WindowIndicator
-          value={window.value}
-          level={window.level}
-          deviations={window.deviations}
-        />
-      </section>
-      
-      {/* Индексы */}
-      <section className="achievements-section">
-        <h2>📈 Индексы достижения</h2>
-        <div className="achievements-grid">
-          {Object.entries(achievements).map(([key, value]) => (
-            <AchievementCard
-              key={key}
-              category={key}
-              name={{
-                family: '👨‍👩‍👧‍👦 Семья',
-                work: '💼 Работа',
-                health: '❤️ Здоровье',
-                self: '🧘 Self'
-              }[key]}
-              value={value.value}
-              level={value.level}
-              recommendation={value.recommendation}
-            />
-          ))}
-        </div>
-      </section>
-      
-      {/* Рекомендации */}
-      <section className="recommendations-section">
-        <h2>📋 Рекомендации</h2>
-        {recommendations.map((rec, index) => (
-          <RecommendationItem
-            key={index}
-            action={rec.action}
-            reason={rec.reason}
-            priority={rec.priority}
-            duration={rec.duration}
-            onFeedback={(rating) => submitFeedback(rec.id, rating)}
-          />
-        ))}
-      </section>
-    </div>
-  );
-};
-```
-
-### 6.2. API клиент (дополнение)
-
-```tsx
-// src/api/index.ts (дополнение)
-
-// Быстрый опросник
-export const submitQuickCheck = async (data: {
-  energy: number;
-  anxiety: number;
-  emotional: number;
-  comment?: string;
-}) => {
-  return api.post('/api/v4/quick-check', data);
-};
-
-// Полный профиль
-export const submitFullProfile = async (answers: Record<string, boolean>) => {
-  return api.post('/api/v4/full-profile', { answers });
-};
-
-// Обратная связь
-export const submitFeedback = async (data: {
-  recommendation_id: string;
-  rating: number;
-  outcome?: number;
-  comment?: string;
-}) => {
-  return api.post('/api/v4/feedback', data);
-};
-```
-
----
-
-## 7. API GATEWAY (ДОПОЛНЕНИЕ)
-
-```python
-# api_gateway/routes.py (дополнение)
-
-from fastapi import APIRouter, Request
-
-router = APIRouter()
-
-# Существующие маршруты для Astro
-@router.get("/api/v3/forecast")
-async def forecast_v3(request: Request):
-    # Прокси на Astro Service (без изменений)
-    return await proxy_to_astro(request)
-
-# Новые маршруты для Psychometry
-@router.post("/api/v4/quick-check")
-async def quick_check(request: Request):
-    # Прокси на Psychometry Service
-    return await proxy_to_psychometry(request)
-
-@router.get("/api/v4/state")
-async def get_state(request: Request):
-    return await proxy_to_psychometry(request)
-
-@router.get("/api/v4/achievements")
-async def get_achievements(request: Request):
-    return await proxy_to_psychometry(request)
-
-@router.get("/api/v4/window")
-async def get_window(request: Request):
-    return await proxy_to_psychometry(request)
-
-@router.get("/api/v4/recommendations")
-async def get_recommendations(request: Request):
-    return await proxy_to_psychometry(request)
-
-@router.post("/api/v4/feedback")
-async def submit_feedback(request: Request):
-    return await proxy_to_psychometry(request)
-```
-
----
-
-## 8. DOCKER COMPOSE (ДОПОЛНЕНИЕ)
-
-```yaml
-# docker-compose.yml (дополнение)
-
-services:
-  # Существующий Astro Service
-  astro-service:
-    # ... без изменений
-  
-  # Новый Psychometry Service
-  psychometry-service:
-    build: ./psychometry-service
-    container_name: psychometry-service
-    environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
-      ASTRO_SERVICE_URL: http://astro-service:8000
-      REDIS_URL: redis://redis:6379/0
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      PSYCHOMETRY_ENABLED: ${PSYCHOMETRY_ENABLED:-true}
-    ports:
-      - "8002:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      astro-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-    networks:
-      - app-network
-
-  # Новый Redis
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - app-network
-
-  # Celery Worker (для batch)
-  celery-worker:
-    build: ./psychometry-service
-    container_name: celery-worker
-    command: celery -A src.workers.batch worker -l info
-    environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
-      ASTRO_SERVICE_URL: http://astro-service:8000
-      REDIS_URL: redis://redis:6379/0
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      astro-service:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - app-network
-
-  # Celery Beat (для расписания)
-  celery-beat:
-    build: ./psychometry-service
-    container_name: celery-beat
-    command: celery -A src.workers.batch beat -l info
-    environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - app-network
-```
-
----
-
-## 9. ПЛАН ВНЕДРЕНИЯ
-
-### 9.1. Фаза 1: MVP (2 недели)
-
-| Задача | Оценка | Кто |
-|--------|--------|-----|
-| Создать схему `psych` в PostgreSQL | 2 ч | Backend |
-| Реализовать быстрый опросник (10 вопросов) | 4 ч | Backend |
-| Реализовать `/api/v4/state` | 4 ч | Backend |
-| Реализовать `/api/v4/window` | 4 ч | Backend |
-| Реализовать `/api/v4/recommendations` | 4 ч | Backend |
-| Ночной batch (биоритмы → Redis) | 4 ч | Backend |
-| Новая вкладка во Frontend | 8 ч | Frontend |
-| Интеграция с API Gateway | 2 ч | Backend |
-| **ИТОГО** | **32 ч** | **~2 недели** |
-
-### 9.2. Фаза 2: Углубление (1 месяц)
-
-| Задача | Оценка | Кто |
-|--------|--------|-----|
-| Полный опросник (50-100 вопросов) | 8 ч | Backend |
-| 4 категории индексов с деталями | 8 ч | Backend |
-| Feedback-сбор | 4 ч | Backend |
-| Alignment модуль внутри Psychometry | 8 ч | Backend |
-| **ИТОГО** | **28 ч** | **~1 месяц** |
-
-### 9.3. Фаза 3: Интеллект (3 месяца)
-
-| Задача | Оценка | Кто |
-|--------|--------|-----|
-| Накопление 500+ feedback | Автоматически | - |
-| Команда `./manage.py calibrate` | 4 ч | Backend |
-| A/B тестирование весов | 8 ч | Backend |
-| **ИТОГО** | **12 ч** | **~3 месяца** |
-
----
-
-## 10. ЧЕК-ЛИСТ ПРИЁМКИ
-
-### 10.1. Функциональные требования
-
-- [ ] Быстрый опросник сохраняет ответы
-- [ ] Состояние отображает 3 метрики
-- [ ] Окно показывает уровень и отклонения
-- [ ] Индексы показывают 4 категории
-- [ ] Рекомендации генерируются (3-5 шт)
-- [ ] Обратная связь сохраняется
-
-### 10.2. Технические требования
-
-- [ ] Ночной batch работает (Celery Beat)
-- [ ] Redis кэширует данные (TTL 48h)
-- [ ] API отвечает < 200 мс
-- [ ] Новая вкладка во Frontend отображается
-- [ ] Существующий Astro Service не затронут
-
-### 10.3. UX требования
-
-- [ ] Загрузка отображается при ожидании
-- [ ] Ошибки отображаются понятно
-- [ ] Все кликабельные элементы имеют обратную связь
-- [ ] Новая вкладка не пугает пользователя
-
----
-
-## 11. ЗАКЛЮЧЕНИЕ
-
-### 11.1. Что сделано
-
-- ✅ 1 новый сервис (Psychometry Service)
-- ✅ 1 новая схема в БД (5 таблиц)
-- ✅ 1 новая вкладка во Frontend
-- ✅ Ночной batch + Redis кэш
-- ✅ Базовые алгоритмы (состояние, индексы, окна, рекомендации)
-
-### 11.2. Что отложено
-
-- ⏳ MinIO — до 100 ГБ данных
-- ⏳ Alignment Engine как отдельный сервис
-- ⏳ Analytics Worker как отдельный сервис
-- ⏳ Final Tuner как сервис
-
-### 11.3. Ключевые метрики успеха
-
-| Метрика | Целевое значение |
-|---------|------------------|
-| Время ответа API | < 200 мс |
-| Retention (новая вкладка) | +15% |
-| Конверсия в опросник | > 30% |
-| Feedback rate | > 20% |
-
----
-дополнения и исправления:
-# ПОЛНОЕ ТЕХНИЧЕСКОЕ ЗАДАНИЕ
-
-## Внедрение Psychometry Service v4.0 с интеграцией в существующую астрологическую систему
-
-**Версия документа:** 5.0 (полная)  
-**Дата:** 02.09.2026  
-**Статус:** Утверждён
-
----
-
-## 1. ВВЕДЕНИЕ
-
-### 1.1. Обзор проекта
-
-Настоящий документ описывает архитектуру, модель данных, API и алгоритмы для интеграции **Psychometry Service v4.0** в существующую систему астрологического прогнозирования. Проект реализует философскую модель «Наблюдатель → Субъект → Фон» и добавляет пользовательский слой **осознанного управления состоянием** поверх существующего астропредикта.
-
-### 1.2. Существующая система (Astro Service)
-
-У вас уже работает:
-
-**Astro Service (Python/FastAPI):**
-- Расчёт эфемерид через Swiss Ephemeris (`pyswisseph`)
-- Построение натальной карты с системой домов Whole Sign
-- Расчёт Вимшоттари даш (ведическая традиция)
-- Генерация прогнозов по 9 осям Magic Profile
-- Психоматрица (квадрат Пифагора) как baseline
-- Blind Protocol (защита от самосбывающихся пророчеств)
-- PostgreSQL для хранения пользователей, натальных карт, прогнозов
-
-**API Gateway (nginx):**
-- Маршрутизация `/api/v3/*` → Astro Service
-- Аутентификация через JWT
-
-**Frontend (React/TypeScript):**
-- Астропредикт с вкладками
-- Профиль пользователя
-- История прогнозов
-
-### 1.3. Что добавляется (Psychometry Service v4.0)
-
-**Новый микросервис на FastAPI:**
-
-| Компонент | Описание |
-|-----------|----------|
-| **Быстрый опросник** | 10 вопросов (энергия/тревога/эмоции) — ежедневно |
-| **Полный профиль** | 50-100 вопросов для baseline — раз в месяц |
-| **Состояние** | 3 метрики (энергия, тревога, эмоции) + осознанность |
-| **Индексы достижения** | 4 категории (семья, работа, здоровье, саморазвитие) |
-| **Окна возможностей** | Текущее состояние с отклонениями по категориям |
-| **Рекомендации** | 3-5 персонализированных действий |
-| **Практика «Пауза»** | Интерактивный инструмент осознанности (15 сек) |
-| **Обратная связь** | Оценка рекомендаций для обучения системы |
-
-### 1.4. Философская модель (6 шагов практики)
-
-```
-1. СХВАТЫВАНИЕ  → 2. ПАУЗА  → 3. РАСПОЗНАВАНИЕ  → 4. ВЫБОР  → 5. ЗАПЕЧАТЛЕНИЕ  → 6. ИНТЕГРАЦИЯ
-     ↓              ↓              ↓                ↓              ↓                ↓
-   заметить      остановиться   отличить факт    принять        запомнить      применить
-   импульс       на 15 сек      от интерпрет.    решение        новое          в жизнь
-```
-
-**Ключевой принцип:** Не предсказывать будущее, а помогать осознать настоящее и принять решение.
-
-**Интерактивный элемент:** Кнопка «Пауза» с таймером 15 секунд и полем ввода: «Что я сейчас автоматически подумал?».
-
----
-
-## 2. ОБЩАЯ АРХИТЕКТУРА
-
-### 2.1. Схема взаимодействия сервисов
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -1667,6 +159,7 @@ services:
 │  │  ┌─────────────────────────────────────────────────────────────────┐   │   │
 │  │  │  Astro Context Client (fallback)                                │   │   │
 │  │  │  • Redis (приоритет) → Astro Service (fallback)                │   │   │
+│  │  │  • Circuit Breaker (3 failures → OPEN, 60s recovery)           │   │   │
 │  │  │  • Нейтральный контекст (при недоступности)                    │   │   │
 │  │  └─────────────────────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
@@ -1689,8 +182,10 @@ services:
 │                            POSTGRESQL (existing)                               │
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
-│  │  astro schema (существующая)                                            │   │
+│  │  astro schema (существующая + новая)                                    │   │
 │  │  • users, natal_charts, ephemeris_cache, forecasts                     │   │
+│  │  • biorhythms_cache (новая)                                            │   │
+│  │  • transits_cache (новая)                                              │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
@@ -1706,9 +201,10 @@ services:
                                          │
                                          ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                   REDIS (новый)                                │
+│                                   REDIS (новый — общий для обоих сервисов)     │
 │                                                                                 │
 │  • Кэш астро-контекста (TTL 48h)                                              │
+│  • Кэш эфемерид (TTL 24h)                                                      │
 │  • Кэш состояний (TTL 5min)                                                    │
 │  • Persistence: appendonly yes                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -1721,7 +217,7 @@ services:
 | **Astro Service** | ✅ Существующий | Дополняется внутренними эндпоинтами и ночным batch |
 | **Psychometry Service** | 🆕 Новый | 1 контейнер FastAPI + 1 контейнер worker |
 | **PostgreSQL** | ✅ Существующий | Добавляется схема `psych` (5 таблиц) |
-| **Redis** | 🆕 Новый | Кэш (TTL 48h) + persistence |
+| **Redis** | 🆕 Новый | Общий кэш для Astro + Psychometry |
 | **Frontend** | ✅ Существующий | Добавляется 1 вкладка + кнопка «Пауза» |
 | **API Gateway** | ✅ Существующий | Добавляется маршрутизация `/api/v4/*` |
 
@@ -1732,143 +228,9 @@ services:
 
 ---
 
-## 3. НОВЫЕ МОДУЛИ ASTRO SERVICE
+## 3. МОДЕЛЬ ДАННЫХ
 
-### 3.1. Внутренние эндпоинты для Psychometry
-
-```http
-GET /internal/v4/users/{user_id}/biorhythms?date={date}
-```
-
-**Назначение:** Возвращает биоритмы пользователя (23/28/33 дня).
-
-**Заголовки:**
-```
-X-Internal-API-Key: ${INTERNAL_API_KEY}
-X-Service-Name: psychometry-service
-```
-
-**Ответ:**
-```json
-{
-  "user_id": 123,
-  "date": "2026-09-02",
-  "biorhythms": {
-    "physical": 0.32,
-    "emotional": -0.45,
-    "intellectual": 0.78
-  },
-  "phases": {
-    "physical": "rising",
-    "emotional": "falling",
-    "intellectual": "peak"
-  }
-}
-```
-
----
-
-```http
-GET /internal/v4/users/{user_id}/transits?date={date}
-```
-
-**Назначение:** Возвращает упрощённые транзиты (только сила планет).
-
-**Ответ:**
-```json
-{
-  "user_id": 123,
-  "date": "2026-09-02",
-  "transits": {
-    "Saturn": {"house": 8, "strength": 0.7, "sign": "Pisces"},
-    "Jupiter": {"house": 5, "strength": 0.6, "sign": "Taurus"}
-  },
-  "planet_strengths": {
-    "Sun": 0.75,
-    "Moon": 0.62,
-    "Mars": 0.48,
-    "Mercury": 0.55,
-    "Venus": 0.68,
-    "Jupiter": 0.82,
-    "Saturn": 0.45
-  }
-}
-```
-
----
-
-```http
-GET /internal/v4/seasonal-boosts?date={date}
-```
-
-**Назначение:** Возвращает сезонные бусты для всех категорий.
-
-**Ответ:**
-```json
-{
-  "date": "2026-09-02",
-  "season": "autumn",
-  "boosts": {
-    "family": 0.05,
-    "work": 0.0,
-    "health": 0.0,
-    "self": 0.05
-  }
-}
-```
-
----
-
-### 3.2. Ночной batch (запись в Redis)
-
-```python
-# astro-service/src/workers/batch.py
-
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import date
-import json
-
-def precompute_daily_context():
-    """
-    Каждую ночь в 3:00:
-    1. Для всех активных пользователей (за последние 7 дней)
-    2. Рассчитывает биоритмы, транзиты, сезонные бусты
-    3. Сохраняет в Redis с TTL 48 часов
-    """
-    logger.info("Starting daily context precomputation...")
-    users = get_active_users()
-    today = date.today()
-    
-    for user_id in users:
-        biorhythms = calculate_biorhythms(user_id, today)
-        transits = calculate_transits(user_id, today)
-        boosts = get_seasonal_boosts(today)
-        
-        key = f"astro:{user_id}:{today.isoformat()}"
-        value = {
-            'biorhythms': biorhythms,
-            'transits': transits,
-            'seasonal_boosts': boosts
-        }
-        redis_client.setex(key, 48 * 3600, json.dumps(value))
-    
-    logger.info(f"Precomputed context for {len(users)} users")
-
-# Планировщик
-scheduler = BackgroundScheduler()
-scheduler.add_job(
-    precompute_daily_context,
-    'cron',
-    hour=3,
-    minute=0,
-    id='daily_context'
-)
-scheduler.start()
-```
-
----
-
-### 3.3. Новые таблицы в `astro` схеме
+### 3.1. Схема `astro` (дополнения)
 
 ```sql
 -- ============================================================
@@ -1906,11 +268,7 @@ CREATE TABLE astro.transits_cache (
 );
 ```
 
----
-
-## 4. МОДЕЛЬ ДАННЫХ PSYCHOMETRY
-
-### 4.1. Схема `psych` (5 таблиц + 1 конфиг)
+### 3.2. Схема `psych` (новая)
 
 ```sql
 -- ============================================================
@@ -2086,7 +444,161 @@ INSERT INTO psych.recommendation_templates (category, level, template, priority,
 
 ---
 
-## 5. PSYCHOMETRY SERVICE — ПОЛНАЯ СПЕЦИФИКАЦИЯ
+## 4. НОВЫЕ МОДУЛИ ASTRO SERVICE
+
+### 4.1. Внутренние эндпоинты для Psychometry
+
+```http
+GET /internal/v4/users/{user_id}/biorhythms?date={date}
+```
+
+**Назначение:** Возвращает биоритмы пользователя (23/28/33 дня).
+
+**Заголовки:**
+```
+X-Internal-API-Key: ${INTERNAL_API_KEY}
+X-Service-Name: psychometry-service
+```
+
+**Ответ:**
+```json
+{
+  "user_id": 123,
+  "date": "2026-09-02",
+  "biorhythms": {
+    "physical": 0.32,
+    "emotional": -0.45,
+    "intellectual": 0.78
+  },
+  "phases": {
+    "physical": "rising",
+    "emotional": "falling",
+    "intellectual": "peak"
+  }
+}
+```
+
+---
+
+```http
+GET /internal/v4/users/{user_id}/transits?date={date}
+```
+
+**Назначение:** Возвращает упрощённые транзиты (только сила планет).
+
+**Ответ:**
+```json
+{
+  "user_id": 123,
+  "date": "2026-09-02",
+  "transits": {
+    "Saturn": {"house": 8, "strength": 0.7, "sign": "Pisces"},
+    "Jupiter": {"house": 5, "strength": 0.6, "sign": "Taurus"}
+  },
+  "planet_strengths": {
+    "Sun": 0.75,
+    "Moon": 0.62,
+    "Mars": 0.48,
+    "Mercury": 0.55,
+    "Venus": 0.68,
+    "Jupiter": 0.82,
+    "Saturn": 0.45
+  }
+}
+```
+
+---
+
+```http
+GET /internal/v4/seasonal-boosts?date={date}
+```
+
+**Назначение:** Возвращает сезонные бусты для всех категорий.
+
+**Ответ:**
+```json
+{
+  "date": "2026-09-02",
+  "season": "autumn",
+  "boosts": {
+    "family": 0.05,
+    "work": 0.0,
+    "health": 0.0,
+    "self": 0.05
+  }
+}
+```
+
+---
+
+### 4.2. Ночной batch с пагинацией
+
+```python
+# astro-service/src/workers/batch.py
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import date
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+def precompute_daily_context():
+    """
+    Каждую ночь в 3:00:
+    1. Для всех активных пользователей (за последние 7 дней)
+    2. Рассчитывает биоритмы, транзиты, сезонные бусты
+    3. Сохраняет в Redis с TTL 48 часов
+    """
+    logger.info("Starting daily context precomputation...")
+    today = date.today()
+    page_size = 100
+    offset = 0
+    total_processed = 0
+    
+    while True:
+        users = get_active_users(limit=page_size, offset=offset)
+        if not users:
+            break
+        
+        for user_id in users:
+            try:
+                biorhythms = calculate_biorhythms(user_id, today)
+                transits = calculate_transits(user_id, today)
+                boosts = get_seasonal_boosts(today)
+                
+                key = f"astro:{user_id}:{today.isoformat()}"
+                value = {
+                    'biorhythms': biorhythms,
+                    'transits': transits,
+                    'seasonal_boosts': boosts
+                }
+                redis_client.setex(key, 48 * 3600, json.dumps(value))
+                total_processed += 1
+                
+            except Exception as e:
+                logger.error(f"Failed for user {user_id}: {e}")
+        
+        logger.info(f"Processed {offset + len(users)} users")
+        offset += page_size
+    
+    logger.info(f"Daily context precomputation completed: {total_processed} users")
+
+# Планировщик
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    precompute_daily_context,
+    'cron',
+    hour=3,
+    minute=0,
+    id='daily_context'
+)
+scheduler.start()
+```
+
+---
+
+## 5. PSYCHOMETRY SERVICE
 
 ### 5.1. Структура сервиса
 
@@ -2094,6 +606,10 @@ INSERT INTO psych.recommendation_templates (category, level, template, priority,
 psychometry-service/
 ├── Dockerfile
 ├── requirements.txt
+├── alembic/
+│   ├── versions/
+│   │   └── 001_create_psych_schema.py
+│   └── env.py
 ├── src/
 │   ├── main.py                      # Точка входа
 │   ├── settings.py                  # Конфигурация
@@ -2107,13 +623,13 @@ psychometry-service/
 │   ├── core/
 │   │   ├── scorer.py                # T-scores для полного профиля
 │   │   ├── state_synthesizer.py     # Синтез состояния
-│   │   ├── achievement_calc.py      # Индексы (исправленная формула)
+│   │   ├── achievement_calc.py      # Индексы (сумма весов = 1.0)
 │   │   ├── window_calc.py           # Окна (с floor 0.05)
 │   │   ├── recommendation_gen.py    # Рекомендации (из шаблонов БД)
-│   │   └── awareness.py             # Осознанность (из профиля/эвристика)
+│   │   └── awareness.py             # Осознанность
 │   │
 │   ├── clients/
-│   │   ├── astro_client.py          # Fallback Redis → Astro
+│   │   ├── astro_client.py          # Circuit Breaker + fallback
 │   │   └── redis_client.py
 │   │
 │   ├── services/
@@ -2122,9 +638,6 @@ psychometry-service/
 │   │
 │   └── workers/
 │       └── batch.py                 # Отдельный контейнер для batch
-│
-├── migrations/
-│   └── versions/
 │
 ├── tests/
 │   ├── unit/
@@ -2334,107 +847,54 @@ async def get_practice_history(
     """
     history = await service.get_practice_history(user_id, limit)
     return {"success": True, "history": history}
+
+
+# ============================================================
+# HEALTH CHECK (с проверкой зависимостей)
+# ============================================================
+
+@router.get("/health")
+async def health(
+    service: PsychometryService = Depends(get_service)
+):
+    """
+    Health check с проверкой всех зависимостей.
+    """
+    status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "dependencies": {}
+    }
+    
+    # PostgreSQL
+    try:
+        await service.db_session.execute("SELECT 1")
+        status["dependencies"]["postgres"] = "healthy"
+    except Exception as e:
+        status["dependencies"]["postgres"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    # Redis
+    try:
+        service.redis_client.ping()
+        status["dependencies"]["redis"] = "healthy"
+    except Exception as e:
+        status["dependencies"]["redis"] = f"unhealthy: {e}"
+        status["status"] = "degraded"
+    
+    # Astro Service (опционально)
+    try:
+        await service.astro_client.health_check()
+        status["dependencies"]["astro"] = "healthy"
+    except Exception:
+        status["dependencies"]["astro"] = "unavailable (fallback active)"
+    
+    return status
 ```
 
-### 5.3. Pydantic схемы
+### 5.3. Базовые алгоритмы
 
-```python
-# src/api/schemas.py
-
-from pydantic import BaseModel, Field
-from uuid import UUID
-from datetime import datetime, date
-from typing import Optional, Dict, List, Literal
-
-
-class QuickCheckRequest(BaseModel):
-    """Запрос быстрого опросника."""
-    energy: int = Field(..., ge=1, le=5)
-    anxiety: int = Field(..., ge=1, le=5)
-    emotional: int = Field(..., ge=1, le=5)
-    comment: Optional[str] = None
-
-
-class FullProfileRequest(BaseModel):
-    """Запрос полного профиля."""
-    answers: Dict[str, bool]  # ключи вопросов → boolean
-
-
-class FeedbackRequest(BaseModel):
-    """Запрос обратной связи."""
-    recommendation_set_id: UUID
-    recommendation_index: int = Field(..., ge=0)
-    rating: int = Field(..., ge=1, le=5)
-    outcome: Optional[float] = Field(None, ge=0, le=1)
-    comment: Optional[str] = None
-
-
-class PracticeRequest(BaseModel):
-    """Запрос практики "Пауза"."""
-    thought: str
-    duration: int = Field(..., ge=0, le=15)
-
-
-class StateMetrics(BaseModel):
-    """3 метрики состояния."""
-    energy_score: float = Field(..., ge=0, le=1)
-    anxiety_score: float = Field(..., ge=0, le=1)
-    emotional_score: float = Field(..., ge=0, le=1)
-
-
-class Awareness(BaseModel):
-    """Осознанность."""
-    level: Literal['HIGH', 'MEDIUM', 'LOW']
-    tip: str
-    practice: str
-
-
-class UserState(BaseModel):
-    """Полное состояние пользователя."""
-    user_id: int
-    state_date: date
-    metrics: StateMetrics
-    state_level: Literal['HIGH', 'MEDIUM', 'LOW']
-    state_summary: str
-    awareness: Awareness
-    quick_check: Optional[Dict] = None
-
-
-class AchievementIndex(BaseModel):
-    """Индекс достижения по категории."""
-    value: float = Field(..., ge=0, le=1)
-    level: Literal['HIGH', 'MEDIUM', 'LOW', 'CRITICAL']
-    clarity: float = Field(..., ge=0, le=1)
-    synchronicity: float = Field(..., ge=0, le=1)
-    resource: float = Field(..., ge=0, le=1)
-    inertia: float = Field(..., ge=0, le=1)
-    recommendation: str
-
-
-class OpportunityWindow(BaseModel):
-    """Окно возможностей."""
-    value: float = Field(..., ge=0.05, le=1)
-    level: Literal['OPEN', 'PARTIAL', 'CLOSED']
-    deviations: Dict[str, float]
-    practice_recommendation: str
-    play_recommendation: str
-
-
-class Recommendation(BaseModel):
-    """Одна рекомендация."""
-    id: int  # индекс в массиве
-    action: str
-    reason: str
-    priority: int = Field(..., ge=1, le=3)
-    duration: str
-    category: Optional[str] = None
-```
-
----
-
-## 6. ОСНОВНЫЕ АЛГОРИТМЫ
-
-### 6.1. Состояние (State Synthesizer)
+#### 5.3.1. Состояние (State Synthesizer)
 
 ```python
 # src/core/state_synthesizer.py
@@ -2525,9 +985,35 @@ class StateSynthesizer:
                 'tip': 'Начните с простого наблюдения',
                 'practice': 'Упражнение "Здесь и сейчас"'
             }
+    
+    def _generate_summary(self, energy, anxiety, emotional, level):
+        """Генерирует текстовую сводку."""
+        parts = []
+        if energy >= 0.6:
+            parts.append("энергия на подъёме")
+        elif energy <= 0.3:
+            parts.append("энергия снижена")
+        else:
+            parts.append("энергия в норме")
+        
+        if anxiety >= 0.6:
+            parts.append("тревожность повышена")
+        elif anxiety <= 0.3:
+            parts.append("тревожность снижена")
+        else:
+            parts.append("тревожность умеренная")
+        
+        if emotional >= 0.6:
+            parts.append("эмоциональный фон повышен")
+        elif emotional <= 0.3:
+            parts.append("эмоциональный фон снижен")
+        else:
+            parts.append("эмоциональный фон в норме")
+        
+        return f"Ваше состояние: {', '.join(parts)}. Уровень: {level.lower()}."
 ```
 
-### 6.2. Индексы достижения (исправленная формула)
+#### 5.3.2. Индексы достижения (исправленная формула)
 
 ```python
 # src/core/achievement_calc.py
@@ -2570,6 +1056,7 @@ class AchievementCalculator:
     
     def _load_templates(self):
         """Загружает шаблоны из БД."""
+        from ..models import RecommendationTemplate
         templates = self.db_session.query(RecommendationTemplate).filter(
             RecommendationTemplate.is_active == True
         ).all()
@@ -2663,9 +1150,19 @@ class AchievementCalculator:
         month = datetime.now().month
         config = self.CATEGORIES.get(category_name, {})
         return config.get('seasonal_boost', {}).get(month, 0)
+    
+    def _get_fallback(self, category_name: str, level: str) -> str:
+        """Fallback рекомендация."""
+        fallbacks = {
+            'family': {'HIGH': 'Проведите время с семьёй', 'MEDIUM': 'Поговорите с близкими', 'LOW': 'Отдохните', 'CRITICAL': 'Побудьте наедине'},
+            'work': {'HIGH': 'Начните новый проект', 'MEDIUM': 'Работайте над текущими задачами', 'LOW': 'Отложите решения', 'CRITICAL': 'Рутина'},
+            'health': {'HIGH': 'Займитесь спортом', 'MEDIUM': 'Разомнитесь', 'LOW': 'Отдохните', 'CRITICAL': 'Обязательный отдых'},
+            'self': {'HIGH': 'Творите', 'MEDIUM': 'Развивайтесь', 'LOW': 'Отдохните', 'CRITICAL': 'Просто отдыхайте'}
+        }
+        return fallbacks.get(category_name, {}).get(level, 'Рекомендация')
 ```
 
-### 6.3. Окно возможностей (с floor 0.05)
+#### 5.3.3. Окно возможностей (с floor 0.05)
 
 ```python
 # src/core/window_calc.py
@@ -2717,9 +1214,35 @@ class WindowCalculator:
     def _calculate_deviations(self, achievements):
         avg = sum([a.get('value', 0.5) for a in achievements.values()]) / len(achievements)
         return {cat: round(idx.get('value', 0.5) - avg, 3) for cat, idx in achievements.items()}
+    
+    def _calc_background_resistance(self, astro_context):
+        """Фоновое сопротивление."""
+        if not astro_context:
+            return 0.3
+        
+        bio = astro_context.get('biorhythms', {})
+        phys = (bio.get('physical', 0) + 1) / 2
+        emot = (bio.get('emotional', 0) + 1) / 2
+        intel = (bio.get('intellectual', 0) + 1) / 2
+        
+        return 1 - ((phys + emot + intel) / 3)
+    
+    def _calc_subject_resource(self, state):
+        """Субъектный ресурс."""
+        energy = state.get('energy_score', 0.5)
+        anxiety = state.get('anxiety_score', 0.5)
+        return (energy + (1 - anxiety)) / 2
+    
+    def _calc_synergy(self, state, achievements, astro_context):
+        """Синергия."""
+        avg_achievement = sum([
+            a.get('value', 0.5) for a in achievements.values()
+        ]) / len(achievements) if achievements else 0.5
+        
+        return (state.get('emotional_score', 0.5) + avg_achievement) / 2
 ```
 
-### 6.4. Рекомендации (из шаблонов БД)
+#### 5.3.4. Рекомендации (из шаблонов БД)
 
 ```python
 # src/core/recommendation_gen.py
@@ -2733,6 +1256,7 @@ class RecommendationGenerator:
         self._load_templates()
     
     def _load_templates(self):
+        from ..models import RecommendationTemplate
         templates = self.db_session.query(RecommendationTemplate).filter(
             RecommendationTemplate.is_active == True
         ).all()
@@ -2798,35 +1322,75 @@ class RecommendationGenerator:
         return recommendations[:5]
 ```
 
----
+### 5.4. Fallback стратегии
 
-## 7. FALLBACK ДЛЯ ASTRO SERVICE
+#### 5.4.1. Astro Client с Circuit Breaker
 
 ```python
 # src/clients/astro_client.py
 
 import json
 import logging
+import time
+import httpx
 from typing import Dict
 from datetime import date
-import httpx
 
 logger = logging.getLogger(__name__)
 
+
+class CircuitBreaker:
+    """Circuit Breaker для защиты от каскадных отказов."""
+    
+    def __init__(self, failure_threshold=3, recovery_timeout=60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failures = 0
+        self.last_failure_time = None
+        self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
+    
+    def call(self, func, *args, **kwargs):
+        if self.state == 'OPEN':
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = 'HALF_OPEN'
+            else:
+                raise CircuitBreakerOpenError("Circuit breaker is OPEN")
+        
+        try:
+            result = func(*args, **kwargs)
+            if self.state == 'HALF_OPEN':
+                self.state = 'CLOSED'
+                self.failures = 0
+            return result
+        except Exception as e:
+            self.failures += 1
+            self.last_failure_time = time.time()
+            if self.failures >= self.failure_threshold:
+                self.state = 'OPEN'
+            raise
+
+
+class CircuitBreakerOpenError(Exception):
+    """Исключение при открытом Circuit Breaker."""
+    pass
+
+
 class AstroClient:
     """
-    Клиент для Astro Service с fallback для Redis.
+    Клиент для Astro Service с fallback для Redis и Circuit Breaker.
     """
     
     def __init__(self, base_url: str, redis_client, api_key: str):
         self.base_url = base_url
         self.redis = redis_client
         self.api_key = api_key
+        self.circuit_breaker = CircuitBreaker()
+        self._client = httpx.AsyncClient(timeout=5.0)
     
-    def get_astro_context(self, user_id: int, target_date: date) -> Dict:
+    async def get_astro_context(self, user_id: int, target_date: date) -> Dict:
         """
         1. Пробует Redis (быстро)
-        2. Fallback — прямой запрос к Astro Service
+        2. Fallback — прямой запрос к Astro Service с Circuit Breaker
         3. Записывает в Redis для следующих запросов
         """
         key = f"astro:{user_id}:{target_date.isoformat()}"
@@ -2837,40 +1401,305 @@ class AstroClient:
             logger.debug(f"Cache hit for {key}")
             return json.loads(cached)
         
-        # 2. Fallback
+        # 2. Fallback через Circuit Breaker
         logger.warning(f"Cache miss for {key}, fetching from Astro Service")
         try:
-            biorhythms = self._get_biorhythms(user_id, target_date)
-            transits = self._get_transits(user_id, target_date)
-            boosts = self._get_seasonal_boosts(target_date)
-            
-            result = {
-                'biorhythms': biorhythms,
-                'transits': transits,
-                'seasonal_boosts': boosts
-            }
+            result = await self.circuit_breaker.call(
+                self._fetch_from_astro, user_id, target_date
+            )
             
             # 3. Записываем в Redis
             self.redis.setex(key, 48 * 3600, json.dumps(result))
             return result
             
-        except Exception as e:
+        except (CircuitBreakerOpenError, Exception) as e:
             logger.error(f"Failed to fetch astro context: {e}")
-            return {
-                'biorhythms': {'physical': 0, 'emotional': 0, 'intellectual': 0},
-                'transits': {},
-                'seasonal_boosts': {'family': 0, 'work': 0, 'health': 0, 'self': 0}
-            }
+            return self._get_neutral_context()
     
-    def _get_biorhythms(self, user_id: int, target_date: date) -> Dict:
-        response = httpx.get(
+    async def _fetch_from_astro(self, user_id: int, target_date: date) -> Dict:
+        """Прямой запрос к Astro Service."""
+        biorhythms = await self._get_biorhythms(user_id, target_date)
+        transits = await self._get_transits(user_id, target_date)
+        boosts = await self._get_seasonal_boosts(target_date)
+        
+        return {
+            'biorhythms': biorhythms,
+            'transits': transits,
+            'seasonal_boosts': boosts
+        }
+    
+    async def _get_biorhythms(self, user_id: int, target_date: date) -> Dict:
+        response = await self._client.get(
             f"{self.base_url}/internal/v4/users/{user_id}/biorhythms",
             params={"date": target_date.isoformat()},
-            headers={"X-Internal-API-Key": self.api_key},
-            timeout=5.0
+            headers={"X-Internal-API-Key": self.api_key}
         )
         response.raise_for_status()
         return response.json()
+    
+    async def _get_transits(self, user_id: int, target_date: date) -> Dict:
+        response = await self._client.get(
+            f"{self.base_url}/internal/v4/users/{user_id}/transits",
+            params={"date": target_date.isoformat()},
+            headers={"X-Internal-API-Key": self.api_key}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    async def _get_seasonal_boosts(self, target_date: date) -> Dict:
+        response = await self._client.get(
+            f"{self.base_url}/internal/v4/seasonal-boosts",
+            params={"date": target_date.isoformat()},
+            headers={"X-Internal-API-Key": self.api_key}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def _get_neutral_context(self) -> Dict:
+        """Нейтральный контекст при недоступности Astro Service."""
+        return {
+            'biorhythms': {'physical': 0, 'emotional': 0, 'intellectual': 0},
+            'transits': {},
+            'seasonal_boosts': {'family': 0, 'work': 0, 'health': 0, 'self': 0}
+        }
+    
+    async def health_check(self) -> bool:
+        """Проверка доступности Astro Service."""
+        try:
+            response = await self._client.get(f"{self.base_url}/health", timeout=2.0)
+            return response.status_code == 200
+        except Exception:
+            return False
+```
+
+---
+
+## 6. FRONTEND (НОВАЯ ВКЛАДКА)
+
+### 6.1. Компоненты
+
+```tsx
+// src/components/StateTab/StateTab.tsx
+
+import React, { useEffect, useState } from 'react';
+import { MetricCard, AchievementCard, RecommendationItem, WindowIndicator } from './components';
+import { api } from '../../api';
+
+export const StateTab: React.FC = () => {
+  const [state, setState] = useState(null);
+  const [achievements, setAchievements] = useState(null);
+  const [window, setWindow] = useState(null);
+  const [recommendations, setRecommendations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    fetchState();
+  }, []);
+  
+  const fetchState = async () => {
+    setLoading(true);
+    try {
+      const [stateRes, achRes, winRes, recRes] = await Promise.all([
+        api.get('/api/v4/state'),
+        api.get('/api/v4/achievements'),
+        api.get('/api/v4/window'),
+        api.get('/api/v4/recommendations')
+      ]);
+      
+      setState(stateRes.data.state);
+      setAchievements(achRes.data.achievements);
+      setWindow(winRes.data.window);
+      setRecommendations(recRes.data.recommendations);
+    } catch (error) {
+      console.error('Failed to fetch state:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const submitFeedback = async (recommendationId: string, rating: number) => {
+    try {
+      await api.post('/api/v4/feedback', {
+        recommendation_set_id: recommendationId,
+        rating
+      });
+    } catch (error) {
+      console.error('Failed to submit feedback:', error);
+    }
+  };
+  
+  if (loading) return <div className="loading">Загрузка...</div>;
+  
+  return (
+    <div className="state-tab">
+      {/* Состояние */}
+      <section className="state-section">
+        <h2>📊 Ваше состояние</h2>
+        <div className="metrics-grid">
+          <MetricCard
+            label="Энергия"
+            value={state.energy_score}
+            level={state.energy_score > 0.6 ? 'high' : state.energy_score > 0.3 ? 'medium' : 'low'}
+            icon="⚡"
+          />
+          <MetricCard
+            label="Тревога"
+            value={state.anxiety_score}
+            level={state.anxiety_score > 0.6 ? 'high' : state.anxiety_score > 0.3 ? 'medium' : 'low'}
+            icon="🧠"
+          />
+          <MetricCard
+            label="Эмоции"
+            value={state.emotional_score}
+            level={state.emotional_score > 0.6 ? 'high' : state.emotional_score > 0.3 ? 'medium' : 'low'}
+            icon="💫"
+          />
+        </div>
+        <div className="state-summary">
+          <p>{state.state_summary}</p>
+          <div className="awareness-badge">
+            🧘 Осознанность: {state.awareness?.level || 'MEDIUM'}
+          </div>
+        </div>
+      </section>
+      
+      {/* Окно */}
+      <section className="window-section">
+        <h2>🌤️ Окно возможностей</h2>
+        <WindowIndicator
+          value={window.value}
+          level={window.level}
+          deviations={window.deviations}
+        />
+      </section>
+      
+      {/* Индексы */}
+      <section className="achievements-section">
+        <h2>📈 Индексы достижения</h2>
+        <div className="achievements-grid">
+          {Object.entries(achievements).map(([key, value]) => (
+            <AchievementCard
+              key={key}
+              category={key}
+              name={{
+                family: '👨‍👩‍👧‍👦 Семья',
+                work: '💼 Работа',
+                health: '❤️ Здоровье',
+                self: '🧘 Self'
+              }[key]}
+              value={value.value}
+              level={value.level}
+              recommendation={value.recommendation}
+            />
+          ))}
+        </div>
+      </section>
+      
+      {/* Рекомендации */}
+      <section className="recommendations-section">
+        <h2>📋 Рекомендации</h2>
+        {recommendations.map((rec) => (
+          <RecommendationItem
+            key={rec.id}
+            action={rec.action}
+            reason={rec.reason}
+            priority={rec.priority}
+            duration={rec.duration}
+            onFeedback={(rating) => submitFeedback(rec.id, rating)}
+          />
+        ))}
+      </section>
+    </div>
+  );
+};
+```
+
+### 6.2. API клиент
+
+```tsx
+// src/api/psychometry.ts
+
+import { api } from './index';
+
+// Быстрый опросник
+export const submitQuickCheck = async (data: {
+  energy: number;
+  anxiety: number;
+  emotional: number;
+  comment?: string;
+}) => {
+  return api.post('/api/v4/quick-check', data);
+};
+
+// Полный профиль
+export const submitFullProfile = async (answers: Record<string, boolean>) => {
+  return api.post('/api/v4/full-profile', { answers });
+};
+
+// Обратная связь
+export const submitFeedback = async (data: {
+  recommendation_set_id: string;
+  recommendation_index: number;
+  rating: number;
+  outcome?: number;
+  comment?: string;
+}) => {
+  return api.post('/api/v4/feedback', data);
+};
+
+// Практика "Пауза"
+export const savePractice = async (data: {
+  thought: string;
+  duration: number;
+}) => {
+  return api.post('/api/v4/practice', data);
+};
+```
+
+---
+
+## 7. API GATEWAY (ДОПОЛНЕНИЕ)
+
+```python
+# api_gateway/routes.py (дополнение)
+
+from fastapi import APIRouter, Request
+
+router = APIRouter()
+
+# Существующие маршруты для Astro
+@router.get("/api/v3/forecast")
+async def forecast_v3(request: Request):
+    return await proxy_to_astro(request)
+
+# Новые маршруты для Psychometry
+@router.post("/api/v4/quick-check")
+async def quick_check(request: Request):
+    return await proxy_to_psychometry(request)
+
+@router.get("/api/v4/state")
+async def get_state(request: Request):
+    return await proxy_to_psychometry(request)
+
+@router.get("/api/v4/achievements")
+async def get_achievements(request: Request):
+    return await proxy_to_psychometry(request)
+
+@router.get("/api/v4/window")
+async def get_window(request: Request):
+    return await proxy_to_psychometry(request)
+
+@router.get("/api/v4/recommendations")
+async def get_recommendations(request: Request):
+    return await proxy_to_psychometry(request)
+
+@router.post("/api/v4/feedback")
+async def submit_feedback(request: Request):
+    return await proxy_to_psychometry(request)
+
+@router.post("/api/v4/practice")
+async def save_practice(request: Request):
+    return await proxy_to_psychometry(request)
 ```
 
 ---
@@ -2962,12 +1791,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      PSYCHOMETRY_ENABLED: ${PSYCHOMETRY_ENABLED:-true}
     ports:
       - "8002:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      astro-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -2996,6 +1828,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      astro-service:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - app-network
@@ -3016,76 +1850,427 @@ networks:
 
 ---
 
-## 9. ПЛАН ВНЕДРЕНИЯ
+## 9. МИГРАЦИИ
 
-### Фаза 1: Подготовка (День 1)
+### 9.1. Миграции для Astro Service
 
-| Задача | Оценка |
-|--------|--------|
-| Создать миграции для `psych` схемы | 2 ч |
-| Добавить внутренние эндпоинты в Astro Service | 4 ч |
-| Добавить ночной batch в Astro Service | 2 ч |
-| Настроить Redis | 1 ч |
+```python
+# astro-service/alembic/versions/001_add_biorhythms_cache.py
 
-### Фаза 2: Psychometry Service (Дни 2-3)
+"""Добавление кэша биоритмов и транзитов
 
-| Задача | Оценка |
-|--------|--------|
-| Реализовать core модули | 6 ч |
-| Реализовать service слой | 6 ч |
-| Реализовать API роуты | 4 ч |
-| Реализовать JWT auth | 2 ч |
-| Написать тесты | 4 ч |
+Revision ID: 001
+Revises: 
+Create Date: 2026-09-02 10:00:00.000000
 
-### Фаза 3: Frontend (День 4)
+"""
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
-| Задача | Оценка |
-|--------|--------|
-| Новая вкладка «Моё состояние» | 4 ч |
-| Кнопка «Пауза» | 2 ч |
-| Интеграция с API | 2 ч |
+# revision identifiers, used by Alembic.
+revision = '001'
+down_revision = None
+branch_labels = None
+depends_on = None
 
-### Фаза 4: Интеграция и тестирование (День 5)
 
-| Задача | Оценка |
-|--------|--------|
-| Интеграционное тестирование | 4 ч |
-| Документация | 2 ч |
-| Деплой | 2 ч |
+def upgrade():
+    # Создаём таблицу biorhythms_cache
+    op.create_table(
+        'biorhythms_cache',
+        sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('calc_date', sa.Date(), nullable=False),
+        sa.Column('physical', sa.Float(), nullable=True),
+        sa.Column('emotional', sa.Float(), nullable=True),
+        sa.Column('intellectual', sa.Float(), nullable=True),
+        sa.Column('phase_physical', sa.String(20), nullable=True),
+        sa.Column('phase_emotional', sa.String(20), nullable=True),
+        sa.Column('phase_intellectual', sa.String(20), nullable=True),
+        sa.Column('calculated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('user_id', 'calc_date'),
+        schema='astro'
+    )
+    op.create_index(
+        'idx_bio_user_date',
+        'biorhythms_cache',
+        ['user_id', 'calc_date'],
+        schema='astro'
+    )
+    
+    # Создаём таблицу transits_cache
+    op.create_table(
+        'transits_cache',
+        sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('calc_date', sa.Date(), nullable=False),
+        sa.Column('transits', JSONB(), nullable=True),
+        sa.Column('planet_strengths', JSONB(), nullable=True),
+        sa.Column('calculated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('user_id', 'calc_date'),
+        schema='astro'
+    )
+    op.create_index(
+        'idx_transits_user_date',
+        'transits_cache',
+        ['user_id', 'calc_date'],
+        schema='astro'
+    )
 
-**Итого:** ~1 неделя для 1 backend-разработчика и 1 frontend-разработчика.
+
+def downgrade():
+    op.drop_table('transits_cache', schema='astro')
+    op.drop_table('biorhythms_cache', schema='astro')
+```
+
+### 9.2. Миграции для Psychometry Service
+
+```python
+# psychometry-service/alembic/versions/001_create_psych_schema.py
+
+"""Создание схемы psych
+
+Revision ID: 001
+Revises: 
+Create Date: 2026-09-02 10:00:00.000000
+
+"""
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+# revision identifiers, used by Alembic.
+revision = '001'
+down_revision = None
+branch_labels = None
+depends_on = None
+
+
+def upgrade():
+    # Создаём схему
+    op.execute("CREATE SCHEMA IF NOT EXISTS psych")
+    
+    # 1. full_profiles
+    op.create_table(
+        'full_profiles',
+        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('taken_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('t_scores', JSONB(), nullable=False),
+        sa.Column('baseline', JSONB(), nullable=True),
+        sa.Column('awareness_level', sa.String(10), nullable=True),
+        sa.Column('awareness_tip', sa.Text(), nullable=True),
+        sa.Column('awareness_practice', sa.Text(), nullable=True),
+        sa.Column('is_valid', sa.Boolean(), server_default='true', nullable=True),
+        sa.Column('validity_details', JSONB(), nullable=True),
+        sa.Column('astro_context', JSONB(), nullable=True),
+        sa.Column('idempotency_key', sa.String(64), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('idempotency_key'),
+        schema='psych'
+    )
+    op.create_index('idx_full_user', 'full_profiles', ['user_id', 'taken_at'], schema='psych')
+    
+    # 2. states
+    op.create_table(
+        'states',
+        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('state_date', sa.Date(), nullable=False),
+        sa.Column('calculated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('energy_score', sa.Float(), nullable=False),
+        sa.Column('anxiety_score', sa.Float(), nullable=False),
+        sa.Column('emotional_score', sa.Float(), nullable=False),
+        sa.Column('state_level', sa.String(10), nullable=False),
+        sa.Column('state_summary', sa.Text(), nullable=True),
+        sa.Column('awareness_level', sa.String(10), nullable=True),
+        sa.Column('awareness_tip', sa.Text(), nullable=True),
+        sa.Column('awareness_practice', sa.Text(), nullable=True),
+        sa.Column('quick_check', JSONB(), nullable=True),
+        sa.Column('full_profile_id', UUID(), nullable=True),
+        sa.Column('astro_context', JSONB(), nullable=True),
+        sa.Column('idempotency_key', sa.String(64), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('idempotency_key'),
+        sa.ForeignKeyConstraint(['full_profile_id'], ['psych.full_profiles.id']),
+        schema='psych'
+    )
+    op.create_index('idx_states_user', 'states', ['user_id', 'state_date'], schema='psych')
+    
+    # 3. recommendations
+    op.create_table(
+        'recommendations',
+        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('state_id', UUID(), nullable=True),
+        sa.Column('generated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('recommendations', JSONB(), nullable=False),
+        sa.Column('applied', sa.Boolean(), server_default='false', nullable=True),
+        sa.Column('applied_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['state_id'], ['psych.states.id']),
+        schema='psych'
+    )
+    op.create_index('idx_recommendations_user', 'recommendations', ['user_id'], schema='psych')
+    
+    # 4. feedback
+    op.create_table(
+        'feedback',
+        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('recommendation_set_id', UUID(), nullable=True),
+        sa.Column('recommendation_index', sa.Integer(), nullable=True),
+        sa.Column('category', sa.String(20), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('rating', sa.Integer(), nullable=False),
+        sa.Column('outcome', sa.Float(), nullable=True),
+        sa.Column('comment', sa.Text(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['recommendation_set_id'], ['psych.recommendations.id']),
+        schema='psych'
+    )
+    op.create_index('idx_feedback_user', 'feedback', ['user_id', 'created_at'], schema='psych')
+    op.create_index('idx_feedback_recommendation', 'feedback', ['recommendation_set_id'], schema='psych')
+    
+    # 5. practices
+    op.create_table(
+        'practices',
+        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('state_id', UUID(), nullable=True),
+        sa.Column('thought', sa.Text(), nullable=True),
+        sa.Column('target_duration', sa.Integer(), server_default='15', nullable=True),
+        sa.Column('actual_duration', sa.Integer(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['state_id'], ['psych.states.id']),
+        schema='psych'
+    )
+    op.create_index('idx_practices_user', 'practices', ['user_id', 'created_at'], schema='psych')
+    
+    # 6. recommendation_templates
+    op.create_table(
+        'recommendation_templates',
+        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('category', sa.String(20), nullable=False),
+        sa.Column('level', sa.String(10), nullable=False),
+        sa.Column('template', sa.Text(), nullable=False),
+        sa.Column('priority', sa.Integer(), server_default='3', nullable=True),
+        sa.Column('duration', sa.String(20), nullable=True),
+        sa.Column('is_active', sa.Boolean(), server_default='true', nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
+        sa.PrimaryKeyConstraint('id'),
+        schema='psych'
+    )
+    op.create_index('idx_templates', 'recommendation_templates', ['category', 'level', 'is_active'], schema='psych')
+    
+    # Вставляем начальные шаблоны
+    op.execute("""
+        INSERT INTO psych.recommendation_templates (category, level, template, priority, duration) VALUES
+        ('family', 'HIGH', 'Запланируйте вечерний разговор с близкими', 3, '15 мин'),
+        ('family', 'MEDIUM', 'Скажите близким что-то тёплое', 3, '5 мин'),
+        ('family', 'LOW', 'Уделите время тишине и себе', 3, '10 мин'),
+        ('family', 'CRITICAL', 'Лучше побыть наедине с собой', 1, '15 мин'),
+        ('work', 'HIGH', 'Начните новый проект', 2, '30 мин'),
+        ('work', 'MEDIUM', 'Займитесь текущими задачами', 2, '20 мин'),
+        ('work', 'LOW', 'Отложите крупные решения', 2, '15 мин'),
+        ('work', 'CRITICAL', 'Сосредоточьтесь на рутине', 1, '10 мин'),
+        ('health', 'HIGH', 'Сходите на прогулку или в спортзал', 2, '20 мин'),
+        ('health', 'MEDIUM', 'Выделите время для растяжки', 2, '10 мин'),
+        ('health', 'LOW', 'Время восстановления — отдохните', 1, '15 мин'),
+        ('health', 'CRITICAL', 'Обязательный отдых', 1, '30 мин'),
+        ('self', 'HIGH', 'Запишите свои идеи и мысли', 3, '15 мин'),
+        ('self', 'MEDIUM', 'Посмотрите что-то вдохновляющее', 3, '10 мин'),
+        ('self', 'LOW', 'Отложите грандиозные планы', 2, '10 мин'),
+        ('self', 'CRITICAL', 'Просто отдыхайте', 1, '15 мин')
+    """)
+
+
+def downgrade():
+    op.drop_table('recommendation_templates', schema='psych')
+    op.drop_table('practices', schema='psych')
+    op.drop_table('feedback', schema='psych')
+    op.drop_table('recommendations', schema='psych')
+    op.drop_table('states', schema='psych')
+    op.drop_table('full_profiles', schema='psych')
+    op.execute("DROP SCHEMA IF EXISTS psych")
+```
 
 ---
 
-## 10. ЧЕК-ЛИСТ ПРИЁМКИ
+## 10. ПЛАН ВНЕДРЕНИЯ
 
-### 10.1. Безопасность
+### Фаза 0: Подготовка (День 1)
+
+| Задача | Оценка | Ответственный |
+|--------|--------|---------------|
+| Развернуть Redis | 1 ч | DevOps |
+| Создать миграции для `astro` схемы | 2 ч | Backend |
+| Создать миграции для `psych` схемы | 2 ч | Backend |
+| Настроить Alembic | 1 ч | Backend |
+| Настроить переменные окружения | 1 ч | DevOps |
+
+### Фаза 1: Astro Service (Дни 2-3)
+
+| Задача | Оценка | Ответственный |
+|--------|--------|---------------|
+| Добавить внутренние эндпоинты `/internal/v4/*` | 4 ч | Backend |
+| Реализовать расчёт биоритмов | 3 ч | Backend |
+| Реализовать расчёт транзитов | 3 ч | Backend |
+| Реализовать ночной batch с пагинацией | 4 ч | Backend |
+| Написать тесты | 4 ч | Backend |
+
+### Фаза 2: Psychometry Service (Дни 4-6)
+
+| Задача | Оценка | Ответственный |
+|--------|--------|---------------|
+| Создать структуру сервиса | 2 ч | Backend |
+| Реализовать Core модули | 8 ч | Backend |
+| Реализовать Service слой | 6 ч | Backend |
+| Реализовать API роуты | 6 ч | Backend |
+| Реализовать JWT auth + Rate Limiting | 4 ч | Backend |
+| Реализовать Astro Client с Circuit Breaker | 4 ч | Backend |
+| Написать тесты | 6 ч | Backend |
+
+### Фаза 3: Frontend (День 7)
+
+| Задача | Оценка | Ответственный |
+|--------|--------|---------------|
+| Новая вкладка «Моё состояние» | 4 ч | Frontend |
+| Кнопка «Пауза» | 2 ч | Frontend |
+| Интеграция с API | 2 ч | Frontend |
+
+### Фаза 4: Интеграция и тестирование (День 8)
+
+| Задача | Оценка | Ответственный |
+|--------|--------|---------------|
+| Интеграционное тестирование | 4 ч | QA |
+| Документация | 2 ч | Backend |
+| Деплой в стейджинг | 2 ч | DevOps |
+| Деплой в production | 2 ч | DevOps |
+
+**Итого:** ~8 дней для 1 backend-разработчика, 1 frontend-разработчика и 1 DevOps-инженера.
+
+---
+
+## 11. ЧЕК-ЛИСТ ПРИЁМКИ
+
+### 11.1. Безопасность
 
 - [ ] `user_id` НЕ передаётся в теле запроса
 - [ ] JWT middleware проверяет токен
 - [ ] Input validation через Pydantic
-- [ ] Rate limiting настроен
+- [ ] Rate limiting настроен (100 запросов/мин)
 
-### 10.2. Архитектура
+### 11.2. Архитектура
 
-- [ ] Psychometry стартует без Astro Service
+- [ ] Psychometry стартует без Astro Service (fallback работает)
 - [ ] Batch worker в отдельном контейнере
-- [ ] Redis persistence настроен
+- [ ] Redis persistence настроен (appendonly yes)
+- [ ] Circuit Breaker работает (3 failures → OPEN)
 
-### 10.3. Данные
+### 11.3. Данные
 
 - [ ] UPSERT для `states` работает
 - [ ] `idempotency_key` добавлен
-- [ ] `DELETE` с `LIMIT` в cleanup
+- [ ] Миграции применяются без ошибок
+- [ ] Индексы созданы
 
-### 10.4. Функциональность
+### 11.4. Функциональность
 
 - [ ] Быстрый опросник работает
 - [ ] Практика «Пауза» работает
 - [ ] Рекомендации с числовыми индексами
 - [ ] Feedback привязан к индексу
+- [ ] Health Check показывает статус всех зависимостей
 
 ---
 
+## 12. ЗАКЛЮЧЕНИЕ
 
+### 12.1. Что сделано
 
+- ✅ 1 новый сервис (Psychometry Service)
+- ✅ 1 новая схема в БД (5 таблиц + 1 конфиг)
+- ✅ 1 новая вкладка во Frontend
+- ✅ Ночной batch + Redis кэш
+- ✅ Базовые алгоритмы (состояние, индексы, окна, рекомендации)
+- ✅ Circuit Breaker для Astro Client
+- ✅ Health Check с проверкой зависимостей
+- ✅ Миграции (Alembic)
+- ✅ Batch с пагинацией
+
+### 12.2. Что отложено
+
+- ⏳ MinIO — до 100 ГБ данных в PostgreSQL
+- ⏳ Alignment Engine как отдельный сервис
+- ⏳ Analytics Worker как отдельный сервис
+- ⏳ Final Tuner как сервис
+- ⏳ ML-рекомендации (после накопления 500+ feedback)
+
+### 12.3. Ключевые метрики успеха
+
+| Метрика | Целевое значение |
+|---------|------------------|
+| Время ответа API | < 200 мс |
+| Retention (новая вкладка) | +15% |
+| Конверсия в опросник | > 30% |
+| Feedback rate | > 20% |
+| Доступность Psychometry | > 99.9% |
+
+---
+
+## ПРИЛОЖЕНИЕ: ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+
+```bash
+# .env.example
+
+# Общие
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+
+# PostgreSQL
+POSTGRES_DB=personal_assistant
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres_password
+
+# Redis
+REDIS_URL=redis://redis:6379/0
+
+# Astro Service
+ASTRO_SERVICE_URL=http://astro-service:8000
+INTERNAL_API_KEY=your_secret_internal_api_key
+
+# Psychometry Service
+JWT_SECRET=your_jwt_secret
+PSYCHOMETRY_ENABLED=true
+
+# Rate Limiting
+RATE_LIMIT_PER_MINUTE=100
+
+# Circuit Breaker
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+CIRCUIT_BREAKER_RECOVERY_TIMEOUT=60
+```
+
+---
+
+**Документ утверждён.** Начинаем реализацию с Фазы 0.
+
+---
+
+Отлично! Теперь у нас есть **единый источник истины** — полное уточнённое ТЗ версии 6.0.
+
+**Что дальше?** Я предлагаю начать с:
+
+1. **Создания файлов миграций** (Alembic) для обеих схем
+2. **Написания Dockerfile** для Psychometry Service
+3. **Написания core алгоритмов** (State, Achievements, Window, Recommendations)
+
+С чего начнём писать код?

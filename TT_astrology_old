@@ -1,0 +1,1206 @@
+# Техническое задание на рефакторинг Astro Service
+
+## Версия 3.0 — Интеграция с Alignment Engine и Internal API
+
+---
+
+## Оглавление
+
+1. [Введение и цели](#1-введение-и-цели)
+2. [Общая архитектура](#2-общая-архитектура)
+3. [Структура базы данных](#3-структура-базы-данных)
+4. [Структура сервиса](#4-структура-сервиса)
+5. [Математическое ядро](#5-математическое-ядро)
+6. [Слои прогнозирования](#6-слои-прогнозирования)
+7. [Гибридный движок](#7-гибридный-движок)
+8. [Blind Protocol](#8-blind-protocol)
+9. [Internal API для Alignment Engine](#9-internal-api-для-alignment-engine)
+10. [Система интерпретаций](#10-система-интерпретаций)
+11. [Миграция данных](#11-миграция-данных)
+12. [Конфигурация и развертывание](#12-конфигурация-и-развертывание)
+13. [Нефункциональные требования](#13-нефункциональные-требования)
+14. [Чек-лист приёмки](#14-чек-лист-приёмки)
+15. [План реализации](#15-план-реализации)
+
+---
+
+## 1. Введение и цели
+
+### 1.1. Что такое Astro Service
+
+**Astro Service** — это основной сервис астрологических вычислений, который:
+
+- Рассчитывает натальную карту пользователя (1 раз)
+- Вычисляет транзиты и аспекты на любую дату
+- Генерирует дневные прогнозы на основе 9 осей Magic Profile
+- Учитывает даши (ведическая традиция)
+- Применяет Blind Protocol на основе статуса тестирования
+- **ПРЕДОСТАВЛЯЕТ АСТРО-ПРОФИЛЬ ДЛЯ ALIGNMENT ENGINE** (НОВОЕ!)
+
+### 1.2. Что изменилось в версии 3.0
+
+| Аспект | Версия 2.0 | Версия 3.0 (текущая) |
+|--------|-----------|---------------------|
+| **Основная задача** | Генерация прогнозов | Генерация прогнозов + Астро-профиль |
+| **Интеграция** | С Psychometry (статус тестов) | С Psychometry + Alignment Engine |
+| **Internal API** | /astro-context, /test-status | + /astro-profile (НОВЫЙ!) |
+| **Blind Protocol** | Блокирует слои | Блокирует слои + влияет на alignment |
+| **Кэширование** | Только эфемериды | + alignment_cache (НОВЫЙ!) |
+
+### 1.3. Бизнес-цели
+
+| Цель | Метрика успеха |
+|------|----------------|
+| Генерировать прогнозы | < 200 мс (из кэша) |
+| **Предоставлять астро-профиль** | < 100 мс для Alignment Engine |
+| Применять Blind Protocol | 100% пользователей с pending тестами |
+| Интегрироваться с Psychometry | 100% успешных Internal API вызовов |
+| Обеспечить fallback | 100% работа при недоступности Psychometry |
+
+---
+
+## 2. Общая архитектура
+
+### 2.1. Схема сервиса
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         API GATEWAY                                   │
+│  /api/v1/forecast → Astro Service                                     │
+│  /api/v1/psych/* → Psychometry Service                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ASTRO SERVICE v3.0                                 │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  PUBLIC API (/api/v1/forecast)                                 │   │
+│  │  • Прогноз на дату                                              │   │
+│  │  • Астро-профиль (в ответе)                                    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  INTERNAL API (/internal/v1/)                                  │   │
+│  │  • GET /users/{id}/astro-context  (для Psychometry)           │   │
+│  │  • GET /users/{id}/test-status    (для Blind Protocol)        │   │
+│  │  • POST /psych/event              (обновление статуса)        │   │
+│  │  • GET /users/{id}/astro-profile  (НОВЫЙ! для Alignment)      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  BLIND PROTOCOL                                                 │   │
+│  │  • Фильтрация слоёв на основе статуса тестирования             │   │
+│  │  • Влияние на alignment_cache                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  HYBRID ENGINE                                                  │   │
+│  │  • Агрегация слоёв + confidence                                │   │
+│  │  • Генерация прогноза                                          │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  LAYERS                                                         │   │
+│  │  • foundation, year_theme, gochara, transit, moon, retro      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  CORE                                                           │   │
+│  │  • Эфемериды, даши, аспекты, дома, ретро                     │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  CACHE (НОВЫЙ!)                                                 │   │
+│  │  • alignment_cache (профили для Alignment Engine)              │   │
+│  │  • ephemeris_cache (позиции планет)                            │   │
+│  │  • forecast_cache (готовые прогнозы)                           │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┬───────────────┐
+              ▼               ▼               ▼               ▼
+┌─────────────────────┐ ┌───────────────┐ ┌───────────────┐ ┌─────────────────────┐
+│    POSTGRESQL       │ │  PSYCHOMETRY  │ │  ALIGNMENT    │ │  DATA LAKE          │
+│  (astro + psych)   │ │  (HTTP)       │ │  ENGINE       │ │  (S3/MinIO)         │
+└─────────────────────┘ └───────────────┘ └───────────────┘ └─────────────────────┘
+```
+
+### 2.2. Взаимодействие с другими сервисами
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant AS as Astro Service
+    participant PS as Psychometry Service
+    participant AE as Alignment Engine
+
+    %% 1. Публичный запрос прогноза
+    FE->>AS: GET /forecast?date=2026-08-04
+    AS->>PS: GET /internal/test-status
+    PS-->>AS: has_pending_mmpi=true
+    AS->>AS: Blind Protocol (фильтрация)
+    AS-->>FE: Прогноз (без чувствительных слоёв)
+
+    %% 2. Internal API для Alignment Engine
+    AE->>AS: GET /internal/astro-profile?date=2026-08-04
+    AS->>AS: Расчёт астро-профиля
+    AS-->>AE: 9 осей + dasha + transits + retro
+
+    %% 3. Internal API для Psychometry
+    PS->>AS: GET /internal/astro-context
+    AS-->>PS: dasha_maha, transit_saturn_house, etc.
+```
+
+---
+
+## 3. Структура базы данных
+
+### 3.1. Существующие таблицы (без изменений)
+
+```sql
+-- ============================================================
+-- СУЩЕСТВУЮЩИЕ ТАБЛИЦЫ (не трогаем!)
+-- ============================================================
+
+-- users, natal_charts, ephemeris_cache, user_periods
+-- forecasts (старый, JSONB) — остаётся для обратной совместимости
+-- astro.forecasts_v2, astro.forecast_axes_v2, astro.forecast_signals_v2
+-- astro.layer_config, astro.dasha_modifiers, astro.test_status_cache
+```
+
+### 3.2. НОВЫЕ таблицы
+
+```sql
+-- ============================================================
+-- НОВЫЕ ТАБЛИЦЫ (для Alignment Engine)
+-- ============================================================
+
+-- 1. Кэш астро-профилей для Alignment Engine
+CREATE TABLE astro.alignment_cache (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    profile_date DATE NOT NULL,
+    
+    -- Астро-профиль (9 осей + метаданные)
+    profile JSONB NOT NULL,
+    
+    -- Версия
+    profile_version VARCHAR(20) DEFAULT '2.0',
+    
+    -- Метаданные
+    calculated_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '7 days',
+    
+    -- Статус
+    is_valid BOOLEAN DEFAULT true,
+    invalidated_at TIMESTAMPTZ,
+    
+    UNIQUE(user_id, profile_date),
+    INDEX idx_alignment_cache_user_date (user_id, profile_date),
+    INDEX idx_alignment_cache_expires (expires_at)
+);
+
+-- 2. История изменений профилей (для Dynamic Aligner)
+CREATE TABLE astro.profile_history (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    profile_date DATE NOT NULL,
+    
+    -- Снапшот профиля
+    profile_snapshot JSONB NOT NULL,
+    
+    -- Изменения относительно предыдущего
+    changes JSONB,
+    
+    -- Метаданные
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    INDEX idx_profile_history_user_date (user_id, profile_date)
+);
+
+-- 3. Статистика использования Internal API
+CREATE TABLE astro.internal_api_stats (
+    id SERIAL PRIMARY KEY,
+    endpoint VARCHAR(100) NOT NULL,
+    user_id INTEGER,
+    request_time TIMESTAMPTZ DEFAULT NOW(),
+    response_time_ms INTEGER,
+    status_code INTEGER,
+    is_fallback BOOLEAN DEFAULT false,
+    
+    INDEX idx_api_stats_endpoint (endpoint),
+    INDEX idx_api_stats_time (request_time)
+);
+
+-- ============================================================
+-- ИЗМЕНЕНИЯ В СУЩЕСТВУЮЩИХ ТАБЛИЦАХ
+-- ============================================================
+
+-- Добавляем связь с alignment_cache
+ALTER TABLE astro.forecasts_v2 
+ADD COLUMN alignment_cache_id INTEGER REFERENCES astro.alignment_cache(id);
+
+-- Добавляем индекс для быстрого поиска
+CREATE INDEX idx_forecasts_alignment_cache ON astro.forecasts_v2(alignment_cache_id);
+```
+
+---
+
+## 4. Структура сервиса
+
+### 4.1. Дерево файлов
+
+```
+astro-service/
+├── src/
+│   ├── __init__.py
+│   ├── main.py                    # Точка входа FastAPI
+│   ├── settings.py                # Конфигурация
+│   │
+│   ├── api/                       # HTTP-слой
+│   │   ├── __init__.py
+│   │   ├── routes_public.py       # /api/v1/forecast
+│   │   ├── routes_internal.py     # /internal/v1/...
+│   │   ├── schemas.py             # Pydantic схемы
+│   │   └── deps.py                # Dependency Injection
+│   │
+│   ├── core/                      # Математическое ядро
+│   │   ├── __init__.py
+│   │   ├── ephemeris.py           # Кэш эфемерид
+│   │   ├── aspect_engine.py       # Движок аспектов
+│   │   ├── house_engine.py        # Движок домов
+│   │   ├── retro_engine.py        # Ретроградность
+│   │   ├── vimshottari_engine.py  # Даши
+│   │   ├── element_engine.py      # Стихии
+│   │   └── models.py              # Внутренние модели
+│   │
+│   ├── layers/                    # Слои прогнозирования
+│   │   ├── __init__.py
+│   │   ├── base.py                # Базовый класс слоя
+│   │   ├── layer_foundation.py    # Махадаша
+│   │   ├── layer_year_theme.py    # Антардаша + Сатурн
+│   │   ├── layer_gochara.py       # Транзиты по домам
+│   │   ├── layer_transit.py       # Точные аспекты
+│   │   ├── layer_moon.py          # Луна
+│   │   ├── layer_retro.py         # Ретроградность
+│   │   └── layer_somatic.py       # Стихии (опционально)
+│   │
+│   ├── services/                  # Бизнес-логика
+│   │   ├── __init__.py
+│   │   ├── hybrid_engine.py       # Агрегация слоёв
+│   │   ├── blind_protocol.py      # Blind Protocol
+│   │   ├── weight_manager.py      # Обновление весов
+│   │   ├── forecast_service.py    # Сохранение прогнозов
+│   │   └── astro_profile_service.py # НОВЫЙ! Астро-профиль
+│   │
+│   ├── clients/                   # Внешние зависимости
+│   │   ├── __init__.py
+│   │   └── psych_client.py        # HTTP к Psychometry Service
+│   │
+│   ├── infrastructure/            # Интеграции
+│   │   ├── __init__.py
+│   │   ├── database.py            # SQLAlchemy
+│   │   └── cache.py               # Redis / In-memory
+│   │
+│   └── interpretations/           # Шаблоны текстов (без изменений)
+│       ├── __init__.py
+│       ├── renderer.py
+│       └── ru/
+│
+├── migrations/                    # Alembic миграции
+├── scripts/
+│   └── migrate_forecasts.py       # Миграция данных
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
+```
+
+### 4.2. Описание модулей
+
+| Модуль | Ответственность | Зависимости |
+|--------|-----------------|-------------|
+| **api/routes_public.py** | /api/v1/forecast | services |
+| **api/routes_internal.py** | /internal/v1/* | services |
+| **core/** | Математика (эфемериды, аспекты) | - |
+| **layers/** | Слои прогнозирования | core |
+| **services/hybrid_engine.py** | Агрегация слоёв | layers |
+| **services/blind_protocol.py** | Фильтрация по статусу | clients/psych_client |
+| **services/astro_profile_service.py** (НОВЫЙ!) | Астро-профиль для Alignment Engine | core, cache |
+
+---
+
+## 5. Математическое ядро
+
+### 5.1. Ephemeris Service (без изменений)
+
+```python
+class EphemerisService:
+    """
+    Обёртка над Swiss Ephemeris с кэшированием.
+    """
+    
+    async def get_planet_position(
+        self, 
+        planet: int, 
+        date: date
+    ) -> PlanetPosition:
+        """Возвращает позицию планеты из кэша или рассчитывает."""
+        cached = await self._get_from_cache(date, planet)
+        if cached:
+            return cached
+        
+        jd = swe.julday(date.year, date.month, date.day, 12.0)
+        pos, speed = swe.calc_ut(jd, planet)
+        
+        await self._save_to_cache(date, planet, pos, speed)
+        
+        return PlanetPosition(
+            longitude=pos[0],
+            latitude=pos[1],
+            distance=pos[2],
+            longitude_speed=speed[0],
+            latitude_speed=speed[1],
+            distance_speed=speed[2]
+        )
+    
+    async def get_planets_for_date(self, date: date) -> Dict[str, PlanetPosition]:
+        """Возвращает все планеты на дату (batch-запрос)."""
+        # batch-расчёт всех планет
+        pass
+```
+
+### 5.2. Vimshottari Engine (без изменений)
+
+```python
+class VimshottariEngine:
+    """
+    Расчёт Вимшоттари даш (ведическая традиция).
+    """
+    
+    DASHA_ORDER = ['Ketu', 'Venus', 'Sun', 'Moon', 'Mars', 'Rahu', 'Jupiter', 'Saturn', 'Mercury']
+    DASHA_YEARS = {
+        'Ketu': 7, 'Venus': 20, 'Sun': 6, 'Moon': 10,
+        'Mars': 7, 'Rahu': 18, 'Jupiter': 16, 'Saturn': 19, 'Mercury': 17
+    }
+    
+    def calculate_dashas(
+        self,
+        natal_moon_longitude: float,
+        ayanamsa: float,
+        birth_jd: float
+    ) -> List[DashaPeriod]:
+        """Возвращает полный цикл махадаш на 120 лет."""
+        pass
+    
+    def get_current_dasha(
+        self,
+        dashas: List[DashaPeriod],
+        target_date: date
+    ) -> DashaState:
+        """Возвращает текущее состояние даш на дату."""
+        pass
+```
+
+---
+
+## 6. Слои прогнозирования (без изменений)
+
+### 6.1. Базовый класс слоя
+
+```python
+class BaseLayer(ABC):
+    """
+    Базовый класс для всех слоёв прогнозирования.
+    """
+    
+    @abstractmethod
+    def calculate(
+        self,
+        natal: NatalChart,
+        transit: Dict[str, PlanetPosition],
+        dasha: DashaState,
+        modifiers: List[DashaModifier]
+    ) -> List[AstroEvent]:
+        pass
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+    
+    @property
+    @abstractmethod
+    def level(self) -> PeriodLevel:
+        pass
+```
+
+### 6.2. Слои (6 штук)
+
+| Слой | Название | Уровень | Вес по умолчанию |
+|------|----------|---------|------------------|
+| foundation | Махадаша | FOUNDATION | 1.0 |
+| year_theme | Антардаша + Сатурн | YEAR_THEME | 0.8 |
+| gochara | Транзиты по домам | MONTH_TRIGGER | 0.6 |
+| transit_oracle | Точные аспекты | POINT_TRIGGER | 0.5 |
+| moon | Луна | DAILY_MOOD | 0.3 |
+| retro | Ретроградность | DAILY_MOOD | 0.2 |
+
+---
+
+## 7. Гибридный движок (без изменений)
+
+```python
+class HybridEngine:
+    """
+    Сборка прогноза из всех слоёв с агрегацией confidence.
+    """
+    
+    LEVEL_WEIGHTS = {
+        PeriodLevel.FOUNDATION: 1.0,
+        PeriodLevel.YEAR_THEME: 0.8,
+        PeriodLevel.MONTH_TRIGGER: 0.6,
+        PeriodLevel.DAILY_MOOD: 0.3,
+        PeriodLevel.POINT_TRIGGER: 0.5,
+    }
+    
+    async def build_forecast(
+        self,
+        user_id: int,
+        date: date,
+        force: bool = False
+    ) -> RawForecast:
+        """
+        1. Загружает фон (даши).
+        2. Собирает события от всех слоёв.
+        3. Фильтрует по MAX_ORBS и LEVEL_WEIGHTS.
+        4. Агрегирует confidence.
+        5. Возвращает RawForecast.
+        """
+        pass
+```
+
+---
+
+## 8. Blind Protocol
+
+### 8.1. Логика Blind Protocol
+
+```python
+class BlindProtocol:
+    """
+    Блокирует психологически чувствительные слои прогноза
+    на основе статуса тестирования из Psychometry Service.
+    """
+    
+    PSYCH_SENSITIVE_LAYERS = {
+        'somatic',      # советы по еде и телу
+        'people',       # советы по общению
+        'mood_trigger', # эмоциональные триггеры
+    }
+    
+    SAFE_LAYERS = {
+        'foundation',   # махадаша
+        'year_theme',   # годовая тема
+        'retro',        # ретроградность
+        'financial',    # финансовый индекс
+        'transit_oracle', # транзитные аспекты
+        'gochara',      # транзиты по домам
+    }
+    
+    async def apply(
+        self,
+        user_id: int,
+        forecast: RawForecast,
+        session: AsyncSession
+    ) -> RawForecast:
+        """
+        Применяет Blind Protocol к прогнозу.
+        """
+        # 1. Запрашиваем статус из Psychometry Service
+        status = await self._get_test_status(user_id, session)
+        
+        # 2. Если нет pending тестов — возвращаем полный прогноз
+        if not status.has_pending:
+            return forecast
+        
+        # 3. MMPI pending — только SAFE_LAYERS
+        if status.has_pending_mmpi:
+            return self._filter_layers(forecast, self.SAFE_LAYERS)
+        
+        # 4. IAT pending — SAFE_LAYERS + транзиты
+        if status.has_pending_iat:
+            return self._filter_layers(
+                forecast, 
+                self.SAFE_LAYERS | {'transit_oracle', 'gochara'}
+            )
+        
+        return forecast
+    
+    def _filter_layers(
+        self, 
+        forecast: RawForecast, 
+        allowed_layers: set
+    ) -> RawForecast:
+        """
+        Фильтрует слои прогноза, оставляя только разрешённые.
+        """
+        forecast.triggers = [
+            event for event in forecast.triggers 
+            if event.source in allowed_layers
+        ]
+        
+        forecast.daily_mood = [
+            event for event in forecast.daily_mood 
+            if event.source in allowed_layers
+        ]
+        
+        forecast.overall_confidence = self._recalculate_confidence(forecast)
+        
+        return forecast
+```
+
+### 8.2. Влияние на alignment_cache
+
+```python
+class BlindProtocol:
+    """
+    Обновлённая версия с влиянием на alignment_cache.
+    """
+    
+    async def apply_with_cache(
+        self,
+        user_id: int,
+        forecast: RawForecast,
+        alignment_cache: AlignmentCache,
+        session: AsyncSession
+    ) -> Tuple[RawForecast, bool]:
+        """
+        Применяет Blind Protocol и обновляет alignment_cache.
+        Возвращает (прогноз, блокирован_ли_прогноз).
+        """
+        # 1. Проверяем статус
+        status = await self._get_test_status(user_id, session)
+        
+        # 2. Обновляем alignment_cache
+        if status.has_pending:
+            await alignment_cache.invalidate(user_id)
+            logger.info(f"Alignment cache invalidated for user {user_id}")
+        
+        # 3. Применяем фильтрацию
+        forecast = await self.apply(user_id, forecast, session)
+        
+        # 4. Определяем, был ли прогноз заблокирован
+        is_blocked = status.has_pending and (
+            not forecast.triggers or 
+            len(forecast.triggers) < 3
+        )
+        
+        return forecast, is_blocked
+```
+
+---
+
+## 9. Internal API для Alignment Engine
+
+### 9.1. GET /internal/v1/users/{user_id}/astro-profile
+
+```python
+# api/routes_internal.py
+
+@router.get("/internal/v1/users/{user_id}/astro-profile")
+async def get_astro_profile(
+    user_id: int,
+    date: Optional[date] = Query(None, description="Дата для расчёта профиля"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Возвращает астро-профиль для Alignment Engine.
+    
+    Используется Alignment Engine для сопоставления профилей.
+    Использует alignment_cache для быстрого ответа.
+    
+    Заголовки:
+    - X-Internal-API-Key: ${INTERNAL_API_KEY}
+    - X-Service-Name: alignment-engine
+    """
+    # 1. Проверяем API Key
+    verify_internal_api_key(request)
+    
+    # 2. Определяем дату
+    target_date = date or date.today()
+    
+    # 3. Проверяем кэш
+    cached = await alignment_cache.get(user_id, target_date)
+    if cached:
+        return cached
+    
+    # 4. Рассчитываем профиль
+    profile = await astro_profile_service.build_profile(
+        user_id=user_id,
+        date=target_date,
+        session=session
+    )
+    
+    # 5. Сохраняем в кэш
+    await alignment_cache.set(user_id, target_date, profile)
+    
+    # 6. Логируем
+    await log_internal_api_call('astro-profile', user_id, 200)
+    
+    return profile
+```
+
+**Response:**
+```json
+{
+  "user_id": 123,
+  "date": "2026-08-04",
+  "dasha": {
+    "maha": "Saturn",
+    "antar": "Jupiter",
+    "pratyantar": "Mars"
+  },
+  "transits": {
+    "saturn_house": 8,
+    "jupiter_house": 5,
+    "rahu_house": 2,
+    "moon_house": 7,
+    "moon_sign": "Leo",
+    "moon_phase": "first_quarter"
+  },
+  "retro": {
+    "mercury": false,
+    "venus": true,
+    "mars": false
+  },
+  "elements": {
+    "fire": 2,
+    "earth": 3,
+    "air": 1,
+    "water": 2
+  },
+  "confidence": 0.85,
+  "calculated_at": "2026-08-04T12:00:00Z"
+}
+```
+
+### 9.2. GET /internal/v1/users/{user_id}/astro-context
+
+```python
+@router.get("/internal/v1/users/{user_id}/astro-context")
+async def get_astro_context(
+    user_id: int,
+    at: datetime = Query(..., description="Момент времени для расчёта"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Возвращает астро-контекст для Psychometry Service.
+    
+    Заголовки:
+    - X-Internal-API-Key: ${INTERNAL_API_KEY}
+    - X-Service-Name: psychometry-service
+    """
+    verify_internal_api_key(request)
+    
+    # 1. Загружаем данные
+    natal = await get_natal_chart(user_id, session)
+    transit = await get_transit_positions(at.date(), session)
+    dasha = await get_current_dasha(user_id, at.date(), session)
+    
+    # 2. Формируем ответ
+    return {
+        "dasha_maha": dasha.maha.planet,
+        "dasha_antar": dasha.antar.planet,
+        "dasha_pratyantar": dasha.pratyantar.planet,
+        "transit_saturn_house": self._get_house(transit['Saturn'], natal),
+        "transit_jupiter_house": self._get_house(transit['Jupiter'], natal),
+        "transit_rahu_house": self._get_house(transit['Rahu'], natal),
+        "moon_sign": self._get_sign(transit['Moon'].longitude),
+        "moon_house": self._get_house(transit['Moon'], natal),
+        "moon_phase": self._get_moon_phase(transit['Moon'], transit['Sun']),
+        "is_retro_mercury": transit['Mercury'].longitude_speed < 0,
+        "is_retro_venus": transit['Venus'].longitude_speed < 0,
+        "is_retro_mars": transit['Mars'].longitude_speed < 0,
+    }
+```
+
+### 9.3. GET /internal/v1/users/{user_id}/test-status
+
+```python
+@router.get("/internal/v1/users/{user_id}/test-status")
+async def get_test_status(
+    user_id: int,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Возвращает статус тестирования из кэша.
+    """
+    verify_internal_api_key(request)
+    
+    cache = await session.get(TestStatusCache, user_id)
+    
+    if cache:
+        return {
+            "has_pending_mmpi": cache.has_pending_mmpi,
+            "has_pending_iat": cache.has_pending_iat,
+            "next_mmpi_due": cache.next_mmpi_due,
+            "next_iat_due": cache.next_iat_due,
+        }
+    
+    # Если нет — обращаемся к Psychometry Service
+    return await self._get_status_from_psychometry(user_id)
+```
+
+### 9.4. POST /internal/v1/psych/event
+
+```python
+@router.post("/internal/v1/psych/event")
+async def handle_psych_event(
+    event: PsychEvent,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Принимает событие от Psychometry Service.
+    """
+    verify_internal_api_key(request)
+    
+    if event.event_type == 'test.completed':
+        await self._update_test_status(event.user_id, event.test_type, session)
+    
+    return {"success": True}
+
+async def _update_test_status(
+    self,
+    user_id: int,
+    test_type: str,
+    session: AsyncSession
+):
+    """
+    Обновляет test_status_cache после прохождения теста.
+    """
+    cache = await session.get(TestStatusCache, user_id)
+    if not cache:
+        cache = TestStatusCache(user_id=user_id)
+        session.add(cache)
+    
+    if test_type == 'mmpi':
+        cache.has_pending_mmpi = False
+        cache.next_mmpi_due = date.today() + timedelta(days=90)
+    elif test_type == 'iat':
+        cache.has_pending_iat = False
+        cache.next_iat_due = date.today() + timedelta(days=30)
+    
+    cache.updated_at = datetime.now()
+    await session.commit()
+    
+    # Инвалидируем alignment_cache
+    await alignment_cache.invalidate(user_id)
+```
+
+---
+
+## 10. НОВЫЙ: AstroProfileService
+
+```python
+# services/astro_profile_service.py
+
+class AstroProfileService:
+    """
+    Строит астро-профиль для Alignment Engine.
+    """
+    
+    def __init__(
+        self,
+        ephemeris_service: EphemerisService,
+        vimshottari_engine: VimshottariEngine,
+        aspect_engine: AspectEngine,
+        house_engine: HouseEngine,
+        retro_engine: RetroEngine,
+        element_engine: ElementEngine
+    ):
+        self.ephemeris = ephemeris_service
+        self.vimshottari = vimshottari_engine
+        self.aspect = aspect_engine
+        self.house = house_engine
+        self.retro = retro_engine
+        self.element = element_engine
+    
+    async def build_profile(
+        self,
+        user_id: int,
+        date: date,
+        session: AsyncSession
+    ) -> Dict:
+        """
+        Строит полный астро-профиль для Alignment Engine.
+        """
+        # 1. Загружаем натальную карту
+        natal = await self._get_natal(user_id, session)
+        
+        # 2. Рассчитываем транзиты
+        transits = await self.ephemeris.get_planets_for_date(date)
+        
+        # 3. Рассчитываем даши
+        dasha_state = await self._get_dasha(user_id, date, session)
+        
+        # 4. Определяем дома транзитов
+        transit_houses = {
+            'saturn_house': self.house.get_house(transits['Saturn'].longitude, natal.ascendant),
+            'jupiter_house': self.house.get_house(transits['Jupiter'].longitude, natal.ascendant),
+            'rahu_house': self.house.get_house(transits['Rahu'].longitude, natal.ascendant),
+            'moon_house': self.house.get_house(transits['Moon'].longitude, natal.ascendant),
+        }
+        
+        # 5. Определяем знаки и фазы
+        moon_sign = self._get_sign(transits['Moon'].longitude)
+        moon_phase = self._get_moon_phase(transits['Moon'], transits['Sun'])
+        
+        # 6. Определяем ретроградность
+        retro_planets = self.retro.get_retrograde_planets(transits)
+        
+        # 7. Определяем стихии
+        elements = self.element.get_elements(transits)
+        
+        # 8. Рассчитываем confidence
+        confidence = self._calculate_confidence(natal, transits)
+        
+        return {
+            "user_id": user_id,
+            "date": date.isoformat(),
+            "dasha": {
+                "maha": dasha_state.maha.planet,
+                "antar": dasha_state.antar.planet,
+                "pratyantar": dasha_state.pratyantar.planet,
+            },
+            "transits": {
+                "saturn_house": transit_houses['saturn_house'],
+                "jupiter_house": transit_houses['jupiter_house'],
+                "rahu_house": transit_houses['rahu_house'],
+                "moon_house": transit_houses['moon_house'],
+                "moon_sign": moon_sign,
+                "moon_phase": moon_phase,
+            },
+            "retro": {
+                "mercury": 'Mercury' in retro_planets,
+                "venus": 'Venus' in retro_planets,
+                "mars": 'Mars' in retro_planets,
+            },
+            "elements": elements,
+            "confidence": confidence,
+            "calculated_at": datetime.now().isoformat()
+        }
+```
+
+---
+
+## 11. Миграция данных
+
+### 11.1. Скрипт миграции (без изменений)
+
+```python
+# scripts/migrate_forecasts.py
+
+async def migrate_forecasts(batch_size: int = 100):
+    """
+    Переносит прогнозы из forecasts (JSONB) в forecasts_v2.
+    """
+    async with async_session() as session:
+        stmt = select(Forecast).where(Forecast.migrated_to_v2.is_(False)).limit(batch_size)
+        result = await session.execute(stmt)
+        old_forecasts = result.scalars().all()
+        
+        for old in old_forecasts:
+            raw = RawForecast.from_json(old.data)
+            
+            new = ForecastV2(
+                user_id=old.user_id,
+                forecast_date=old.forecast_date,
+                overall_confidence=raw.overall_confidence,
+                dominant_theme=raw.dominant_theme,
+                calculated_at=old.calculated_at
+            )
+            session.add(new)
+            await session.flush()
+            
+            for axis in raw.axes:
+                session.add(ForecastAxisV2(
+                    forecast_id=new.id,
+                    axis_name=axis.name,
+                    static_value=axis.static_value,
+                    delta=axis.delta,
+                    daily_value=axis.daily_value,
+                    trend=axis.trend,
+                    advice=axis.advice
+                ))
+            
+            old.migrated_to_v2 = True
+        
+        await session.commit()
+```
+
+### 11.2. НОВЫЙ: Backfill alignment_cache
+
+```python
+# scripts/backfill_alignment_cache.py
+
+async def backfill_alignment_cache():
+    """
+    Заполняет alignment_cache для существующих пользователей.
+    Запускается после рефакторинга.
+    """
+    async with async_session() as session:
+        # 1. Находим всех пользователей с прогнозами
+        stmt = select(ForecastV2.user_id).distinct()
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+        
+        for user_id in users:
+            # 2. Для каждого пользователя рассчитываем профиль
+            profile = await astro_profile_service.build_profile(
+                user_id=user_id,
+                date=date.today(),
+                session=session
+            )
+            
+            # 3. Сохраняем в кэш
+            await alignment_cache.set(user_id, date.today(), profile)
+            
+            # 4. Пауза (не перегружать)
+            await asyncio.sleep(0.1)
+        
+        logger.info(f"Backfilled {len(users)} users")
+```
+
+---
+
+## 12. Конфигурация и развертывание
+
+### 12.1. Настройки
+
+```python
+class Settings(BaseSettings):
+    # Сервис
+    SERVICE_NAME: str = "astro-service"
+    DEBUG: bool = False
+    
+    # База данных
+    DATABASE_URL: str = "postgresql://user:pass@postgres:5432/personal_assistant"
+    
+    # Psychometry Service
+    PSYCHOMETRY_URL: str = "http://psychometry-service:8000"
+    INTERNAL_API_KEY: str = "internal-secret-key"
+    
+    # Alignment Engine (НОВОЕ!)
+    ALIGNMENT_CACHE_TTL: int = 3600 * 24 * 7  # 7 дней
+    ALIGNMENT_CACHE_BATCH_SIZE: int = 50
+    
+    # Веса слоёв
+    WEIGHT_REFRESH_INTERVAL: int = 3600 * 6  # 6 часов
+    
+    # Система домов
+    HOUSE_SYSTEM: str = "W"  # Whole Sign
+    
+    # Режим работы
+    USE_V2_FORECASTS: bool = False  # переключатель
+```
+
+### 12.2. Docker Compose
+
+```yaml
+# docker-compose.yml (дополнение)
+
+services:
+  astro-service:
+    build: ./astro-service
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/personal_assistant
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      USE_V2_FORECASTS: "false"
+      ALIGNMENT_CACHE_TTL: 604800  # 7 дней
+    depends_on:
+      postgres:
+        condition: service_healthy
+      psychometry-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+```
+
+### 12.3. Переключение на v2
+
+```python
+# В settings.py
+USE_V2_FORECASTS = os.getenv("USE_V2_FORECASTS", "false").lower() == "true"
+
+# В forecast_service.py
+async def get_forecast(self, user_id: int, date: date):
+    if settings.USE_V2_FORECASTS:
+        return await self._get_v2_forecast(user_id, date)
+    else:
+        return await self._get_v1_forecast(user_id, date)
+```
+
+---
+
+## 13. Нефункциональные требования
+
+### 13.1. Производительность
+
+| Метрика | Требование |
+|---------|------------|
+| GET /api/v1/forecast | < 200 мс (из кэша) |
+| **GET /internal/astro-profile** | **< 100 мс (из кэша)** |
+| GET /internal/astro-context | < 100 мс |
+| Обновление весов | < 100 мс (кэш в памяти) |
+| Миграция прогнозов | < 1 минута на 1000 прогнозов |
+
+### 13.2. Ресурсы
+
+| Компонент | CPU | RAM |
+|-----------|-----|-----|
+| Astro Service | 1.2 ядра | 2 GB |
+| PostgreSQL | 1.5 ядра | 3 GB |
+| Redis (кэш) | 0.3 ядра | 512 MB |
+
+### 13.3. Health Checks
+
+```python
+@router.get("/health")
+async def health_check():
+    status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "components": {}
+    }
+    
+    # 1. Проверка БД
+    try:
+        await session.execute("SELECT 1")
+        status["components"]["database"] = "healthy"
+    except Exception as e:
+        status["components"]["database"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    # 2. Проверка Psychometry Service
+    try:
+        await psych_client.health_check()
+        status["components"]["psychometry"] = "healthy"
+    except Exception:
+        status["components"]["psychometry"] = "degraded"
+        status["status"] = "degraded"
+    
+    # 3. Проверка alignment_cache
+    try:
+        await alignment_cache.health_check()
+        status["components"]["alignment_cache"] = "healthy"
+    except Exception as e:
+        status["components"]["alignment_cache"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    return status
+```
+
+---
+
+## 14. Чек-лист приёмки
+
+### 14.1. Функциональные требования
+
+- [ ] Astro Service работает как отдельный микросервис
+- [ ] `GET /api/v1/forecast` возвращает прогноз
+- [ ] `GET /internal/v1/astro-context` возвращает астро-контекст
+- [ ] `GET /internal/v1/test-status` возвращает статус тестирования
+- [ ] `POST /internal/v1/psych/event` обновляет test_status_cache
+- [ ] **`GET /internal/v1/astro-profile` возвращает профиль для Alignment Engine**
+- [ ] Blind Protocol фильтрует слои на основе статуса
+- [ ] Веса обновляются из layer_config каждые 6 часов
+- [ ] alignment_cache работает корректно
+
+### 14.2. Технические требования
+
+- [ ] Все эндпоинты API документированы (OpenAPI)
+- [ ] Юнит-тесты покрывают > 80% core-модулей
+- [ ] Интеграционные тесты проходят
+- [ ] Миграции Alembic накатываются без ошибок
+- [ ] Docker Compose поднимает сервис
+- [ ] Health Check работает корректно
+- [ ] Логирование в JSON формате
+
+### 14.3. Интеграционные требования
+
+- [ ] Internal API работает с Psychometry Service
+- [ ] **Internal API работает с Alignment Engine**
+- [ ] alignment_cache обновляется при изменении статуса тестов
+- [ ] Blind Protocol корректно фильтрует прогнозы
+
+---
+
+## 15. План реализации
+
+### Неделя 1: Фундамент
+
+| Задача | Оценка |
+|--------|--------|
+| Создание новых таблиц (alignment_cache, profile_history, internal_api_stats) | 4 ч |
+| Реализация AstroProfileService | 8 ч |
+| Реализация alignment_cache | 6 ч |
+| Юнит-тесты для core | 4 ч |
+
+### Неделя 2: Internal API
+
+| Задача | Оценка |
+|--------|--------|
+| Реализация GET /internal/astro-profile | 6 ч |
+| Реализация GET /internal/astro-context | 4 ч |
+| Реализация GET /internal/test-status | 4 ч |
+| Реализация POST /internal/psych/event | 4 ч |
+| Интеграционные тесты Internal API | 6 ч |
+
+### Неделя 3: Интеграция с Alignment Engine
+
+| Задача | Оценка |
+|--------|--------|
+| Интеграция AstroProfileService с Alignment Engine | 8 ч |
+| Обновление Blind Protocol (влияние на cache) | 4 ч |
+| Backfill alignment_cache | 6 ч |
+| Документация Internal API | 4 ч |
+
+### Неделя 4: Завершение
+
+| Задача | Оценка |
+|--------|--------|
+| Миграция прогнозов (v1 → v2) | 6 ч |
+| Переключение на v2 | 4 ч |
+| Финальное тестирование | 8 ч |
+
+---
+
+## 16. Заключение
+
+**Astro Service v3.0** — это полностью переработанный микросервис, который:
+
+1. **Работает параллельно** со старой версией (Blue-Green)
+2. **Интегрирован с Psychometry Service** через Internal API
+3. **Интегрирован с Alignment Engine** через новый Internal API
+4. **Применяет Blind Protocol** на основе статуса тестирования
+5. **Кэширует астро-профили** для быстрого доступа
+6. **Поддерживает плавный переход** через флаг `USE_V2_FORECASTS`
+
+**Ключевые изменения:**
+- ✅ Добавлен `astro.alignment_cache` для быстрых ответов Alignment Engine
+- ✅ Добавлен `GET /internal/users/{id}/astro-profile` эндпоинт
+- ✅ Добавлен `AstroProfileService` для построения профилей
+- ✅ Blind Protocol влияет на alignment_cache
+- ✅ Добавлены метрики для Internal API
+
+**Критерий готовности:** После развертывания Alignment Engine может получать астро-профили через Internal API, а пользователи получают прогнозы с учётом статуса тестирования и адаптивными весами.

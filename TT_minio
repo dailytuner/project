@@ -1,0 +1,761 @@
+# Техническое задание на разработку Data Lake (MinIO)
+
+## Версия 1.0 — Хранилище для адаптивной астропсихологической системы
+
+---
+
+## 1. Введение
+
+### 1.1. Назначение документа
+
+Документ описывает архитектуру, модель данных, алгоритмы и API для реализации **Data Lake** на базе **MinIO** — объектного хранилища, совместимого с Amazon S3. Data Lake является единым хранилищем для всех сырых и обработанных данных системы .
+
+### 1.2. Цели и задачи
+
+| Цель | Описание |
+|------|----------|
+| **Единое хранилище** | Все данные (MMPI, IAT, астрология, состояния) хранятся в одном месте |
+| **Неизменяемость** | Сырые данные никогда не изменяются (immutable) |
+| **Масштабируемость** | Поддержка хранения данных на 100 000+ пользователей |
+| **Экономичность** | Использование сжатия Parquet и lifecycle-политик для экономии места |
+| **Доступность** | Быстрый доступ к данным через S3-совместимый API |
+
+### 1.3. Место в архитектуре
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PSYCHOMETRY SERVICE                                 │
+│                    ASTRO SERVICE                                       │
+│                    ANALYTICS WORKER                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         DATA LAKE (MinIO)                              │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     MinIO Server                                │   │
+│  │  • S3-совместимый API                                          │   │
+│  │  • Консоль управления (порт 9001)                             │   │
+│  │  • Поддержка партиционирования                                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     Бакеты                                       │   │
+│  │  • raw/      — сырые данные (неизменяемые)                     │   │
+│  │  • processed/ — обработанные данные (агрегаты)                 │   │
+│  │  • analytics/ — аналитические данные                           │   │
+│  │  • backups/   — резервные копии                                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Общая архитектура
+
+### 2.1. Структура бакетов
+
+```
+s3://personal-assistant-lake/
+│
+├── raw/                          # Сырые данные (неизменяемые)
+│   ├── mmpi/
+│   │   └── year=YYYY/
+│   │       └── month=MM/
+│   │           └── day=DD/
+│   │               └── user_{user_id}_{timestamp}.parquet
+│   ├── iat/
+│   │   └── year=YYYY/
+│   │       └── month=MM/
+│   │           └── day=DD/
+│   │               └── user_{user_id}_{timestamp}.parquet
+│   └── astro/
+│       └── year=YYYY/
+│           └── month=MM/
+│               └── day=DD/
+│                   └── transits_{timestamp}.parquet
+│
+├── processed/                    # Обработанные данные (агрегаты)
+│   ├── states/
+│   │   └── year=YYYY/
+│   │       └── month=MM/
+│   │           └── day=DD/
+│   │               └── user_{user_id}_state.parquet
+│   ├── indices/
+│   │   └── year=YYYY/
+│   │       └── month=MM/
+│   │           └── day=DD/
+│   │               └── user_{user_id}_indices.parquet
+│   └── windows/
+│       └── year=YYYY/
+│           └── month=MM/
+│               └── day=DD/
+│                   └── user_{user_id}_window.parquet
+│
+├── analytics/                    # Аналитические данные
+│   ├── feedback/
+│   │   └── year=YYYY/
+│   │       └── month=MM/
+│   │           └── day=DD/
+│   │               └── feedback_{timestamp}.parquet
+│   ├── calibrations/
+│   │   └── calibration_v{version}.parquet
+│   └── reports/
+│       └── weekly_report_{timestamp}.parquet
+│
+└── backups/                      # Резервные копии
+    └── daily_{timestamp}.dump
+```
+
+### 2.2. Технологический стек
+
+| Компонент | Технология | Версия |
+|-----------|------------|--------|
+| **Object Storage** | MinIO | Latest |
+| **Клиент Python** | `boto3` / `aioboto3` | 1.34+ |
+| **Формат данных** | Apache Parquet | pyarrow |
+| **Сжатие** | Snappy / ZSTD | pyarrow |
+| **Контейнеризация** | Docker | 24+ |
+| **Оркестрация** | Docker Compose | 2.24+ |
+
+---
+
+## 3. Модель данных
+
+### 3.1. Схемы данных (Parquet)
+
+#### 3.1.1. MMPI Raw
+
+```python
+# schemas/mmpi_schema_v1.avro
+{
+    "type": "record",
+    "name": "MMPIRaw",
+    "fields": [
+        {"name": "user_id", "type": "string"},
+        {"name": "session_id", "type": "string"},
+        {"name": "taken_at", "type": "long"},  # timestamp ms
+        {"name": "idempotency_key", "type": "string"},
+        {"name": "answers", "type": {"type": "map", "values": "boolean"}},
+        {"name": "scoring_version", "type": "string", "default": "v1.0"}
+    ]
+}
+```
+
+#### 3.1.2. IAT Raw
+
+```python
+# schemas/iat_schema_v1.avro
+{
+    "type": "record",
+    "name": "IATRaw",
+    "fields": [
+        {"name": "user_id", "type": "string"},
+        {"name": "session_id", "type": "string"},
+        {"name": "taken_at", "type": "long"},
+        {"name": "idempotency_key", "type": "string"},
+        {"name": "test_type", "type": "string"},
+        {"name": "blocks", "type": {
+            "type": "array",
+            "items": {
+                "type": "record",
+                "name": "Block",
+                "fields": [
+                    {"name": "block_id", "type": "int"},
+                    {"name": "block_type", "type": "string"},
+                    {"name": "trials", "type": {
+                        "type": "array",
+                        "items": {
+                            "type": "record",
+                            "name": "Trial",
+                            "fields": [
+                                {"name": "stimulus", "type": "string"},
+                                {"name": "correct_response", "type": "string"},
+                                {"name": "actual_response", "type": "string"},
+                                {"name": "rt_ms", "type": "int"}
+                            ]
+                        }
+                    }}
+                ]
+            }
+        }},
+        {"name": "session_seed", "type": "int"},
+        {"name": "scoring_version", "type": "string", "default": "v1.0"}
+    ]
+}
+```
+
+#### 3.1.3. User State (processed)
+
+```python
+# schemas/state_schema_v1.avro
+{
+    "type": "record",
+    "name": "UserState",
+    "fields": [
+        {"name": "user_id", "type": "string"},
+        {"name": "calculated_at", "type": "long"},
+        {"name": "emotional_score", "type": "float"},
+        {"name": "anxiety_score", "type": "float"},
+        {"name": "energy_score", "type": "float"},
+        {"name": "awareness_level", "type": "string"},
+        {"name": "awareness_tip", "type": "string"},
+        {"name": "awareness_practice", "type": "string"},
+        {"name": "window_value", "type": "float"},
+        {"name": "window_label", "type": "string"},
+        {"name": "recommendations", "type": {
+            "type": "array",
+            "items": {
+                "type": "record",
+                "name": "Recommendation",
+                "fields": [
+                    {"name": "action", "type": "string"},
+                    {"name": "reason", "type": "string"},
+                    {"name": "priority", "type": "int"},
+                    {"name": "duration", "type": "string"}
+                ]
+            }
+        }},
+        {"name": "resonance", "type": "float"}
+    ]
+}
+```
+
+### 3.2. Партиционирование
+
+Все данные партиционируются по **году/месяцу/дню** для быстрых запросов :
+
+```python
+def get_partition_path(base_path: str, timestamp: datetime) -> str:
+    """
+    Возвращает путь с партициями.
+    """
+    return f"{base_path}/year={timestamp.year}/month={timestamp.month:02d}/day={timestamp.day:02d}"
+
+def get_user_file_path(base_path: str, user_id: UUID, timestamp: datetime) -> str:
+    """
+    Возвращает путь для конкретного пользователя.
+    """
+    partition = get_partition_path(base_path, timestamp)
+    return f"{partition}/user_{user_id}_{timestamp.strftime('%Y%m%d%H%M%S')}.parquet"
+```
+
+---
+
+## 4. Компоненты системы
+
+### 4.1. Docker Compose (MinIO)
+
+```yaml
+# docker-compose.yml
+
+services:
+  # ============================================================
+  # MINIO — Object Storage
+  # ============================================================
+  
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_DOMAIN: minio
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console UI
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ============================================================
+  # MC — MinIO Client (инициализация бакетов)
+  # ============================================================
+  
+  mc:
+    image: minio/mc:latest
+    container_name: mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc config host add minio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc mb -p minio/raw;
+      /usr/bin/mc mb -p minio/processed;
+      /usr/bin/mc mb -p minio/analytics;
+      /usr/bin/mc mb -p minio/backups;
+      /usr/bin/mc policy set public minio/raw;
+      /usr/bin/mc policy set public minio/processed;
+      /usr/bin/mc policy set public minio/analytics;
+      /usr/bin/mc policy set public minio/backups;
+      tail -f /dev/null
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    networks:
+      - app-network
+
+volumes:
+  minio_data:
+
+networks:
+  app-network:
+    driver: bridge
+```
+
+### 4.2. LakeClient
+
+```python
+# src/clients/lake_client.py
+
+import aioboto3
+from typing import Optional, Dict, Any
+import pyarrow as pa
+import pyarrow.parquet as pq
+from io import BytesIO
+
+class LakeClient:
+    """
+    Клиент для работы с Data Lake (MinIO).
+    """
+    
+    def __init__(
+        self,
+        endpoint: str,
+        access_key: str,
+        secret_key: str,
+        bucket: str = "personal-assistant-lake",
+        region: str = "us-east-1",
+        use_ssl: bool = False
+    ):
+        self.endpoint = endpoint
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.bucket = bucket
+        self.region = region
+        self.use_ssl = use_ssl
+        self._session = aioboto3.Session()
+    
+    async def upload_parquet(
+        self,
+        key: str,
+        data: Dict[str, Any],
+        schema: Optional[pa.Schema] = None
+    ) -> str:
+        """
+        Загружает данные в Parquet-формате в озеро.
+        """
+        # 1. Создаём таблицу из данных
+        table = pa.Table.from_pydict(data, schema=schema)
+        
+        # 2. Сериализуем в Parquet (со сжатием Snappy)
+        buffer = BytesIO()
+        pq.write_table(
+            table,
+            buffer,
+            compression='snappy',
+            use_dictionary=True,
+            write_statistics=True
+        )
+        buffer.seek(0)
+        
+        # 3. Загружаем в MinIO
+        async with self._session.client(
+            's3',
+            endpoint_url=self._get_endpoint_url(),
+            aws_access_key_id=self.access_key,
+            aws_secret_access_key=self.secret_key,
+            region_name=self.region
+        ) as s3:
+            await s3.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=buffer.getvalue(),
+                ContentType='application/octet-stream'
+            )
+        
+        return f"s3://{self.bucket}/{key}"
+    
+    async def download_parquet(self, uri: str) -> Dict[str, Any]:
+        """
+        Скачивает данные из озера и возвращает как словарь.
+        """
+        # 1. Извлекаем ключ из URI
+        key = uri.replace(f"s3://{self.bucket}/", "")
+        
+        # 2. Скачиваем
+        async with self._session.client(
+            's3',
+            endpoint_url=self._get_endpoint_url(),
+            aws_access_key_id=self.access_key,
+            aws_secret_access_key=self.secret_key,
+            region_name=self.region
+        ) as s3:
+            response = await s3.get_object(Bucket=self.bucket, Key=key)
+            data = await response['Body'].read()
+        
+        # 3. Десериализуем
+        buffer = BytesIO(data)
+        table = pq.read_table(buffer)
+        return table.to_pydict()
+    
+    async def list_files(
+        self,
+        prefix: str,
+        recursive: bool = True
+    ) -> List[str]:
+        """
+        Возвращает список файлов в префиксе.
+        """
+        async with self._session.client(
+            's3',
+            endpoint_url=self._get_endpoint_url(),
+            aws_access_key_id=self.access_key,
+            aws_secret_access_key=self.secret_key,
+            region_name=self.region
+        ) as s3:
+            paginator = s3.get_paginator('list_objects_v2')
+            pages = paginator.paginate(
+                Bucket=self.bucket,
+                Prefix=prefix,
+                Delimiter='' if recursive else '/'
+            )
+            
+            files = []
+            async for page in pages:
+                if 'Contents' in page:
+                    files.extend([obj['Key'] for obj in page['Contents']])
+            
+            return files
+    
+    def _get_endpoint_url(self) -> str:
+        """
+        Возвращает URL эндпоинта.
+        """
+        protocol = "https" if self.use_ssl else "http"
+        return f"{protocol}://{self.endpoint}"
+```
+
+### 4.3. DataLakeService
+
+```python
+# src/services/datalake_service.py
+
+from datetime import datetime
+from typing import Optional, Dict, Any
+from uuid import UUID
+
+from ..clients.lake_client import LakeClient
+
+class DataLakeService:
+    """
+    Сервис для работы с Data Lake.
+    """
+    
+    def __init__(self, lake_client: LakeClient):
+        self.lake_client = lake_client
+    
+    # ============================================================
+    # RAW DATA
+    # ============================================================
+    
+    async def save_mmpi_raw(
+        self,
+        user_id: UUID,
+        session_id: UUID,
+        taken_at: datetime,
+        idempotency_key: str,
+        answers: Dict[str, bool],
+        scoring_version: str = "v1.0"
+    ) -> str:
+        """
+        Сохраняет сырые ответы MMPI в озеро.
+        """
+        key = self._get_raw_path('mmpi', user_id, taken_at)
+        
+        data = {
+            'user_id': str(user_id),
+            'session_id': str(session_id),
+            'taken_at': int(taken_at.timestamp() * 1000),
+            'idempotency_key': idempotency_key,
+            'answers': answers,
+            'scoring_version': scoring_version
+        }
+        
+        return await self.lake_client.upload_parquet(key, data)
+    
+    async def save_iat_raw(
+        self,
+        user_id: UUID,
+        session_id: UUID,
+        taken_at: datetime,
+        idempotency_key: str,
+        test_type: str,
+        blocks: List[Dict],
+        session_seed: int,
+        scoring_version: str = "v1.0"
+    ) -> str:
+        """
+        Сохраняет сырые данные IAT в озеро.
+        """
+        key = self._get_raw_path('iat', user_id, taken_at)
+        
+        data = {
+            'user_id': str(user_id),
+            'session_id': str(session_id),
+            'taken_at': int(taken_at.timestamp() * 1000),
+            'idempotency_key': idempotency_key,
+            'test_type': test_type,
+            'blocks': blocks,
+            'session_seed': session_seed,
+            'scoring_version': scoring_version
+        }
+        
+        return await self.lake_client.upload_parquet(key, data)
+    
+    # ============================================================
+    # PROCESSED DATA
+    # ============================================================
+    
+    async def save_user_state(
+        self,
+        user_id: UUID,
+        calculated_at: datetime,
+        state: Dict[str, Any]
+    ) -> str:
+        """
+        Сохраняет обработанное состояние пользователя.
+        """
+        key = f"processed/states/year={calculated_at.year}/month={calculated_at.month:02d}/day={calculated_at.day:02d}/user_{user_id}_{calculated_at.strftime('%Y%m%d%H%M%S')}.parquet"
+        
+        data = {
+            'user_id': str(user_id),
+            'calculated_at': int(calculated_at.timestamp() * 1000),
+            **state
+        }
+        
+        return await self.lake_client.upload_parquet(key, data)
+    
+    async def save_achievement_indices(
+        self,
+        user_id: UUID,
+        calculated_at: datetime,
+        indices: Dict[str, Dict[str, Any]]
+    ) -> str:
+        """
+        Сохраняет индексы достижения.
+        """
+        key = f"processed/indices/year={calculated_at.year}/month={calculated_at.month:02d}/day={calculated_at.day:02d}/user_{user_id}_{calculated_at.strftime('%Y%m%d%H%M%S')}.parquet"
+        
+        data = {
+            'user_id': str(user_id),
+            'calculated_at': int(calculated_at.timestamp() * 1000),
+            'indices': indices
+        }
+        
+        return await self.lake_client.upload_parquet(key, data)
+    
+    # ============================================================
+    # ANALYTICS
+    # ============================================================
+    
+    async def save_feedback(
+        self,
+        user_id: UUID,
+        feedback_data: Dict[str, Any]
+    ) -> str:
+        """
+        Сохраняет обратную связь от пользователя.
+        """
+        now = datetime.now()
+        key = f"analytics/feedback/year={now.year}/month={now.month:02d}/day={now.day:02d}/feedback_{now.strftime('%Y%m%d%H%M%S')}.parquet"
+        
+        data = {
+            'user_id': str(user_id),
+            'timestamp': int(now.timestamp() * 1000),
+            **feedback_data
+        }
+        
+        return await self.lake_client.upload_parquet(key, data)
+    
+    # ============================================================
+    # HELPERS
+    # ============================================================
+    
+    def _get_raw_path(self, data_type: str, user_id: UUID, timestamp: datetime) -> str:
+        """
+        Возвращает путь для сырых данных.
+        """
+        return (
+            f"raw/{data_type}/"
+            f"year={timestamp.year}/"
+            f"month={timestamp.month:02d}/"
+            f"day={timestamp.day:02d}/"
+            f"user_{user_id}_{timestamp.strftime('%Y%m%d%H%M%S')}.parquet"
+        )
+```
+
+---
+
+## 5. API и интерфейсы
+
+### 5.1. Минимальный API для взаимодействия
+
+```python
+# src/api/routes.py
+
+from fastapi import APIRouter, Depends
+from uuid import UUID
+from ..services.datalake_service import DataLakeService
+from ..clients.lake_client import LakeClient
+
+router = APIRouter(prefix="/api/v1/lake", tags=["DataLake"])
+
+def get_datalake_service() -> DataLakeService:
+    """DI для DataLakeService."""
+    lake_client = LakeClient(
+        endpoint=settings.MINIO_ENDPOINT,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY
+    )
+    return DataLakeService(lake_client)
+
+
+@router.post("/mmpi/raw")
+async def save_mmpi_raw(
+    user_id: UUID,
+    session_id: UUID,
+    idempotency_key: str,
+    answers: Dict[str, bool],
+    service: DataLakeService = Depends(get_datalake_service)
+):
+    """Сохраняет сырые ответы MMPI."""
+    uri = await service.save_mmpi_raw(
+        user_id=user_id,
+        session_id=session_id,
+        taken_at=datetime.now(),
+        idempotency_key=idempotency_key,
+        answers=answers
+    )
+    return {"success": True, "uri": uri}
+
+
+@router.get("/list/{prefix:path}")
+async def list_files(
+    prefix: str,
+    service: DataLakeService = Depends(get_datalake_service)
+):
+    """Возвращает список файлов в префиксе."""
+    files = await service.lake_client.list_files(prefix)
+    return {"files": files}
+```
+
+---
+
+## 6. Кэширование и оптимизация
+
+### 6.1. Двухуровневое кэширование
+
+```python
+class LakeCache:
+    """
+    Двухуровневое кэширование: Redis + локальный диск.
+    """
+    
+    def __init__(self, redis_client, cache_dir: str = '/tmp/lake_cache'):
+        self.redis = redis_client
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+    
+    async def get(self, key: str, ttl: int = 3600) -> Optional[bytes]:
+        """
+        Получает данные из кэша.
+        """
+        # 1. Redis
+        data = await self.redis.get(key)
+        if data:
+            return data
+        
+        # 2. Локальный диск
+        cache_file = self.cache_dir / f"{key}.parquet"
+        if cache_file.exists():
+            if (time.time() - cache_file.stat().st_mtime) < ttl:
+                with open(cache_file, 'rb') as f:
+                    return f.read()
+        
+        return None
+```
+
+### 6.2. Batch-запись
+
+```python
+class LakeBuffer:
+    """
+    Буферизация записей перед записью в озеро.
+    """
+    
+    def __init__(self, batch_size: int = 100, flush_interval: int = 60):
+        self.batch_size = batch_size
+        self.flush_interval = flush_interval
+        self.buffer = []
+        self.last_flush = time.time()
+    
+    async def add(self, data: dict, path: str):
+        self.buffer.append({'data': data, 'path': path})
+        if len(self.buffer) >= self.batch_size:
+            await self.flush()
+    
+    async def flush(self):
+        if not self.buffer:
+            return
+        
+        # Группируем по пути и записываем одним файлом
+        # ...
+```
+
+---
+
+## 7. Нефункциональные требования
+
+### 7.1. Производительность
+
+| Метрика | Требование |
+|---------|------------|
+| Запись данных | < 1 секунда на 1000 записей |
+| Чтение данных | < 500 мс на запрос |
+| Пропускная способность | > 1 Гбит/с |
+
+### 7.2. Отказоустойчивость
+
+| Риск | Защита |
+|------|--------|
+| MinIO недоступен | Retry с exponential backoff |
+| Ошибка записи | Буферизация и повторная попытка |
+| Потеря данных | Репликация (MinIO erasure coding) |
+
+---
+
+## 8. Чек-лист приёмки
+
+- [ ] Docker Compose поднимает MinIO и создаёт бакеты
+- [ ] `LakeClient` может загружать Parquet-файлы
+- [ ] `LakeClient` может скачивать Parquet-файлы
+- [ ] Партиционирование работает (год/месяц/день)
+- [ ] Сжатие Snappy включено
+- [ ] Двухуровневое кэширование работает
+- [ ] API эндпоинты доступны
+
+---
+
+**Готово к реализации.**

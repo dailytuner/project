@@ -1,1165 +1,950 @@
-# Техническое задание на разработку Analytics Worker
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ ANALYTICS WORKER v2.0
 
-## Версия 3.0 — Анализ диссонансов и обновление базы знаний
+## «Feedback-loop и калибровка для адаптивной системы»
 
----
-
-## Оглавление
-
-1. [Введение и цели](#1-введение-и-цели)
-2. [Общая архитектура](#2-общая-архитектура)
-3. [Структура базы данных](#3-структура-базы-данных)
-4. [Структура сервиса](#4-структура-сервиса)
-5. [Математическое ядро](#5-математическое-ядро)
-6. [Бизнес-логика](#6-бизнес-логика)
-7. [Расписание и запуск](#7-расписание-и-запуск)
-8. [Data Lake интеграция](#8-data-lake-интеграция)
-9. [Конфигурация и развертывание](#9-конфигурация-и-развертывание)
-10. [Нефункциональные требования](#10-нефункциональные-требования)
-11. [Чек-лист приёмки](#11-чек-лист-приёмки)
-12. [План реализации](#12-план-реализации)
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
 
 ---
 
-## 1. Введение и цели
+## 1. ВВЕДЕНИЕ
 
-### 1.1. Что такое Analytics Worker
+### 1.1. Назначение документа
 
-**Analytics Worker** — это batch-сервис, который:
+Документ описывает архитектуру, модель данных, алгоритмы и API для реализации **Analytics Worker** — batch-сервиса, который:
 
-- Собирает **диссонансы** из Psychometry Service (расхождения между профилями)
-- Анализирует паттерны диссонансов
-- Обновляет **базу знаний** для Alignment Engine
-- Генерирует отчёты и снапшоты
-- Работает по расписанию (еженедельно/ежемесячно)
+- Собирает и обрабатывает обратную связь от пользователей
+- Калибрует веса индексов достижения
+- Оптимизирует пороги окон возможностей
+- Генерирует отчёты для мониторинга качества
+- Обеспечивает самообучение системы
 
-**Ключевой принцип:** Сервис работает **асинхронно** и **не влияет** на онлайн-работу Astro и Psychometry Service.
+**Сервис работает в связке с:**
+- **Psychometry Service** — состояния, индексы, окна
+- **MinIO (Data Lake)** — хранение обратной связи и калибровок
+- **Final Tuner** — итоговая оптимизация (отдельный сервис)
 
-### 1.2. Что изменилось в версии 3.0
+### 1.2. Философское основание
 
-| Аспект | Версия 2.0 | Версия 3.0 (текущая) |
-|--------|-----------|---------------------|
-| **Цель** | Поиск корреляций | Анализ диссонансов |
-| **Входные данные** | MMPI/IAT результаты | **profile_alignments + dissonance_analysis** |
-| **Метод** | Статистическая корреляция | **Паттерн-майнинг диссонансов** |
-| **Выход** | Обновление весов слоёв | **Обновление базы знаний** |
-| **Расписание** | Ежемесячно + ежеквартально | **Еженедельно + ежемесячно** |
+**От корреляций к feedback-loop:**
 
-### 1.3. Бизнес-цели
+```
+СТАРАЯ ПАРАДИГМА:
+Астрология → Прогноз → Сравнение с MMPI → Обновление весов
+(корреляционный анализ, статистические методы)
 
-| Цель | Метрика успеха |
-|------|----------------|
-| Обнаружить паттерны диссонансов | > 50% диссонансов объяснены |
-| Обновить базу знаний | Confidence > 0.7 для 80% факторов |
-| Сделать систему самообучающейся | Автоматическое обновление knowledge_base |
-| Предоставить данные для исследований | Correlation snapshots в Data Lake |
+НОВАЯ ПАРАДИГМА:
+Состояние → Рекомендации → Действие пользователя → Обратная связь → Калибровка
+(циклическое обучение на основе реальных исходов)
+```
 
----
+**Ключевой принцип:** Система учится на **реальных результатах** пользователей, а не на статистических корреляциях.
 
-## 2. Общая архитектура
-
-### 2.1. Схема сервиса
+### 1.3. Место в архитектуре
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         CRON SCHEDULER                                │
-│  Еженедельно: Dissonance Mining (понедельник, 04:00)                  │
-│  Ежемесячно: Knowledge Update (1-е число, 05:00)                     │
-│  Ежеквартально: Full Report (1-е число квартала, 06:00)              │
+│                    PSYCHOMETRY SERVICE                                 │
+│  • Состояния, индексы, окна, рекомендации                             │
 └─────────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         ANALYTICS WORKER v3.0                         │
+│                    ПОЛЬЗОВАТЕЛЬ                                        │
+│  • Получает рекомендации                                               │
+│  • Действует                                                          │
+│  • Даёт обратную связь                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ANALYTICS WORKER (НОВЫЙ)                           │
 │                                                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  1. DISSONANCE MINER (еженедельно)                              │   │
-│  │  • Читает psych.dissonance_analysis                            │   │
-│  │  • Группирует по типам и факторам                              │   │
-│  │  • Находит паттерны расхождений                                 │   │
+│  │                    1. FEEDBACK PROCESSOR                        │   │
+│  │  • Сбор обратной связи                                          │   │
+│  │  • Агрегация по категориям                                      │   │
+│  │  • Вычисление accuracy                                          │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              │                                          │
-│                              ▼                                          │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  2. PATTERN ANALYZER                                            │   │
-│  │  • Вычисляет статистику по каждому фактору                     │   │
-│  │  • Определяет значимые паттерны                                 │   │
-│  │  • Формирует гипотезы                                           │   │
+│  │                    2. INDEX CALIBRATOR                         │   │
+│  │  • Калибровка весов индексов                                    │   │
+│  │  • Обновление формул                                            │   │
+│  │  • Версионирование                                              │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              │                                          │
-│                              ▼                                          │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  3. KNOWLEDGE BASE UPDATER (ежемесячно)                        │   │
-│  │  • Обновляет psych.alignment_knowledge_base                    │   │
-│  │  • Корректирует expected_effect, weight, confidence            │   │
-│  │  • Переводит факторы в 'deprecated' при необходимости          │   │
+│  │                    3. WINDOW OPTIMIZER                          │   │
+│  │  • Оптимизация порогов окон                                     │   │
+│  │  • Поиск оптимальных значений                                   │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              │                                          │
-│                              ▼                                          │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  4. SNAPSHOT WRITER (ежеквартально)                            │   │
-│  │  • Сохраняет снапшоты в Data Lake                              │   │
-│  │  • Генерирует отчёты                                            │   │
+│  │                    4. REPORT GENERATOR                         │   │
+│  │  • Еженедельные отчёты                                          │   │
+│  │  • Ежемесячные отчёты                                           │   │
+│  │  • Метрики качества                                             │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
                               │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-┌─────────────────────┐ ┌───────────────┐ ┌─────────────────────────────┐
-│    POSTGRESQL       │ │  DATA LAKE    │ │  ALIGNMENT ENGINE           │
-│  • psych.dissonance │ │  (S3/MinIO)   │ │  (обновлённая БЗ)           │
-│  • psych.alignment  │ │  • snapshots  │ │                             │
-│  • psych.knowledge  │ │               │ │                             │
-└─────────────────────┘ └───────────────┘ └─────────────────────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    MINIO (DATA LAKE)                                   │
+│  • analytics/feedback/                                                │
+│  • analytics/calibrations/                                            │
+│  • analytics/reports/                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
-
-### 2.2. Принципы сервиса
-
-| Принцип | Описание |
-|---------|----------|
-| **Асинхронность** | Все вычисления в фоне, не влияют на API |
-| **Идемпотентность** | Повторный запуск не создаёт дублей |
-| **Поэтапность** | Еженедельно → Ежемесячно → Ежеквартально |
-| **Прозрачность** | Все результаты сохраняются в БД и озере |
-| **Сделал и забыл** | Не требует ручного вмешательства |
-
-### 2.3. Технологический стек
-
-| Компонент | Технология | Версия |
-|-----------|------------|--------|
-| Язык | Python | 3.11+ |
-| ORM | SQLAlchemy | 2.0+ |
-| Статистика | scipy, statsmodels | 1.11+, 0.14+ |
-| S3 клиент | boto3 / aioboto3 | 1.34+ |
-| Формат данных | Parquet | pyarrow |
-| Расписание | APScheduler / Cron | 3.10+ |
-| Контейнеризация | Docker | 24+ |
 
 ---
 
-## 3. Структура базы данных
+## 2. МОДЕЛЬ ДАННЫХ
 
-### 3.1. Чтение из psych схемы
-
-```sql
--- ============================================================
--- ТАБЛИЦЫ, КОТОРЫЕ ANALYTICS WORKER ЧИТАЕТ
--- ============================================================
-
--- 1. Диссонансы (основной источник)
-CREATE TABLE psych.dissonance_analysis (
-    id SERIAL PRIMARY KEY,
-    alignment_id INTEGER REFERENCES psych.profile_alignments(id),
-    user_id INTEGER NOT NULL,
-    dissonance_type VARCHAR(30) CHECK (dissonance_type IN ('house', 'dasha', 'retro', 'element', 'dynamic')),
-    source VARCHAR(50),
-    expected_state VARCHAR(50),
-    actual_state VARCHAR(50),
-    psych_scale VARCHAR(20),
-    severity FLOAT CHECK (severity BETWEEN 0 AND 1),
-    hypothesis TEXT,
-    resolved BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ
-);
-
--- 2. База знаний (обновляется)
-CREATE TABLE psych.alignment_knowledge_base (
-    id SERIAL PRIMARY KEY,
-    knowledge_type VARCHAR(30) CHECK (knowledge_type IN ('house', 'dasha', 'retro', 'element', 'dynamic')),
-    factor_name VARCHAR(50) NOT NULL,
-    expected_effect VARCHAR(20) CHECK (expected_effect IN ('increasing', 'decreasing', 'variable', 'neutral')),
-    affected_scales TEXT[],
-    weight FLOAT DEFAULT 1.0 CHECK (weight BETWEEN 0 AND 2),
-    observations_count INTEGER DEFAULT 0,
-    confirmation_count INTEGER DEFAULT 0,
-    dissonance_count INTEGER DEFAULT 0,
-    confidence FLOAT DEFAULT 0.5 CHECK (confidence BETWEEN 0 AND 1),
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'deprecated', 'pending_review')),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 3. Результаты сопоставлений (для контекста)
-CREATE TABLE psych.profile_alignments (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    alignment_date DATE NOT NULL,
-    coherence_score FLOAT NOT NULL,
-    coherence_level VARCHAR(20),
-    house_alignments JSONB,
-    dasha_alignments JSONB,
-    retro_alignments JSONB,
-    element_alignments JSONB,
-    dynamic_alignments JSONB,
-    dissonance_analysis JSONB,
-    dissonance_count INTEGER DEFAULT 0,
-    recommendations TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-### 3.2. НОВЫЕ таблицы в схеме analytics
+### 2.1. Таблицы в схеме `analytics`
 
 ```sql
 -- ============================================================
--- НОВАЯ СХЕМА ДЛЯ АНАЛИТИКИ
+-- 1. ОБРАТНАЯ СВЯЗЬ (АГРЕГИРОВАННАЯ)
 -- ============================================================
 
-CREATE SCHEMA IF NOT EXISTS analytics;
-
--- 1. Паттерны диссонансов
-CREATE TABLE analytics.dissonance_patterns (
-    id SERIAL PRIMARY KEY,
-    pattern_name VARCHAR(100) NOT NULL,
-    factor_name VARCHAR(50) NOT NULL,
-    knowledge_type VARCHAR(30),
-    expected_effect VARCHAR(20),
-    actual_pattern VARCHAR(20),
-    observation_count INTEGER DEFAULT 0,
-    severity_avg FLOAT DEFAULT 0,
-    confidence FLOAT DEFAULT 0.5,
-    hypothesis TEXT,
-    status VARCHAR(20) DEFAULT 'pending_review',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    INDEX idx_patterns_factor (factor_name),
-    INDEX idx_patterns_status (status)
+CREATE TABLE analytics.feedback_aggregates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    category_id TEXT NOT NULL,  -- family, work, health, self
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Статистика по категории
+    total_feedback INTEGER NOT NULL DEFAULT 0,
+    avg_outcome FLOAT,
+    avg_rating FLOAT,
+    accuracy FLOAT,  -- доля сбывшихся прогнозов
+    
+    -- Распределение
+    outcome_distribution JSONB,  -- { "high": 10, "medium": 5, "low": 2 }
+    rating_distribution JSONB,   -- { "5": 3, "4": 5, "3": 2, "2": 1, "1": 0 }
+    
+    -- Тренды
+    trend_direction TEXT,  -- improving, stable, declining
+    trend_slope FLOAT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_feedback_agg_user (user_id),
+    INDEX idx_feedback_agg_category (category_id),
+    INDEX idx_feedback_agg_date (calculated_at)
 );
 
--- 2. История обновлений базы знаний
-CREATE TABLE analytics.knowledge_updates (
-    id SERIAL PRIMARY KEY,
-    knowledge_base_id INTEGER REFERENCES psych.alignment_knowledge_base(id),
-    old_weight FLOAT,
-    new_weight FLOAT,
-    old_confidence FLOAT,
-    new_confidence FLOAT,
-    old_status VARCHAR(20),
-    new_status VARCHAR(20),
-    change_reason TEXT,
-    pattern_id INTEGER REFERENCES analytics.dissonance_patterns(id),
-    updated_by VARCHAR(50) DEFAULT 'analytics_worker',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    INDEX idx_updates_kb (knowledge_base_id),
-    INDEX idx_updates_created (created_at)
-);
+-- ============================================================
+-- 2. КАЛИБРОВКИ ИНДЕКСОВ
+-- ============================================================
 
--- 3. Снапшоты (исторические)
-CREATE TABLE analytics.snapshots (
-    id SERIAL PRIMARY KEY,
-    snapshot_date DATE NOT NULL,
-    snapshot_type VARCHAR(20) CHECK (snapshot_type IN ('weekly', 'monthly', 'quarterly')),
-    knowledge_base_snapshot JSONB,
-    dissonance_patterns JSONB,
-    statistics JSONB,
+CREATE TABLE analytics.index_calibrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category_id TEXT NOT NULL,
+    version TEXT NOT NULL,  -- v1.0, v1.1, v2.0, etc.
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Веса компонентов
+    weights JSONB NOT NULL,
+    -- { "clarity": 0.3, "synchronicity": 0.3, "resource": 0.3, "inertia": 0.1 }
+    
+    -- Сезонные бусты
+    seasonal_boosts JSONB,
+    
+    -- Метрики качества
+    validation_score FLOAT,  -- 0-1, точность на исторических данных
+    n_observations INTEGER,
+    p_value FLOAT,
+    
+    -- Статус
+    status TEXT DEFAULT 'experimental',  -- experimental, active, deprecated
+    applied_at TIMESTAMP,
+    
+    -- Ссылка на озеро
     lake_uri TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    INDEX idx_snapshots_date (snapshot_date),
-    INDEX idx_snapshots_type (snapshot_type)
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_calibrations_category (category_id),
+    INDEX idx_calibrations_version (version),
+    INDEX idx_calibrations_status (status)
 );
 
--- 4. Лог выполнения
-CREATE TABLE analytics.execution_logs (
-    id SERIAL PRIMARY KEY,
-    job_type VARCHAR(20) NOT NULL CHECK (job_type IN ('weekly', 'monthly', 'quarterly')),
-    started_at TIMESTAMPTZ NOT NULL,
-    finished_at TIMESTAMPTZ,
-    dissonances_analyzed INTEGER DEFAULT 0,
-    patterns_found INTEGER DEFAULT 0,
-    knowledge_updated INTEGER DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'running',
-    error_message TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    INDEX idx_logs_job_type (job_type),
-    INDEX idx_logs_status (status)
+-- ============================================================
+-- 3. ОПТИМИЗАЦИЯ ПОРОГОВ ОКОН
+-- ============================================================
+
+CREATE TABLE analytics.window_optimizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    version TEXT NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Пороги
+    thresholds JSONB NOT NULL,
+    -- { "open": 0.7, "partial": 0.4, "closed": 0.2 }
+    
+    -- Метрики качества
+    validation_score FLOAT,
+    n_observations INTEGER,
+    
+    -- Статус
+    status TEXT DEFAULT 'experimental',
+    applied_at TIMESTAMP,
+    
+    -- Ссылка на озеро
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_window_optimizations_version (version),
+    INDEX idx_window_optimizations_status (status)
 );
+
+-- ============================================================
+-- 4. ОТЧЁТЫ
+-- ============================================================
+
+CREATE TABLE analytics.reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_type TEXT NOT NULL,  -- weekly, monthly, quarterly
+    report_date DATE NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Содержание отчёта
+    content JSONB NOT NULL,
+    -- { "summary": "...", "charts": [...], "recommendations": [...] }
+    
+    -- Метрики
+    metrics JSONB,
+    -- { "total_users": 100, "avg_coherence": 0.65, "accuracy": 0.72, ... }
+    
+    -- Ссылка на озеро
+    lake_uri TEXT,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_reports_type_date (report_type, report_date)
+);
+
+-- ============================================================
+-- 5. ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
+-- ============================================================
+
+CREATE INDEX idx_feedback_agg_user_date ON analytics.feedback_aggregates(user_id, calculated_at);
+CREATE INDEX idx_calibrations_category_status ON analytics.index_calibrations(category_id, status);
+CREATE INDEX idx_window_optimizations_status ON analytics.window_optimizations(status);
 ```
 
 ---
 
-## 4. Структура сервиса
+## 3. CORE МОДУЛИ
 
-### 4.1. Дерево файлов
-
-```
-analytics-worker/
-├── src/
-│   ├── __init__.py
-│   ├── main.py                    # Точка входа
-│   ├── settings.py                # Конфигурация
-│   │
-│   ├── core/                      # Математическое ядро
-│   │   ├── __init__.py
-│   │   ├── dissonance_miner.py    # Сбор и группировка диссонансов
-│   │   ├── pattern_analyzer.py    # Анализ паттернов
-│   │   ├── knowledge_updater.py   # Обновление базы знаний
-│   │   ├── snapshot_writer.py     # Запись снапшотов
-│   │   └── models.py              # Внутренние модели
-│   │
-│   ├── services/                  # Бизнес-логика
-│   │   ├── __init__.py
-│   │   ├── analytics_service.py   # Оркестрация
-│   │   ├── stats_calculator.py    # Статистика
-│   │   └── notifier.py            # Оповещения
-│   │
-│   ├── infrastructure/            # Интеграции
-│   │   ├── __init__.py
-│   │   ├── database.py            # SQLAlchemy
-│   │   ├── lake_client.py         # S3/MinIO
-│   │   └── scheduler.py           # APScheduler
-│   │
-│   └── jobs/                      # Задания по расписанию
-│       ├── __init__.py
-│       ├── weekly_job.py          # Еженедельное обновление
-│       ├── monthly_job.py         # Ежемесячное обновление
-│       └── quarterly_job.py       # Ежеквартальный отчёт
-│
-├── tests/
-│   ├── unit/
-│   │   ├── test_dissonance_miner.py
-│   │   ├── test_pattern_analyzer.py
-│   │   └── test_knowledge_updater.py
-│   └── integration/
-│       ├── test_analytics_service.py
-│       └── test_snapshot_writer.py
-│
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── README.md
-```
-
-### 4.2. Описание модулей
-
-| Модуль | Ответственность | Зависимости |
-|--------|-----------------|-------------|
-| **core/dissonance_miner.py** | Сбор и группировка диссонансов | database |
-| **core/pattern_analyzer.py** | Анализ паттернов и формирование гипотез | dissonance_miner |
-| **core/knowledge_updater.py** | Обновление базы знаний | pattern_analyzer |
-| **core/snapshot_writer.py** | Запись снапшотов в озеро | lake_client |
-| **services/analytics_service.py** | Оркестрация всех процессов | core |
-| **jobs/weekly_job.py** | Еженедельный запуск | analytics_service |
-| **jobs/monthly_job.py** | Ежемесячный запуск | analytics_service |
-
----
-
-## 5. Математическое ядро
-
-### 5.1. DissonanceMiner
+### 3.1. Feedback Processor
 
 ```python
-# core/dissonance_miner.py
+# src/core/feedback_processor.py
 
-class DissonanceMiner:
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from uuid import UUID
+import numpy as np
+from collections import defaultdict
+
+class FeedbackProcessor:
     """
-    Сбор и группировка диссонансов из Psychometry Service.
+    Обработка и агрегация обратной связи.
     """
     
-    async def mine_dissonances(
+    async def process_feedback(
         self,
-        session: AsyncSession,
-        since: Optional[datetime] = None
-    ) -> List[DissonanceGroup]:
+        user_id: UUID,
+        category_id: str,
+        forecast_date: datetime,
+        actual_outcome: float,
+        rating: Optional[int] = None,
+        comment: Optional[str] = None
+    ) -> Dict:
         """
-        Собирает диссонансы и группирует их по факторам.
+        Обрабатывает одну запись обратной связи.
         """
-        # 1. Загружаем диссонансы
-        dissonances = await self._load_dissonances(session, since)
+        # 1. Сохраняем в БД
+        feedback_id = await self._save_feedback(
+            user_id, category_id, forecast_date,
+            actual_outcome, rating, comment
+        )
         
-        if not dissonances:
-            return []
+        # 2. Обновляем агрегаты
+        await self._update_aggregates(user_id, category_id)
         
-        # 2. Группируем по factor_name + expected_effect
-        groups = {}
-        for d in dissonances:
-            key = (d.source, d.dissonance_type, d.expected_state)
-            if key not in groups:
-                groups[key] = {
-                    'factor_name': d.source,
-                    'knowledge_type': d.dissonance_type,
-                    'expected_effect': d.expected_state,
-                    'dissonances': [],
-                    'count': 0,
-                    'severity_sum': 0.0,
-                    'users': set()
-                }
-            
-            groups[key]['dissonances'].append(d)
-            groups[key]['count'] += 1
-            groups[key]['severity_sum'] += d.severity
-            groups[key]['users'].add(d.user_id)
+        # 3. Проверяем необходимость калибровки
+        if await self._needs_calibration(category_id):
+            await self._trigger_calibration(category_id)
         
-        # 3. Формируем DissonanceGroup
-        result = []
-        for key, data in groups.items():
-            result.append(DissonanceGroup(
-                factor_name=data['factor_name'],
-                knowledge_type=data['knowledge_type'],
-                expected_effect=data['expected_effect'],
-                dissonance_count=data['count'],
-                unique_users=len(data['users']),
-                avg_severity=data['severity_sum'] / data['count'] if data['count'] > 0 else 0,
-                sample=dissonances[:10]  # Для анализа
-            ))
-        
-        return result
+        return {
+            'feedback_id': feedback_id,
+            'processed': True,
+            'needs_calibration': await self._needs_calibration(category_id)
+        }
     
-    async def _load_dissonances(
+    async def _update_aggregates(
         self,
-        session: AsyncSession,
-        since: Optional[datetime]
-    ) -> List[Dissonance]:
+        user_id: UUID,
+        category_id: str
+    ):
         """
-        Загружает диссонансы из БД.
+        Обновляет агрегированную статистику для категории.
         """
-        stmt = select(Dissonance)
-        if since:
-            stmt = stmt.where(Dissonance.created_at > since)
-        stmt = stmt.where(Dissonance.resolved.is_(False))
-        stmt = stmt.order_by(Dissonance.created_at.desc())
+        # 1. Получаем все feedback для пользователя по категории
+        feedbacks = await self._get_user_feedback(user_id, category_id)
         
-        result = await session.execute(stmt)
-        return result.scalars().all()
-```
-
-### 5.2. PatternAnalyzer
-
-```python
-# core/pattern_analyzer.py
-
-class PatternAnalyzer:
-    """
-    Анализирует паттерны диссонансов и формирует гипотезы.
-    """
-    
-    # Пороги для определения значимости
-    MIN_OBSERVATIONS = 10
-    MIN_UNIQUE_USERS = 3
-    SEVERITY_THRESHOLD = 0.6
-    
-    async def analyze(
-        self,
-        dissonance_groups: List[DissonanceGroup]
-    ) -> List[Pattern]:
-        """
-        Анализирует группы диссонансов и находит паттерны.
-        """
-        patterns = []
+        if not feedbacks:
+            return
         
-        for group in dissonance_groups:
-            # 1. Проверяем, достаточно ли данных
-            if group.dissonance_count < self.MIN_OBSERVATIONS:
-                continue
-            
-            if group.unique_users < self.MIN_UNIQUE_USERS:
-                continue
-            
-            # 2. Вычисляем показатели
-            pattern = await self._extract_pattern(group)
-            
-            # 3. Определяем значимость
-            pattern.significance = self._calculate_significance(pattern)
-            
-            # 4. Формируем гипотезу
-            pattern.hypothesis = self._generate_hypothesis(pattern)
-            
-            patterns.append(pattern)
+        # 2. Вычисляем статистику
+        outcomes = [f['actual_outcome'] for f in feedbacks]
+        ratings = [f['rating'] for f in feedbacks if f.get('rating')]
         
-        return patterns
-    
-    def _extract_pattern(self, group: DissonanceGroup) -> Pattern:
-        """
-        Извлекает паттерн из группы диссонансов.
-        """
-        # Определяем, какой паттерн наблюдается
-        # Пример: "factor_name: saturn_house_1, expected: high, actual: low"
+        # Accuracy: доля исходов > 0.5
+        accuracy = sum(1 for o in outcomes if o > 0.5) / len(outcomes) if outcomes else 0
         
-        # Собираем все actual_state из диссонансов
-        actual_states = [d.actual_state for d in group.sample]
-        most_common_actual = max(set(actual_states), key=actual_states.count)
+        # Распределение исходов
+        outcome_dist = self._distribution(outcomes, bins=[0, 0.33, 0.66, 1])
+        rating_dist = self._distribution(ratings, bins=[1, 2, 3, 4, 5])
         
-        # Определяем консистентность паттерна
-        consistency = actual_states.count(most_common_actual) / len(actual_states) if actual_states else 0
+        # Тренд
+        trend = self._calculate_trend(outcomes)
         
-        return Pattern(
-            factor_name=group.factor_name,
-            knowledge_type=group.knowledge_type,
-            expected_effect=group.expected_effect,
-            actual_pattern=most_common_actual,
-            observation_count=group.dissonance_count,
-            unique_users=group.unique_users,
-            avg_severity=group.avg_severity,
-            consistency=consistency,
-            significance=0.0,  # будет рассчитано позже
-            hypothesis="",     # будет сгенерировано позже
-            status='pending_review'
+        # 3. Сохраняем агрегаты
+        await self._save_aggregates(
+            user_id=user_id,
+            category_id=category_id,
+            total_feedback=len(feedbacks),
+            avg_outcome=np.mean(outcomes) if outcomes else 0,
+            avg_rating=np.mean(ratings) if ratings else 0,
+            accuracy=accuracy,
+            outcome_distribution=outcome_dist,
+            rating_distribution=rating_dist,
+            trend_direction=trend['direction'],
+            trend_slope=trend['slope']
         )
     
-    def _calculate_significance(self, pattern: Pattern) -> float:
+    def _distribution(self, values: List[float], bins: List[float]) -> Dict:
         """
-        Рассчитывает значимость паттерна.
+        Вычисляет распределение значений по корзинам.
         """
-        # Комбинированный score на основе:
-        # 1. Количество наблюдений (чем больше, тем значимее)
-        # 2. Консистентность (чем выше, тем значимее)
-        # 3. Уникальные пользователи (чем больше, тем значимее)
-        
-        observation_score = min(1.0, pattern.observation_count / 100)
-        consistency_score = pattern.consistency
-        user_score = min(1.0, pattern.unique_users / 20)
-        
-        return (observation_score * 0.4 + consistency_score * 0.4 + user_score * 0.2)
+        dist = {}
+        for i in range(len(bins) - 1):
+            key = f"{bins[i]}-{bins[i+1]}"
+            count = sum(1 for v in values if bins[i] <= v < bins[i+1])
+            dist[key] = count
+        return dist
     
-    def _generate_hypothesis(self, pattern: Pattern) -> str:
+    def _calculate_trend(self, values: List[float]) -> Dict:
         """
-        Генерирует гипотезу на основе паттерна.
+        Вычисляет тренд на основе скользящего среднего.
         """
-        if pattern.knowledge_type == 'house':
-            return (
-                f"Фактор {pattern.factor_name} ожидался как {pattern.expected_effect}, "
-                f"но в {int(pattern.consistency * 100)}% случаев показывает {pattern.actual_pattern}. "
-                f"Возможно, правило требует корректировки."
-            )
-        elif pattern.knowledge_type == 'dasha':
-            return (
-                f"Даша {pattern.factor_name.replace('dasha_', '')} не даёт ожидаемого "
-                f"{pattern.expected_effect} эффекта. Вместо этого наблюдается {pattern.actual_pattern}."
-            )
+        if len(values) < 3:
+            return {'direction': 'stable', 'slope': 0.0}
+        
+        # Простая линейная регрессия
+        x = np.arange(len(values))
+        y = np.array(values)
+        slope = np.polyfit(x, y, 1)[0]
+        
+        if slope > 0.05:
+            direction = 'improving'
+        elif slope < -0.05:
+            direction = 'declining'
         else:
-            return f"Обнаружен паттерн для {pattern.factor_name}: {pattern.actual_pattern} вместо {pattern.expected_effect}"
+            direction = 'stable'
+        
+        return {
+            'direction': direction,
+            'slope': round(float(slope), 4)
+        }
+    
+    async def _needs_calibration(self, category_id: str) -> bool:
+        """
+        Проверяет, нужно ли калибровать категорию.
+        """
+        # Минимум 30 наблюдений для калибровки
+        count = await self._get_feedback_count(category_id)
+        return count >= 30
 ```
 
-### 5.3. KnowledgeUpdater
+### 3.2. Index Calibrator
 
 ```python
-# core/knowledge_updater.py
+# src/core/index_calibrator.py
 
-class KnowledgeUpdater:
+from typing import Dict, List, Optional
+from datetime import datetime
+from uuid import UUID
+import numpy as np
+from scipy.optimize import minimize
+
+class IndexCalibrator:
     """
-    Обновляет базу знаний на основе выявленных паттернов.
+    Калибровка весов индексов достижения на основе обратной связи.
     """
     
-    # Изменение confidence на основе паттерна
-    CONFIDENCE_DELTA = {
-        'strong': 0.15,
-        'medium': 0.07,
-        'weak': 0.03
-    }
+    # Компоненты индекса
+    COMPONENTS = ['clarity', 'synchronicity', 'resource', 'inertia']
     
-    # Изменение weight на основе паттерна
-    WEIGHT_DELTA = {
-        'strong': 0.2,
-        'medium': 0.1,
-        'weak': 0.05
-    }
-    
-    async def update(
+    async def calibrate(
         self,
-        session: AsyncSession,
-        patterns: List[Pattern]
-    ) -> List[KnowledgeUpdate]:
+        category_id: str,
+        version: str = 'v1.0'
+    ) -> Dict:
         """
-        Обновляет базу знаний на основе паттернов.
+        Калибрует веса для указанной категории.
         """
-        updates = []
+        # 1. Получаем исторические данные
+        data = await self._get_historical_data(category_id)
         
-        for pattern in patterns:
-            # 1. Находим запись в knowledge_base
-            kb_entry = await self._find_kb_entry(session, pattern)
-            
-            if not kb_entry:
-                # Если нет — создаём новую
-                kb_entry = await self._create_kb_entry(session, pattern)
-            
-            # 2. Определяем силу паттерна
-            strength = self._determine_strength(pattern)
-            
-            # 3. Обновляем confidence
-            old_confidence = kb_entry.confidence
-            new_confidence = self._update_confidence(old_confidence, pattern, strength)
-            
-            # 4. Обновляем weight
-            old_weight = kb_entry.weight
-            new_weight = self._update_weight(old_weight, pattern, strength)
-            
-            # 5. Обновляем счётчики
-            kb_entry.observations_count += pattern.observation_count
-            kb_entry.dissonance_count += pattern.observation_count
-            
-            # 6. Если паттерн подтверждает ожидание
-            if self._is_confirming(pattern):
-                kb_entry.confirmation_count += pattern.observation_count
-            
-            # 7. Обновляем статус
-            new_status = self._determine_status(kb_entry)
-            
-            # 8. Сохраняем изменения
-            await session.commit()
-            
-            # 9. Логируем обновление
-            update = KnowledgeUpdate(
-                knowledge_base_id=kb_entry.id,
-                old_weight=old_weight,
-                new_weight=new_weight,
-                old_confidence=old_confidence,
-                new_confidence=new_confidence,
-                old_status=kb_entry.status,
-                new_status=new_status,
-                change_reason=self._generate_change_reason(pattern, strength),
-                pattern_id=pattern.id
-            )
-            updates.append(update)
+        if len(data) < 30:
+            return {
+                'status': 'insufficient_data',
+                'n_observations': len(data)
+            }
         
-        return updates
+        # 2. Оптимизируем веса
+        optimal_weights = self._optimize_weights(data)
+        
+        # 3. Вычисляем метрики качества
+        validation_score = self._validate(optimal_weights, data)
+        
+        # 4. Сохраняем калибровку
+        calibration_id = await self._save_calibration(
+            category_id=category_id,
+            version=version,
+            weights=optimal_weights,
+            validation_score=validation_score,
+            n_observations=len(data)
+        )
+        
+        return {
+            'calibration_id': calibration_id,
+            'weights': optimal_weights,
+            'validation_score': validation_score,
+            'n_observations': len(data)
+        }
     
-    def _determine_strength(self, pattern: Pattern) -> str:
+    def _optimize_weights(self, data: List[Dict]) -> Dict:
         """
-        Определяет силу паттерна.
+        Оптимизирует веса для максимальной точности.
         """
-        significance = pattern.significance
+        # Целевая функция: минимизация ошибки
+        def objective(weights):
+            total_error = 0
+            for record in data:
+                predicted = (
+                    record['clarity'] * weights[0] +
+                    record['synchronicity'] * weights[1] +
+                    record['resource'] * weights[2] -
+                    record['inertia'] * weights[3]
+                )
+                predicted = max(0, min(1, predicted))
+                actual = record['actual_outcome']
+                total_error += (predicted - actual) ** 2
+            return total_error / len(data)
         
-        if significance > 0.8 and pattern.observation_count > 50:
-            return 'strong'
-        elif significance > 0.5:
-            return 'medium'
+        # Начальные значения (текущие веса)
+        initial_weights = [0.3, 0.3, 0.3, 0.1]
+        
+        # Ограничения: сумма = 1, все >= 0
+        constraints = [
+            {'type': 'eq', 'fun': lambda w: sum(w) - 1},
+            {'type': 'ineq', 'fun': lambda w: w}  # все >= 0
+        ]
+        
+        # Оптимизация
+        result = minimize(
+            objective,
+            initial_weights,
+            method='SLSQP',
+            constraints=constraints
+        )
+        
+        if result.success:
+            return {
+                'clarity': round(float(result.x[0]), 3),
+                'synchronicity': round(float(result.x[1]), 3),
+                'resource': round(float(result.x[2]), 3),
+                'inertia': round(float(result.x[3]), 3)
+            }
         else:
-            return 'weak'
+            # Fallback: текущие веса
+            return {
+                'clarity': 0.3,
+                'synchronicity': 0.3,
+                'resource': 0.3,
+                'inertia': 0.1
+            }
     
-    def _update_confidence(
+    def _validate(
         self,
-        old_confidence: float,
-        pattern: Pattern,
-        strength: str
+        weights: Dict,
+        data: List[Dict]
     ) -> float:
         """
-        Обновляет confidence на основе паттерна.
+        Валидирует веса на исторических данных.
         """
-        delta = self.CONFIDENCE_DELTA.get(strength, 0.05)
+        predictions = []
+        actuals = []
         
-        if self._is_confirming(pattern):
-            # Паттерн подтверждает ожидание → confidence растёт
-            new_confidence = min(0.95, old_confidence + delta)
-        else:
-            # Паттерн опровергает ожидание → confidence падает
-            new_confidence = max(0.1, old_confidence - delta)
+        for record in data:
+            predicted = (
+                record['clarity'] * weights['clarity'] +
+                record['synchronicity'] * weights['synchronicity'] +
+                record['resource'] * weights['resource'] -
+                record['inertia'] * weights['inertia']
+            )
+            predicted = max(0, min(1, predicted))
+            predictions.append(predicted)
+            actuals.append(record['actual_outcome'])
         
-        return round(new_confidence, 4)
+        # R^2 (коэффициент детерминации)
+        predictions = np.array(predictions)
+        actuals = np.array(actuals)
+        
+        ss_res = np.sum((predictions - actuals) ** 2)
+        ss_tot = np.sum((actuals - np.mean(actuals)) ** 2)
+        
+        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        return max(0, min(1, r2))
+```
+
+### 3.3. Window Optimizer
+
+```python
+# src/core/window_optimizer.py
+
+from typing import Dict, List, Optional
+from datetime import datetime
+import numpy as np
+
+class WindowOptimizer:
+    """
+    Оптимизация порогов окон возможностей.
+    """
     
-    def _update_weight(self, old_weight: float, pattern: Pattern, strength: str) -> float:
+    async def optimize(
+        self,
+        version: str = 'v1.0'
+    ) -> Dict:
         """
-        Обновляет weight на основе паттерна.
+        Оптимизирует пороги окон на основе обратной связи.
         """
-        delta = self.WEIGHT_DELTA.get(strength, 0.05)
+        # 1. Получаем исторические данные
+        data = await self._get_window_data()
         
-        if self._is_confirming(pattern):
-            # Паттерн подтверждает → weight растёт
-            new_weight = min(2.0, old_weight + delta)
-        else:
-            # Паттерн опровергает → weight падает
-            new_weight = max(0.3, old_weight - delta)
+        if len(data) < 100:
+            return {
+                'status': 'insufficient_data',
+                'n_observations': len(data)
+            }
         
-        return round(new_weight, 4)
+        # 2. Поиск оптимальных порогов
+        optimal_thresholds = self._find_optimal_thresholds(data)
+        
+        # 3. Валидация
+        validation_score = self._validate_thresholds(optimal_thresholds, data)
+        
+        # 4. Сохраняем
+        optimization_id = await self._save_optimization(
+            version=version,
+            thresholds=optimal_thresholds,
+            validation_score=validation_score,
+            n_observations=len(data)
+        )
+        
+        return {
+            'optimization_id': optimization_id,
+            'thresholds': optimal_thresholds,
+            'validation_score': validation_score
+        }
     
-    def _determine_status(self, kb_entry: KnowledgeBase) -> str:
+    def _find_optimal_thresholds(self, data: List[Dict]) -> Dict:
         """
-        Определяет статус записи в базе знаний.
+        Находит оптимальные пороги для окон.
         """
-        if kb_entry.confidence > 0.8 and kb_entry.observations_count > 100:
-            return 'active'
-        elif kb_entry.confidence > 0.5 and kb_entry.observations_count > 50:
-            return 'pending_review'
-        elif kb_entry.confidence < 0.2 and kb_entry.observations_count > 30:
-            return 'deprecated'
-        else:
-            return kb_entry.status
+        # Значения окон и исходы
+        window_values = [d['window_value'] for d in data]
+        outcomes = [d['actual_outcome'] for d in data]
+        
+        # Перебор порогов
+        best_accuracy = 0
+        best_thresholds = {'open': 0.7, 'partial': 0.4, 'closed': 0.2}
+        
+        for open_th in np.arange(0.5, 0.9, 0.05):
+            for partial_th in np.arange(0.2, 0.6, 0.05):
+                if partial_th >= open_th:
+                    continue
+                
+                # Классификация по порогам
+                predictions = []
+                for wv in window_values:
+                    if wv >= open_th:
+                        predictions.append('open')
+                    elif wv >= partial_th:
+                        predictions.append('partial')
+                    else:
+                        predictions.append('closed')
+                
+                # Сопоставление с исходами
+                accuracy = self._calculate_accuracy(predictions, outcomes)
+                
+                if accuracy > best_accuracy:
+                    best_accuracy = accuracy
+                    best_thresholds = {
+                        'open': round(open_th, 2),
+                        'partial': round(partial_th, 2),
+                        'closed': round(partial_th - 0.1, 2)
+                    }
+        
+        return best_thresholds
+    
+    def _calculate_accuracy(
+        self,
+        predictions: List[str],
+        outcomes: List[float]
+    ) -> float:
+        """
+        Вычисляет точность классификации.
+        """
+        correct = 0
+        for pred, outcome in zip(predictions, outcomes):
+            if pred == 'open' and outcome > 0.6:
+                correct += 1
+            elif pred == 'partial' and 0.3 < outcome <= 0.6:
+                correct += 1
+            elif pred == 'closed' and outcome <= 0.3:
+                correct += 1
+        
+        return correct / len(predictions) if predictions else 0
+    
+    def _validate_thresholds(
+        self,
+        thresholds: Dict,
+        data: List[Dict]
+    ) -> float:
+        """
+        Валидирует пороги на данных.
+        """
+        window_values = [d['window_value'] for d in data]
+        outcomes = [d['actual_outcome'] for d in data]
+        
+        predictions = []
+        for wv in window_values:
+            if wv >= thresholds['open']:
+                predictions.append('open')
+            elif wv >= thresholds['partial']:
+                predictions.append('partial')
+            else:
+                predictions.append('closed')
+        
+        return self._calculate_accuracy(predictions, outcomes)
 ```
 
 ---
 
-## 6. Бизнес-логика
+## 4. SERVICE LAYER
 
-### 6.1. AnalyticsService
+### 4.1. Analytics Service
 
 ```python
-# services/analytics_service.py
+# src/services/analytics_service.py
+
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from uuid import UUID
+
+from ..core.feedback_processor import FeedbackProcessor
+from ..core.index_calibrator import IndexCalibrator
+from ..core.window_optimizer import WindowOptimizer
+from ..core.report_generator import ReportGenerator
 
 class AnalyticsService:
     """
-    Оркестрация аналитического процесса.
+    Главный сервис аналитики.
     """
     
     def __init__(
         self,
-        dissonance_miner: DissonanceMiner,
-        pattern_analyzer: PatternAnalyzer,
-        knowledge_updater: KnowledgeUpdater,
-        snapshot_writer: SnapshotWriter,
-        stats_calculator: StatsCalculator
+        feedback_processor: FeedbackProcessor,
+        index_calibrator: IndexCalibrator,
+        window_optimizer: WindowOptimizer,
+        report_generator: ReportGenerator
     ):
-        self.dissonance_miner = dissonance_miner
-        self.pattern_analyzer = pattern_analyzer
-        self.knowledge_updater = knowledge_updater
-        self.snapshot_writer = snapshot_writer
-        self.stats_calculator = stats_calculator
+        self.feedback_processor = feedback_processor
+        self.index_calibrator = index_calibrator
+        self.window_optimizer = window_optimizer
+        self.report_generator = report_generator
     
-    async def run_weekly(self) -> Dict:
+    async def process_feedback(
+        self,
+        user_id: UUID,
+        category_id: str,
+        forecast_date: datetime,
+        actual_outcome: float,
+        rating: Optional[int] = None,
+        comment: Optional[str] = None
+    ) -> Dict:
         """
-        Еженедельный запуск (понедельник, 04:00).
-        - Сбор диссонансов за неделю
-        - Анализ паттернов
-        - Формирование гипотез
+        Обрабатывает обратную связь.
         """
-        start_time = datetime.now()
-        logger.info("Starting WEEKLY dissonance mining...")
-        
-        try:
-            async with async_session() as session:
-                # 1. Собираем диссонансы за неделю
-                since = datetime.now() - timedelta(days=7)
-                groups = await self.dissonance_miner.mine_dissonances(session, since)
-                logger.info(f"Found {len(groups)} dissonance groups")
-                
-                # 2. Анализируем паттерны
-                patterns = await self.pattern_analyzer.analyze(groups)
-                significant = [p for p in patterns if p.significance > 0.5]
-                logger.info(f"Found {len(significant)} significant patterns")
-                
-                # 3. Сохраняем паттерны
-                await self._save_patterns(session, significant)
-                
-                # 4. Записываем снапшот
-                await self.snapshot_writer.write_weekly_snapshot(
-                    session, groups, patterns
-                )
-                
-                # 5. Логируем
-                await self._log_execution(session, 'weekly', success=True)
-            
-            return {
-                'status': 'success',
-                'dissonance_groups': len(groups),
-                'patterns_found': len(significant)
-            }
-            
-        except Exception as e:
-            logger.error(f"Weekly job failed: {e}", exc_info=True)
-            await self._log_execution(session, 'weekly', success=False, error=str(e))
-            return {'status': 'failed', 'error': str(e)}
+        return await self.feedback_processor.process_feedback(
+            user_id, category_id, forecast_date,
+            actual_outcome, rating, comment
+        )
     
-    async def run_monthly(self) -> Dict:
+    async def run_calibration(self, category_id: str) -> Dict:
         """
-        Ежемесячный запуск (1-е число, 05:00).
-        - Обновление базы знаний
-        - Корректировка весов и confidence
+        Запускает калибровку индексов для категории.
         """
-        start_time = datetime.now()
-        logger.info("Starting MONTHLY knowledge update...")
-        
-        try:
-            async with async_session() as session:
-                # 1. Загружаем все непросмотренные паттерны
-                patterns = await self._load_pending_patterns(session)
-                logger.info(f"Found {len(patterns)} pending patterns")
-                
-                if not patterns:
-                    return {'status': 'skipped', 'reason': 'no_patterns'}
-                
-                # 2. Обновляем базу знаний
-                updates = await self.knowledge_updater.update(session, patterns)
-                logger.info(f"Updated {len(updates)} knowledge base entries")
-                
-                # 3. Записываем снапшот
-                await self.snapshot_writer.write_monthly_snapshot(
-                    session, updates
-                )
-                
-                # 4. Отмечаем паттерны как обработанные
-                await self._mark_patterns_processed(session, patterns)
-                
-                # 5. Логируем
-                await self._log_execution(session, 'monthly', success=True)
-            
-            return {
-                'status': 'success',
-                'patterns_processed': len(patterns),
-                'knowledge_updated': len(updates)
-            }
-            
-        except Exception as e:
-            logger.error(f"Monthly job failed: {e}", exc_info=True)
-            await self._log_execution(session, 'monthly', success=False, error=str(e))
-            return {'status': 'failed', 'error': str(e)}
+        version = f"v{datetime.now().strftime('%Y%m%d')}"
+        return await self.index_calibrator.calibrate(
+            category_id=category_id,
+            version=version
+        )
     
-    async def run_quarterly(self) -> Dict:
+    async def run_window_optimization(self) -> Dict:
         """
-        Ежеквартальный запуск (1-е число квартала, 06:00).
-        - Полный отчёт
-        - Снапшот в Data Lake
-        - Оповещение
+        Запускает оптимизацию окон.
         """
-        start_time = datetime.now()
-        logger.info("Starting QUARTERLY report generation...")
-        
-        try:
-            async with async_session() as session:
-                # 1. Собираем статистику
-                stats = await self.stats_calculator.calculate_quarterly_stats(session)
-                
-                # 2. Генерируем полный снапшот
-                lake_uri = await self.snapshot_writer.write_quarterly_snapshot(
-                    session, stats
-                )
-                
-                # 3. Генерируем отчёт
-                report = await self._generate_report(session, stats, lake_uri)
-                
-                # 4. Отправляем уведомление
-                await self.notifier.send_report(report)
-                
-                # 5. Логируем
-                await self._log_execution(session, 'quarterly', success=True)
-            
-            return {
-                'status': 'success',
-                'lake_uri': lake_uri,
-                'report_generated': True
-            }
-            
-        except Exception as e:
-            logger.error(f"Quarterly job failed: {e}", exc_info=True)
-            await self._log_execution(session, 'quarterly', success=False, error=str(e))
-            return {'status': 'failed', 'error': str(e)}
+        version = f"v{datetime.now().strftime('%Y%m%d')}"
+        return await self.window_optimizer.optimize(version=version)
+    
+    async def generate_report(self, report_type: str) -> Dict:
+        """
+        Генерирует отчёт.
+        """
+        return await self.report_generator.generate(report_type)
 ```
 
-### 6.2. SnapshotWriter
+### 4.2. Report Generator
 
 ```python
-# core/snapshot_writer.py
+# src/core/report_generator.py
 
-class SnapshotWriter:
+from datetime import datetime, timedelta
+from typing import Dict, List
+from uuid import UUID
+
+class ReportGenerator:
     """
-    Запись снапшотов в Data Lake.
+    Генерация отчётов.
     """
     
-    def __init__(self, lake_client: LakeClient):
-        self.lake_client = lake_client
-    
-    async def write_weekly_snapshot(
+    async def generate(
         self,
-        session: AsyncSession,
-        dissonance_groups: List[DissonanceGroup],
-        patterns: List[Pattern]
-    ):
+        report_type: str  # weekly, monthly
+    ) -> Dict:
         """
-        Записывает еженедельный снапшот.
+        Генерирует отчёт указанного типа.
         """
-        data = {
-            'snapshot_date': date.today().isoformat(),
-            'snapshot_type': 'weekly',
-            'dissonance_groups': [
-                {
-                    'factor_name': g.factor_name,
-                    'dissonance_count': g.dissonance_count,
-                    'unique_users': g.unique_users,
-                    'avg_severity': g.avg_severity
-                }
-                for g in dissonance_groups
-            ],
-            'patterns': [
-                {
-                    'factor_name': p.factor_name,
-                    'expected_effect': p.expected_effect,
-                    'actual_pattern': p.actual_pattern,
-                    'significance': p.significance,
-                    'hypothesis': p.hypothesis
-                }
-                for p in patterns
-            ]
+        if report_type == 'weekly':
+            return await self._generate_weekly()
+        elif report_type == 'monthly':
+            return await self._generate_monthly()
+        else:
+            return {'error': f'Unknown report type: {report_type}'}
+    
+    async def _generate_weekly(self) -> Dict:
+        """
+        Генерирует еженедельный отчёт.
+        """
+        # 1. Загружаем данные за неделю
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        feedback = await self._get_feedback_range(start_date, end_date)
+        states = await self._get_states_range(start_date, end_date)
+        
+        # 2. Вычисляем метрики
+        metrics = {
+            'total_users': len(set(f['user_id'] for f in feedback)),
+            'total_feedback': len(feedback),
+            'avg_accuracy': self._avg_accuracy(feedback),
+            'avg_rating': self._avg_rating(feedback),
+            'coherence_trend': self._coherence_trend(states),
         }
         
-        key = f"analytics/weekly/snapshot_{date.today().isoformat()}.parquet"
-        await self.lake_client.upload(key, self._to_parquet(data))
-        
-        # Сохраняем в БД
-        await self._save_snapshot(session, 'weekly', key)
-    
-    async def write_quarterly_snapshot(
-        self,
-        session: AsyncSession,
-        stats: Dict
-    ) -> str:
-        """
-        Записывает ежеквартальный снапшот.
-        """
-        # 1. Загружаем текущую базу знаний
-        kb = await self._get_knowledge_base(session)
-        
-        # 2. Загружаем паттерны
-        patterns = await self._get_patterns(session)
-        
-        data = {
-            'snapshot_date': date.today().isoformat(),
-            'snapshot_type': 'quarterly',
-            'knowledge_base': kb,
-            'patterns': patterns,
-            'statistics': stats,
-            'generated_at': datetime.now().isoformat()
+        # 3. Формируем контент
+        content = {
+            'period': {
+                'start': start_date.isoformat(),
+                'end': end_date.isoformat()
+            },
+            'metrics': metrics,
+            'top_categories': self._top_categories(feedback),
+            'recommendations': self._generate_recommendations(metrics)
         }
         
-        key = f"analytics/quarterly/snapshot_{date.today().isoformat()}.parquet"
-        await self.lake_client.upload(key, self._to_parquet(data))
+        # 4. Сохраняем
+        await self._save_report('weekly', start_date.date(), content, metrics)
         
-        # Сохраняем в БД
-        await self._save_snapshot(session, 'quarterly', key)
+        return content
+    
+    def _avg_accuracy(self, feedback: List[Dict]) -> float:
+        """Вычисляет среднюю точность."""
+        if not feedback:
+            return 0.0
+        return sum(f.get('accuracy', 0) for f in feedback) / len(feedback)
+    
+    def _avg_rating(self, feedback: List[Dict]) -> float:
+        """Вычисляет средний рейтинг."""
+        ratings = [f.get('rating') for f in feedback if f.get('rating')]
+        if not ratings:
+            return 0.0
+        return sum(ratings) / len(ratings)
+    
+    def _coherence_trend(self, states: List[Dict]) -> str:
+        """Определяет тренд когерентности."""
+        if len(states) < 2:
+            return 'insufficient_data'
         
-        return key
+        # Сравниваем первую и последнюю неделю
+        first_week = [s for s in states if s['week'] == 0]
+        last_week = [s for s in states if s['week'] == 6]
+        
+        if not first_week or not last_week:
+            return 'insufficient_data'
+        
+        first_avg = sum(s['coherence'] for s in first_week) / len(first_week)
+        last_avg = sum(s['coherence'] for s in last_week) / len(last_week)
+        
+        if last_avg > first_avg * 1.1:
+            return 'improving'
+        elif last_avg < first_avg * 0.9:
+            return 'declining'
+        else:
+            return 'stable'
+    
+    def _top_categories(self, feedback: List[Dict]) -> List[Dict]:
+        """Возвращает топ-категории по точности."""
+        categories = {}
+        for f in feedback:
+            cat = f.get('category_id')
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(f.get('accuracy', 0))
+        
+        sorted_categories = sorted(
+            categories.items(),
+            key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
+            reverse=True
+        )
+        
+        return [
+            {
+                'category': cat,
+                'avg_accuracy': sum(vals) / len(vals) if vals else 0,
+                'count': len(vals)
+            }
+            for cat, vals in sorted_categories[:3]
+        ]
 ```
 
 ---
 
-## 7. Расписание и запуск
+## 5. API INTERFACES
 
-### 7.1. Cron расписание
-
-```yaml
-# cron_schedule.yaml
-
-weekly_job:     # Каждый понедельник в 04:00
-  cron: "0 4 * * 1"
-  job: "weekly"
-  description: "Сбор и анализ диссонансов за неделю"
-
-monthly_job:    # 1-го числа каждого месяца в 05:00
-  cron: "0 5 1 * *"
-  job: "monthly"
-  description: "Обновление базы знаний"
-
-quarterly_job:  # 1-го числа января, апреля, июля, октября в 06:00
-  cron: "0 6 1 1,4,7,10 *"
-  job: "quarterly"
-  description: "Генерация полного отчёта и снапшота"
-```
-
-### 7.2. Scheduler
+### 5.1. Основные эндпоинты
 
 ```python
-# infrastructure/scheduler.py
+# src/api/routes.py
 
-class Scheduler:
+from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+from datetime import date, datetime
+from typing import Optional
+
+router = APIRouter(prefix="/api/v4/analytics", tags=["Analytics"])
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    service: AnalyticsService = Depends(get_analytics_service)
+):
     """
-    Планировщик заданий для Analytics Worker.
+    Отправить обратную связь.
     """
+    result = await service.process_feedback(
+        user_id=request.user_id,
+        category_id=request.category_id,
+        forecast_date=request.forecast_date,
+        actual_outcome=request.actual_outcome,
+        rating=request.rating,
+        comment=request.comment
+    )
     
-    def __init__(self, analytics_service: AnalyticsService):
-        self.analytics_service = analytics_service
-        self.scheduler = AsyncIOScheduler()
-    
-    def setup(self):
-        """Настраивает расписание."""
-        # Еженедельно: понедельник, 04:00
-        self.scheduler.add_job(
-            self.analytics_service.run_weekly,
-            'cron',
-            day_of_week=0,
-            hour=4,
-            minute=0,
-            id='weekly_job',
-            replace_existing=True
-        )
-        
-        # Ежемесячно: 1-е число, 05:00
-        self.scheduler.add_job(
-            self.analytics_service.run_monthly,
-            'cron',
-            day=1,
-            hour=5,
-            minute=0,
-            id='monthly_job',
-            replace_existing=True
-        )
-        
-        # Ежеквартально: 1-е число квартала, 06:00
-        self.scheduler.add_job(
-            self.analytics_service.run_quarterly,
-            'cron',
-            day=1,
-            hour=6,
-            minute=0,
-            month='1,4,7,10',
-            id='quarterly_job',
-            replace_existing=True
-        )
-    
-    async def start(self):
-        """Запускает планировщик."""
-        self.setup()
-        self.scheduler.start()
-        logger.info("Analytics Worker scheduler started")
-        
-        while True:
-            await asyncio.sleep(60)
-```
-
-### 7.3. Точка входа
-
-```python
-# src/main.py
-
-import asyncio
-from src.services.analytics_service import AnalyticsService
-from src.infrastructure.scheduler import Scheduler
-
-async def main():
-    """
-    Точка входа для Analytics Worker.
-    """
-    # 1. Инициализация
-    analytics_service = AnalyticsService()
-    scheduler = Scheduler(analytics_service)
-    
-    # 2. Запускаем планировщик
-    await scheduler.start()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
----
-
-## 8. Data Lake интеграция
-
-### 8.1. Структура озера
-
-```
-s3://personal-assistant-lake/
-├── analytics/
-│   ├── weekly/
-│   │   ├── snapshot_2026-08-09.parquet
-│   │   ├── snapshot_2026-08-16.parquet
-│   │   └── ...
-│   ├── monthly/
-│   │   ├── snapshot_2026-08-01.parquet
-│   │   ├── snapshot_2026-09-01.parquet
-│   │   └── ...
-│   └── quarterly/
-│       ├── snapshot_2026-Q3.parquet
-│       └── snapshot_2026-Q4.parquet
-└── schemas/
-    └── analytics_schema_v1.avro
-```
-
-### 8.2. Форматы данных
-
-```python
-# Weekly schema
-weekly_schema = {
-    "snapshot_date": "string",
-    "snapshot_type": "string",  # 'weekly'
-    "dissonance_groups": [
-        {
-            "factor_name": "string",
-            "dissonance_count": "int",
-            "unique_users": "int",
-            "avg_severity": "float"
-        }
-    ],
-    "patterns": [
-        {
-            "factor_name": "string",
-            "expected_effect": "string",
-            "actual_pattern": "string",
-            "significance": "float",
-            "hypothesis": "string"
-        }
-    ]
-}
-
-# Quarterly schema
-quarterly_schema = {
-    "snapshot_date": "string",
-    "snapshot_type": "string",  # 'quarterly'
-    "knowledge_base": [
-        {
-            "factor_name": "string",
-            "expected_effect": "string",
-            "weight": "float",
-            "confidence": "float",
-            "status": "string"
-        }
-    ],
-    "patterns": [...],
-    "statistics": {
-        "total_dissonances": "int",
-        "unique_users": "int",
-        "avg_coherence": "float",
-        "trend": "string"
+    return {
+        "success": True,
+        "result": result,
+        "timestamp": datetime.now().isoformat()
     }
-}
+
+
+@router.post("/calibrate/{category_id}")
+async def calibrate_index(
+    category_id: str,
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Запустить калибровку индекса для категории.
+    """
+    result = await service.run_calibration(category_id)
+    
+    return {
+        "success": True,
+        "calibration": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/optimize-windows")
+async def optimize_windows(
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Запустить оптимизацию окон.
+    """
+    result = await service.run_window_optimization()
+    
+    return {
+        "success": True,
+        "optimization": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/reports/{report_type}")
+async def get_report(
+    report_type: str,  # weekly, monthly
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """
+    Получить отчёт.
+    """
+    if report_type not in ['weekly', 'monthly']:
+        raise HTTPException(status_code=400, detail="Invalid report type")
+    
+    report = await service.generate_report(report_type)
+    
+    return {
+        "success": True,
+        "report": report,
+        "timestamp": datetime.now().isoformat()
+    }
 ```
 
 ---
 
-## 9. Конфигурация и развертывание
-
-### 9.1. Настройки
-
-```python
-class Settings(BaseSettings):
-    # Сервис
-    SERVICE_NAME: str = "analytics-worker"
-    DEBUG: bool = False
-    LOG_LEVEL: str = "INFO"
-    
-    # База данных
-    DATABASE_URL: str = "postgresql://user:pass@postgres:5432/personal_assistant"
-    
-    # Data Lake
-    LAKE_BUCKET: str = "personal-assistant-lake"
-    LAKE_ENDPOINT: str = "minio:9000"
-    LAKE_ACCESS_KEY: str = "minioadmin"
-    LAKE_SECRET_KEY: str = "minioadmin"
-    
-    # Пороги
-    MIN_OBSERVATIONS: int = 10
-    MIN_UNIQUE_USERS: int = 3
-    SEVERITY_THRESHOLD: float = 0.6
-    SIGNIFICANCE_THRESHOLD: float = 0.5
-    
-    # Slack/Telegram (опционально)
-    NOTIFICATION_WEBHOOK: Optional[str] = None
-    
-    class Config:
-        env_file = ".env"
-```
-
-### 9.2. Dockerfile
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Установка зависимостей
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Копирование кода
-COPY src/ ./src/
-
-# Переменные окружения
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Запуск
-CMD ["python", "-m", "src.main"]
-```
-
-### 9.3. Docker Compose
+## 6. DOCKER COMPOSE
 
 ```yaml
-# docker-compose.yml
+# docker-compose.yml (фрагмент)
 
 services:
   analytics-worker:
@@ -1167,161 +952,69 @@ services:
     container_name: analytics-worker
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
-      LAKE_ENDPOINT: minio:9000
-      LAKE_ACCESS_KEY: ${MINIO_ROOT_USER}
-      LAKE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      MIN_OBSERVATIONS: 10
-      MIN_UNIQUE_USERS: 3
-      SIGNIFICANCE_THRESHOLD: 0.5
+      PSYCHOMETRY_URL: http://psychometry-service:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
-    restart: unless-stopped
+      psychometry-service:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9000')"]
-      interval: 60s
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
     networks:
       - app-network
 ```
 
 ---
 
-## 10. Нефункциональные требования
+## 7. ЧЕК-ЛИСТ ПРИЁМКИ
 
-### 10.1. Производительность
+### 7.1. Функциональные требования
 
-| Метрика | Требование |
-|---------|------------|
-| Weekly job | < 5 минут (при 1000 диссонансах) |
-| Monthly job | < 10 минут |
-| Quarterly job | < 15 минут |
-| Запись в озеро | < 30 секунд |
+- [ ] Feedback Processor обрабатывает обратную связь
+- [ ] Feedback Processor обновляет агрегаты
+- [ ] Index Calibrator оптимизирует веса индексов
+- [ ] Index Calibrator вычисляет validation_score
+- [ ] Window Optimizer находит оптимальные пороги
+- [ ] Report Generator генерирует еженедельные отчёты
+- [ ] Report Generator генерирует ежемесячные отчёты
 
-### 10.2. Отказоустойчивость
+### 7.2. Данные
 
-| Риск | Защита |
-|------|--------|
-| Нет диссонансов | Job пропускается |
-| Озеро недоступно | Снапшоты сохраняются локально, retry |
-| Ошибка в расчётах | Логирование, алерт, продолжение работы |
-| Дублирование запусков | Идемпотентность (проверка даты) |
+- [ ] Таблицы в схеме analytics созданы
+- [ ] Индексы добавлены
+- [ ] Данные сохраняются в MinIO
 
-### 10.3. Логирование
+### 7.3. Производительность
 
-```python
-# Все операции логируются
-logger.info("analytics_job_started",
-    job_type='weekly',
-    timestamp=datetime.now()
-)
-
-logger.info("analytics_job_completed",
-    job_type='weekly',
-    dissonance_groups=len(groups),
-    patterns_found=len(patterns),
-    duration_seconds=elapsed
-)
-
-logger.error("analytics_job_failed",
-    job_type='weekly',
-    error=str(e),
-    exc_info=True
-)
-```
+- [ ] Обработка feedback < 100 мс
+- [ ] Калибровка < 5 минут
+- [ ] Оптимизация окон < 2 минуты
 
 ---
 
-## 11. Чек-лист приёмки
+## 8. ЗАКЛЮЧЕНИЕ
 
-### 11.1. Функциональные требования
+**Analytics Worker v2.0** — это сервис обучения системы:
 
-- [ ] Dissonance Miner собирает диссонансы из psych.dissonance_analysis
-- [ ] Pattern Analyzer находит паттерны и формирует гипотезы
-- [ ] Knowledge Updater обновляет psych.alignment_knowledge_base
-- [ ] Weekly job запускается по расписанию
-- [ ] Monthly job запускается по расписанию
-- [ ] Quarterly job запускается по расписанию
-- [ ] Снапшоты записываются в Data Lake
+| Компонент | Что делает | Частота |
+|-----------|------------|---------|
+| **Feedback Processor** | Сбор и агрегация обратной связи | Real-time |
+| **Index Calibrator** | Калибровка весов индексов | Еженедельно |
+| **Window Optimizer** | Оптимизация порогов окон | Ежемесячно |
+| **Report Generator** | Генерация отчётов | Еженедельно/ежемесячно |
 
-### 11.2. Технические требования
+**Ключевое отличие от старого подхода:**
+- Старый: корреляция астро-факторов с MMPI
+- Новый: feedback-loop на основе реальных исходов
 
-- [ ] Юнит-тесты покрывают > 80% core-модулей
-- [ ] Интеграционные тесты проходят
-- [ ] Docker Compose поднимает сервис
-- [ ] Cron расписание работает корректно
-- [ ] Права доступа к БД настроены
-
-### 11.3. Проверка обновлений базы знаний
-
-| Сценарий | Ожидание |
-|----------|----------|
-| Паттерн подтверждает ожидание | Confidence растёт |
-| Паттерн опровергает ожидание | Confidence падает |
-| Много диссонансов | Weight снижается |
-| Мало диссонансов | Weight растёт |
-| Confidence < 0.2 | Статус → 'deprecated' |
-
----
-
-## 12. План реализации
-
-### Неделя 1: Фундамент
-
-| Задача | Оценка |
-|--------|--------|
-| Создание схемы analytics в БД | 2 ч |
-| Настройка прав доступа | 1 ч |
-| Реализация DissonanceMiner | 6 ч |
-| Юнит-тесты DissonanceMiner | 4 ч |
-
-### Неделя 2: Анализ паттернов
-
-| Задача | Оценка |
-|--------|--------|
-| Реализация PatternAnalyzer | 8 ч |
-| Реализация логики значимости | 4 ч |
-| Юнит-тесты PatternAnalyzer | 4 ч |
-
-### Неделя 3: Обновление базы знаний
-
-| Задача | Оценка |
-|--------|--------|
-| Реализация KnowledgeUpdater | 8 ч |
-| Реализация логики статусов | 4 ч |
-| Юнит-тесты KnowledgeUpdater | 4 ч |
-
-### Неделя 4: Инфраструктура
-
-| Задача | Оценка |
-|--------|--------|
-| Реализация SnapshotWriter | 4 ч |
-| Реализация Scheduler | 4 ч |
-| Настройка cron расписания | 2 ч |
-| Docker + Docker Compose | 4 ч |
-| Интеграционные тесты | 6 ч |
-
----
-
-## 13. Заключение
-
-**Analytics Worker v3.0** — это полностью переработанный batch-сервис, который:
-
-1. **Работает по расписанию** (еженедельно/ежемесячно/ежеквартально)
-2. **Собирает диссонансы** из Psychometry Service
-3. **Анализирует паттерны** расхождений
-4. **Обновляет базу знаний** для Alignment Engine
-5. **Сохраняет снапшоты** в Data Lake
-6. **Обеспечивает самообучение** системы
-
-**Ключевые изменения:**
-- ✅ Смена парадигмы с корреляций на диссонансы
-- ✅ Удалены старые таблицы (correlation_results, bayesian_factors)
-- ✅ Добавлены новые таблицы (dissonance_patterns, knowledge_updates, snapshots)
-- ✅ Новое расписание (еженедельно + ежемесячно + ежеквартально)
-- ✅ Интеграция с Alignment Engine через базу знаний
-
-**Критерий готовности:** После развертывания сервис автоматически обновляет базу знаний на основе выявленных диссонансов, без ручного вмешательства.
+**Готово к разработке.**

@@ -1,19 +1,6 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
-  external_labels:
-    monitor: 'personal-assistant'
-
-# Alerting configuration
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets: []
-          # - alertmanager:9093
-
-# Rule files
-rule_files:
-  # - "alerts.yml"
 
 scrape_configs:
   # Prometheus self
@@ -25,11 +12,19 @@ scrape_configs:
   - job_name: 'postgres-exporter'
     static_configs:
       - targets: ['postgres-exporter:9187']
+  
+  # Psychometry Service Metrics
+  - job_name: 'psychometry-service'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['psychometry-service:9090']
     scrape_interval: 30s
   
   # MinIO Metrics
-  - job_name: 'minio-job'
+  - job_name: 'minio'
     metrics_path: '/minio/v2/metrics/cluster'
-    scheme: 'http'
     static_configs:
       - targets: ['minio:9000']
+    basic_auth:
+      username: 'paadmin'
+      password_file: '/etc/prometheus/minio-password.txt'

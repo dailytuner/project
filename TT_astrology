@@ -1,1030 +1,882 @@
-# Техническое задание на рефакторинг Astro Service
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ/ДОПОЛНЕНИЕ ASTRO SERVICE v2.0
 
-## Версия 3.0 — Интеграция с Alignment Engine и Internal API
+## «Упрощённый астрологический фон для Psychometry Service»
 
----
-
-## Оглавление
-
-1. [Введение и цели](#1-введение-и-цели)
-2. [Общая архитектура](#2-общая-архитектура)
-3. [Структура базы данных](#3-структура-базы-данных)
-4. [Структура сервиса](#4-структура-сервиса)
-5. [Математическое ядро](#5-математическое-ядро)
-6. [Слои прогнозирования](#6-слои-прогнозирования)
-7. [Гибридный движок](#7-гибридный-движок)
-8. [Blind Protocol](#8-blind-protocol)
-9. [Internal API для Alignment Engine](#9-internal-api-для-alignment-engine)
-10. [Система интерпретаций](#10-система-интерпретаций)
-11. [Миграция данных](#11-миграция-данных)
-12. [Конфигурация и развертывание](#12-конфигурация-и-развертывание)
-13. [Нефункциональные требования](#13-нефункциональные-требования)
-14. [Чек-лист приёмки](#14-чек-лист-приёмки)
-15. [План реализации](#15-план-реализации)
+**Версия документа:** 1.0  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
 
 ---
 
-## 1. Введение и цели
+## 1. ВВЕДЕНИЕ
 
-### 1.1. Что такое Astro Service
+### 1.1. Назначение документа
 
-**Astro Service** — это основной сервис астрологических вычислений, который:
+Документ описывает **дополнения и упрощения** существующего **Astro Service** для поддержки новой логики **Psychometry Service v4.0**.
 
-- Рассчитывает натальную карту пользователя (1 раз)
-- Вычисляет транзиты и аспекты на любую дату
-- Генерирует дневные прогнозы на основе 9 осей Magic Profile
-- Учитывает даши (ведическая традиция)
-- Применяет Blind Protocol на основе статуса тестирования
-- **ПРЕДОСТАВЛЯЕТ АСТРО-ПРОФИЛЬ ДЛЯ ALIGNMENT ENGINE** (НОВОЕ!)
+**Существующий Astro Service** продолжает выполнять свои функции для **Forecast Service** (9 осей Magic Profile, веса слоёв, Blind Protocol). **Новые функции** добавляются без нарушения существующей логики.
 
-### 1.2. Что изменилось в версии 3.0
+### 1.2. Цели и задачи
 
-| Аспект | Версия 2.0 | Версия 3.0 (текущая) |
-|--------|-----------|---------------------|
-| **Основная задача** | Генерация прогнозов | Генерация прогнозов + Астро-профиль |
-| **Интеграция** | С Psychometry (статус тестов) | С Psychometry + Alignment Engine |
-| **Internal API** | /astro-context, /test-status | + /astro-profile (НОВЫЙ!) |
-| **Blind Protocol** | Блокирует слои | Блокирует слои + влияет на alignment |
-| **Кэширование** | Только эфемериды | + alignment_cache (НОВЫЙ!) |
+| Цель | Описание |
+|------|----------|
+| **Добавить биоритмы** | Расчёт циклов 23/28/33 дня для Psychometry Service |
+| **Упростить транзиты** | Передать только силу планет (без сложных аспектов) |
+| **Добавить сезонные бусты** | Сезонные корректировки для индексов достижения |
+| **Сохранить существующее** | Forecast Service продолжает работать без изменений |
+| **Кэшировать эфемериды** | Ускорить расчёты для новых эндпоинтов |
 
-### 1.3. Бизнес-цели
-
-| Цель | Метрика успеха |
-|------|----------------|
-| Генерировать прогнозы | < 200 мс (из кэша) |
-| **Предоставлять астро-профиль** | < 100 мс для Alignment Engine |
-| Применять Blind Protocol | 100% пользователей с pending тестами |
-| Интегрироваться с Psychometry | 100% успешных Internal API вызовов |
-| Обеспечить fallback | 100% работа при недоступности Psychometry |
-
----
-
-## 2. Общая архитектура
-
-### 2.1. Схема сервиса
+### 1.3. Место в архитектуре
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         API GATEWAY                                   │
-│  /api/v1/forecast → Astro Service                                     │
-│  /api/v1/psych/* → Psychometry Service                                │
+│                    EXISTING SERVICES                                   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  FORECAST SERVICE (существующий)                               │   │
+│  │  • 9 осей Magic Profile                                       │   │
+│  │  • Веса слоёв                                                  │   │
+│  │  • Blind Protocol                                              │   │
+│  │  • /api/v3/forecast                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  ASTRO SERVICE (существующий + дополнения)                     │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────────────────────────────────────────┐   │   │
+│  │  │  СУЩЕСТВУЮЩЕЕ (не трогаем)                              │   │   │
+│  │  │  • Эфемериды (swe.calc_ut)                             │   │   │
+│  │  │  • Аспекты, дома, орбисы                                │   │   │
+│  │  │  • Даши                                                 │   │   │
+│  │  │  • Blind Protocol                                       │   │   │
+│  │  │  • /api/v3/forecast (через Forecast Service)            │   │   │
+│  │  └─────────────────────────────────────────────────────────┘   │   │
+│  │                                                                 │   │
+│  │  ┌─────────────────────────────────────────────────────────┐   │   │
+│  │  │  НОВОЕ (дополнения)                                     │   │   │
+│  │  │  • Biorhythm Core (23/28/33)                           │   │   │
+│  │  │  • Simplified Transit Calculator                       │   │   │
+│  │  │  • Seasonal Booster                                    │   │   │
+│  │  │  • /internal/v4/biorhythms                             │   │   │
+│  │  │  • /internal/v4/transits                               │   │   │
+│  │  └─────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    ASTRO SERVICE v3.0                                 │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  PUBLIC API (/api/v1/forecast)                                 │   │
-│  │  • Прогноз на дату                                              │   │
-│  │  • Астро-профиль (в ответе)                                    │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  INTERNAL API (/internal/v1/)                                  │   │
-│  │  • GET /users/{id}/astro-context  (для Psychometry)           │   │
-│  │  • GET /users/{id}/test-status    (для Blind Protocol)        │   │
-│  │  • POST /psych/event              (обновление статуса)        │   │
-│  │  • GET /users/{id}/astro-profile  (НОВЫЙ! для Alignment)      │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  BLIND PROTOCOL                                                 │   │
-│  │  • Фильтрация слоёв на основе статуса тестирования             │   │
-│  │  • Влияние на alignment_cache                                   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  HYBRID ENGINE                                                  │   │
-│  │  • Агрегация слоёв + confidence                                │   │
-│  │  • Генерация прогноза                                          │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  LAYERS                                                         │   │
-│  │  • foundation, year_theme, gochara, transit, moon, retro      │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  CORE                                                           │   │
-│  │  • Эфемериды, даши, аспекты, дома, ретро                     │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  CACHE (НОВЫЙ!)                                                 │   │
-│  │  • alignment_cache (профили для Alignment Engine)              │   │
-│  │  • ephemeris_cache (позиции планет)                            │   │
-│  │  • forecast_cache (готовые прогнозы)                           │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
+│                    PSYCHOMETRY SERVICE (новый)                         │
+│  • Использует биоритмы, транзиты, сезонные бусты                     │
 └─────────────────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┼───────────────┬───────────────┐
-              ▼               ▼               ▼               ▼
-┌─────────────────────┐ ┌───────────────┐ ┌───────────────┐ ┌─────────────────────┐
-│    POSTGRESQL       │ │  PSYCHOMETRY  │ │  ALIGNMENT    │ │  DATA LAKE          │
-│  (astro + psych)   │ │  (HTTP)       │ │  ENGINE       │ │  (S3/MinIO)         │
-└─────────────────────┘ └───────────────┘ └───────────────┘ └─────────────────────┘
-```
-
-### 2.2. Взаимодействие с другими сервисами
-
-```mermaid
-sequenceDiagram
-    participant FE as Frontend
-    participant AS as Astro Service
-    participant PS as Psychometry Service
-    participant AE as Alignment Engine
-
-    %% 1. Публичный запрос прогноза
-    FE->>AS: GET /forecast?date=2026-08-04
-    AS->>PS: GET /internal/test-status
-    PS-->>AS: has_pending_mmpi=true
-    AS->>AS: Blind Protocol (фильтрация)
-    AS-->>FE: Прогноз (без чувствительных слоёв)
-
-    %% 2. Internal API для Alignment Engine
-    AE->>AS: GET /internal/astro-profile?date=2026-08-04
-    AS->>AS: Расчёт астро-профиля
-    AS-->>AE: 9 осей + dasha + transits + retro
-
-    %% 3. Internal API для Psychometry
-    PS->>AS: GET /internal/astro-context
-    AS-->>PS: dasha_maha, transit_saturn_house, etc.
 ```
 
 ---
 
-## 3. Структура базы данных
+## 2. МОДЕЛЬ ДАННЫХ
 
-### 3.1. Существующие таблицы (без изменений)
+### 2.1. Новая таблица биоритмов
 
 ```sql
 -- ============================================================
--- СУЩЕСТВУЮЩИЕ ТАБЛИЦЫ (не трогаем!)
+-- 1. БИОРИТМЫ (НОВАЯ ТАБЛИЦА В СХЕМЕ `astro`)
 -- ============================================================
 
--- users, natal_charts, ephemeris_cache, user_periods
--- forecasts (старый, JSONB) — остаётся для обратной совместимости
--- astro.forecasts_v2, astro.forecast_axes_v2, astro.forecast_signals_v2
--- astro.layer_config, astro.dasha_modifiers, astro.test_status_cache
+CREATE TABLE astro.biorhythms (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    
+    -- Циклы (-1.0 .. 1.0)
+    physical FLOAT NOT NULL,
+    emotional FLOAT NOT NULL,
+    intellectual FLOAT NOT NULL,
+    
+    -- Фаза
+    phase_physical TEXT,    -- rising, falling, critical, peak, trough
+    phase_emotional TEXT,
+    phase_intellectual TEXT,
+    
+    -- Интерпретация (упрощённая)
+    interpretation TEXT,
+    
+    -- Ссылка на прогноз (если есть)
+    forecast_id UUID,
+    
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_biorhythms_user (user_id),
+    INDEX idx_biorhythms_date (calculated_at)
+);
 ```
 
-### 3.2. НОВЫЕ таблицы
+### 2.2. Новая таблица транзитов (упрощённых)
 
 ```sql
 -- ============================================================
--- НОВЫЕ ТАБЛИЦЫ (для Alignment Engine)
+-- 2. ТРАНЗИТЫ (УПРОЩЁННЫЕ)
 -- ============================================================
 
--- 1. Кэш астро-профилей для Alignment Engine
-CREATE TABLE astro.alignment_cache (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    profile_date DATE NOT NULL,
+CREATE TABLE astro.simplified_transits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    calculated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     
-    -- Астро-профиль (9 осей + метаданные)
-    profile JSONB NOT NULL,
+    -- Позиции планет (упрощённо)
+    transits JSONB NOT NULL,
+    -- { "Saturn": { "sign": "Pisces", "degree": 12.5, "house": 8, "strength": 0.7 }, ... }
     
-    -- Версия
-    profile_version VARCHAR(20) DEFAULT '2.0',
+    -- Сила планет
+    planet_strengths JSONB NOT NULL,
+    -- { "sun": 0.75, "moon": 0.62, "mars": 0.48, ... }
     
-    -- Метаданные
-    calculated_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '7 days',
+    -- Ссылка на прогноз
+    forecast_id UUID,
     
-    -- Статус
-    is_valid BOOLEAN DEFAULT true,
-    invalidated_at TIMESTAMPTZ,
-    
-    UNIQUE(user_id, profile_date),
-    INDEX idx_alignment_cache_user_date (user_id, profile_date),
-    INDEX idx_alignment_cache_expires (expires_at)
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    INDEX idx_transits_user (user_id),
+    INDEX idx_transits_date (calculated_at)
 );
+```
 
--- 2. История изменений профилей (для Dynamic Aligner)
-CREATE TABLE astro.profile_history (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    profile_date DATE NOT NULL,
-    
-    -- Снапшот профиля
-    profile_snapshot JSONB NOT NULL,
-    
-    -- Изменения относительно предыдущего
-    changes JSONB,
-    
-    -- Метаданные
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    INDEX idx_profile_history_user_date (user_id, profile_date)
-);
+### 2.3. Кэш эфемерид (существующий, дополняется)
 
--- 3. Статистика использования Internal API
-CREATE TABLE astro.internal_api_stats (
-    id SERIAL PRIMARY KEY,
-    endpoint VARCHAR(100) NOT NULL,
-    user_id INTEGER,
-    request_time TIMESTAMPTZ DEFAULT NOW(),
-    response_time_ms INTEGER,
-    status_code INTEGER,
-    is_fallback BOOLEAN DEFAULT false,
-    
-    INDEX idx_api_stats_endpoint (endpoint),
-    INDEX idx_api_stats_time (request_time)
-);
-
+```sql
 -- ============================================================
--- ИЗМЕНЕНИЯ В СУЩЕСТВУЮЩИХ ТАБЛИЦАХ
+-- 3. КЭШ ЭФЕМЕРИД (СУЩЕСТВУЮЩИЙ, ДОПОЛНЯЕТСЯ)
 -- ============================================================
 
--- Добавляем связь с alignment_cache
-ALTER TABLE astro.forecasts_v2 
-ADD COLUMN alignment_cache_id INTEGER REFERENCES astro.alignment_cache(id);
+-- Добавляем поле strength в существующую таблицу
+ALTER TABLE astro.ephemeris_cache 
+ADD COLUMN strength FLOAT DEFAULT 0.5;
 
--- Добавляем индекс для быстрого поиска
-CREATE INDEX idx_forecasts_alignment_cache ON astro.forecasts_v2(alignment_cache_id);
+-- Индекс для быстрого доступа по силе
+CREATE INDEX idx_ephemeris_strength ON astro.ephemeris_cache(strength);
 ```
 
 ---
 
-## 4. Структура сервиса
+## 3. CORE МОДУЛИ
 
-### 4.1. Дерево файлов
-
-```
-astro-service/
-├── src/
-│   ├── __init__.py
-│   ├── main.py                    # Точка входа FastAPI
-│   ├── settings.py                # Конфигурация
-│   │
-│   ├── api/                       # HTTP-слой
-│   │   ├── __init__.py
-│   │   ├── routes_public.py       # /api/v1/forecast
-│   │   ├── routes_internal.py     # /internal/v1/...
-│   │   ├── schemas.py             # Pydantic схемы
-│   │   └── deps.py                # Dependency Injection
-│   │
-│   ├── core/                      # Математическое ядро
-│   │   ├── __init__.py
-│   │   ├── ephemeris.py           # Кэш эфемерид
-│   │   ├── aspect_engine.py       # Движок аспектов
-│   │   ├── house_engine.py        # Движок домов
-│   │   ├── retro_engine.py        # Ретроградность
-│   │   ├── vimshottari_engine.py  # Даши
-│   │   ├── element_engine.py      # Стихии
-│   │   └── models.py              # Внутренние модели
-│   │
-│   ├── layers/                    # Слои прогнозирования
-│   │   ├── __init__.py
-│   │   ├── base.py                # Базовый класс слоя
-│   │   ├── layer_foundation.py    # Махадаша
-│   │   ├── layer_year_theme.py    # Антардаша + Сатурн
-│   │   ├── layer_gochara.py       # Транзиты по домам
-│   │   ├── layer_transit.py       # Точные аспекты
-│   │   ├── layer_moon.py          # Луна
-│   │   ├── layer_retro.py         # Ретроградность
-│   │   └── layer_somatic.py       # Стихии (опционально)
-│   │
-│   ├── services/                  # Бизнес-логика
-│   │   ├── __init__.py
-│   │   ├── hybrid_engine.py       # Агрегация слоёв
-│   │   ├── blind_protocol.py      # Blind Protocol
-│   │   ├── weight_manager.py      # Обновление весов
-│   │   ├── forecast_service.py    # Сохранение прогнозов
-│   │   └── astro_profile_service.py # НОВЫЙ! Астро-профиль
-│   │
-│   ├── clients/                   # Внешние зависимости
-│   │   ├── __init__.py
-│   │   └── psych_client.py        # HTTP к Psychometry Service
-│   │
-│   ├── infrastructure/            # Интеграции
-│   │   ├── __init__.py
-│   │   ├── database.py            # SQLAlchemy
-│   │   └── cache.py               # Redis / In-memory
-│   │
-│   └── interpretations/           # Шаблоны текстов (без изменений)
-│       ├── __init__.py
-│       ├── renderer.py
-│       └── ru/
-│
-├── migrations/                    # Alembic миграции
-├── scripts/
-│   └── migrate_forecasts.py       # Миграция данных
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
-```
-
-### 4.2. Описание модулей
-
-| Модуль | Ответственность | Зависимости |
-|--------|-----------------|-------------|
-| **api/routes_public.py** | /api/v1/forecast | services |
-| **api/routes_internal.py** | /internal/v1/* | services |
-| **core/** | Математика (эфемериды, аспекты) | - |
-| **layers/** | Слои прогнозирования | core |
-| **services/hybrid_engine.py** | Агрегация слоёв | layers |
-| **services/blind_protocol.py** | Фильтрация по статусу | clients/psych_client |
-| **services/astro_profile_service.py** (НОВЫЙ!) | Астро-профиль для Alignment Engine | core, cache |
-
----
-
-## 5. Математическое ядро
-
-### 5.1. Ephemeris Service (без изменений)
+### 3.1. Biorhythm Core
 
 ```python
-class EphemerisService:
-    """
-    Обёртка над Swiss Ephemeris с кэшированием.
-    """
-    
-    async def get_planet_position(
-        self, 
-        planet: int, 
-        date: date
-    ) -> PlanetPosition:
-        """Возвращает позицию планеты из кэша или рассчитывает."""
-        cached = await self._get_from_cache(date, planet)
-        if cached:
-            return cached
-        
-        jd = swe.julday(date.year, date.month, date.day, 12.0)
-        pos, speed = swe.calc_ut(jd, planet)
-        
-        await self._save_to_cache(date, planet, pos, speed)
-        
-        return PlanetPosition(
-            longitude=pos[0],
-            latitude=pos[1],
-            distance=pos[2],
-            longitude_speed=speed[0],
-            latitude_speed=speed[1],
-            distance_speed=speed[2]
-        )
-    
-    async def get_planets_for_date(self, date: date) -> Dict[str, PlanetPosition]:
-        """Возвращает все планеты на дату (batch-запрос)."""
-        # batch-расчёт всех планет
-        pass
-```
+# src/core/biorhythm_core.py
 
-### 5.2. Vimshottari Engine (без изменений)
+import math
+from datetime import date, datetime, timedelta
+from typing import Dict, Optional
+from uuid import UUID
 
-```python
-class VimshottariEngine:
+class BiorhythmCore:
     """
-    Расчёт Вимшоттари даш (ведическая традиция).
+    Расчёт биоритмов (23/28/33 дня).
     """
     
-    DASHA_ORDER = ['Ketu', 'Venus', 'Sun', 'Moon', 'Mars', 'Rahu', 'Jupiter', 'Saturn', 'Mercury']
-    DASHA_YEARS = {
-        'Ketu': 7, 'Venus': 20, 'Sun': 6, 'Moon': 10,
-        'Mars': 7, 'Rahu': 18, 'Jupiter': 16, 'Saturn': 19, 'Mercury': 17
+    # Длительность циклов в днях
+    CYCLES = {
+        'physical': 23,
+        'emotional': 28,
+        'intellectual': 33
     }
     
-    def calculate_dashas(
-        self,
-        natal_moon_longitude: float,
-        ayanamsa: float,
-        birth_jd: float
-    ) -> List[DashaPeriod]:
-        """Возвращает полный цикл махадаш на 120 лет."""
-        pass
+    # Названия фаз
+    PHASE_NAMES = {
+        'rising': 'подъём',
+        'falling': 'спад',
+        'critical': 'критическая',
+        'peak': 'пик',
+        'trough': 'низшая точка'
+    }
     
-    def get_current_dasha(
-        self,
-        dashas: List[DashaPeriod],
-        target_date: date
-    ) -> DashaState:
-        """Возвращает текущее состояние даш на дату."""
-        pass
-```
-
----
-
-## 6. Слои прогнозирования (без изменений)
-
-### 6.1. Базовый класс слоя
-
-```python
-class BaseLayer(ABC):
-    """
-    Базовый класс для всех слоёв прогнозирования.
-    """
-    
-    @abstractmethod
+    @classmethod
     def calculate(
-        self,
-        natal: NatalChart,
-        transit: Dict[str, PlanetPosition],
-        dasha: DashaState,
-        modifiers: List[DashaModifier]
-    ) -> List[AstroEvent]:
-        pass
+        cls,
+        birth_date: date,
+        target_date: date
+    ) -> Dict[str, Dict]:
+        """
+        Рассчитывает значения биоритмов для target_date.
+        
+        Returns:
+            {
+                "physical": {"value": 0.32, "phase": "rising"},
+                "emotional": {"value": -0.45, "phase": "falling"},
+                "intellectual": {"value": 0.78, "phase": "peak"}
+            }
+        """
+        days_alive = (target_date - birth_date).days
+        
+        result = {}
+        for name, cycle_days in cls.CYCLES.items():
+            angle = 2 * math.pi * (days_alive % cycle_days) / cycle_days
+            value = math.sin(angle)
+            
+            phase = cls._get_phase(value)
+            
+            result[name] = {
+                'value': round(value, 3),
+                'phase': phase,
+                'phase_name': cls.PHASE_NAMES.get(phase, 'неизвестно'),
+                'cycle_day': (days_alive % cycle_days) + 1,
+                'total_days': cycle_days
+            }
+        
+        return result
     
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        pass
+    @classmethod
+    def _get_phase(cls, value: float) -> str:
+        """Определяет фазу цикла."""
+        if value > 0.85:
+            return 'peak'
+        elif value < -0.85:
+            return 'trough'
+        elif value > 0:
+            return 'rising'
+        elif value < 0:
+            return 'falling'
+        return 'critical'
     
-    @property
-    @abstractmethod
-    def level(self) -> PeriodLevel:
-        pass
+    @classmethod
+    def get_interpretation(cls, biorhythms: Dict) -> str:
+        """
+        Генерирует текстовую интерпретацию биоритмов.
+        """
+        parts = []
+        
+        for name, data in biorhythms.items():
+            value = data['value']
+            phase_name = data['phase_name']
+            
+            if value > 0.5:
+                parts.append(f"{name} на {phase_name} ({value:.0%})")
+            elif value < -0.5:
+                parts.append(f"{name} на {phase_name} ({value:.0%})")
+            else:
+                parts.append(f"{name} в нейтральной фазе")
+        
+        interpretation = f"Биоритмы: {', '.join(parts)}."
+        
+        # Добавляем совет
+        if biorhythms['physical']['value'] > 0.5:
+            interpretation += " Хорошее время для физической активности."
+        if biorhythms['emotional']['value'] < -0.5:
+            interpretation += " Эмоциональный спад — будьте внимательны."
+        if biorhythms['intellectual']['value'] > 0.5:
+            interpretation += " Отличное время для интеллектуальной работы."
+        
+        return interpretation
 ```
 
-### 6.2. Слои (6 штук)
-
-| Слой | Название | Уровень | Вес по умолчанию |
-|------|----------|---------|------------------|
-| foundation | Махадаша | FOUNDATION | 1.0 |
-| year_theme | Антардаша + Сатурн | YEAR_THEME | 0.8 |
-| gochara | Транзиты по домам | MONTH_TRIGGER | 0.6 |
-| transit_oracle | Точные аспекты | POINT_TRIGGER | 0.5 |
-| moon | Луна | DAILY_MOOD | 0.3 |
-| retro | Ретроградность | DAILY_MOOD | 0.2 |
-
----
-
-## 7. Гибридный движок (без изменений)
+### 3.2. Simplified Transit Calculator
 
 ```python
-class HybridEngine:
+# src/core/transit_core.py
+
+import math
+from datetime import date
+from typing import Dict, Optional
+from uuid import UUID
+
+class SimplifiedTransitCore:
     """
-    Сборка прогноза из всех слоёв с агрегацией confidence.
+    Упрощённый расчёт транзитов для Psychometry Service.
+    Возвращает только силу планет и их положение.
     """
     
-    LEVEL_WEIGHTS = {
-        PeriodLevel.FOUNDATION: 1.0,
-        PeriodLevel.YEAR_THEME: 0.8,
-        PeriodLevel.MONTH_TRIGGER: 0.6,
-        PeriodLevel.DAILY_MOOD: 0.3,
-        PeriodLevel.POINT_TRIGGER: 0.5,
+    # Знаки зодиака
+    SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo',
+             'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces']
+    
+    # Экзальтации
+    EXALTATIONS = {
+        'Sun': 'Aries',
+        'Moon': 'Taurus',
+        'Mars': 'Capricorn',
+        'Mercury': 'Virgo',
+        'Jupiter': 'Cancer',
+        'Venus': 'Pisces',
+        'Saturn': 'Libra',
     }
     
-    async def build_forecast(
-        self,
-        user_id: int,
-        date: date,
-        force: bool = False
-    ) -> RawForecast:
-        """
-        1. Загружает фон (даши).
-        2. Собирает события от всех слоёв.
-        3. Фильтрует по MAX_ORBS и LEVEL_WEIGHTS.
-        4. Агрегирует confidence.
-        5. Возвращает RawForecast.
-        """
-        pass
-```
-
----
-
-## 8. Blind Protocol
-
-### 8.1. Логика Blind Protocol
-
-```python
-class BlindProtocol:
-    """
-    Блокирует психологически чувствительные слои прогноза
-    на основе статуса тестирования из Psychometry Service.
-    """
-    
-    PSYCH_SENSITIVE_LAYERS = {
-        'somatic',      # советы по еде и телу
-        'people',       # советы по общению
-        'mood_trigger', # эмоциональные триггеры
+    # Дебилитации
+    DEBILITIES = {
+        'Sun': 'Libra',
+        'Moon': 'Scorpio',
+        'Mars': 'Cancer',
+        'Mercury': 'Pisces',
+        'Jupiter': 'Capricorn',
+        'Venus': 'Virgo',
+        'Saturn': 'Aries',
     }
     
-    SAFE_LAYERS = {
-        'foundation',   # махадаша
-        'year_theme',   # годовая тема
-        'retro',        # ретроградность
-        'financial',    # финансовый индекс
-        'transit_oracle', # транзитные аспекты
-        'gochara',      # транзиты по домам
+    # Сила планет по домам (упрощённо)
+    HOUSE_POWER = {
+        1: 1.0,  2: 0.7, 3: 0.4, 4: 1.0,
+        5: 0.7,  6: 0.4, 7: 1.0, 8: 0.7,
+        9: 0.4, 10: 1.0, 11: 0.7, 12: 0.4
     }
     
-    async def apply(
+    def __init__(self, ephemeris_service):
+        self.ephemeris_service = ephemeris_service
+    
+    async def calculate_transits(
         self,
-        user_id: int,
-        forecast: RawForecast,
-        session: AsyncSession
-    ) -> RawForecast:
-        """
-        Применяет Blind Protocol к прогнозу.
-        """
-        # 1. Запрашиваем статус из Psychometry Service
-        status = await self._get_test_status(user_id, session)
-        
-        # 2. Если нет pending тестов — возвращаем полный прогноз
-        if not status.has_pending:
-            return forecast
-        
-        # 3. MMPI pending — только SAFE_LAYERS
-        if status.has_pending_mmpi:
-            return self._filter_layers(forecast, self.SAFE_LAYERS)
-        
-        # 4. IAT pending — SAFE_LAYERS + транзиты
-        if status.has_pending_iat:
-            return self._filter_layers(
-                forecast, 
-                self.SAFE_LAYERS | {'transit_oracle', 'gochara'}
-            )
-        
-        return forecast
-    
-    def _filter_layers(
-        self, 
-        forecast: RawForecast, 
-        allowed_layers: set
-    ) -> RawForecast:
-        """
-        Фильтрует слои прогноза, оставляя только разрешённые.
-        """
-        forecast.triggers = [
-            event for event in forecast.triggers 
-            if event.source in allowed_layers
-        ]
-        
-        forecast.daily_mood = [
-            event for event in forecast.daily_mood 
-            if event.source in allowed_layers
-        ]
-        
-        forecast.overall_confidence = self._recalculate_confidence(forecast)
-        
-        return forecast
-```
-
-### 8.2. Влияние на alignment_cache
-
-```python
-class BlindProtocol:
-    """
-    Обновлённая версия с влиянием на alignment_cache.
-    """
-    
-    async def apply_with_cache(
-        self,
-        user_id: int,
-        forecast: RawForecast,
-        alignment_cache: AlignmentCache,
-        session: AsyncSession
-    ) -> Tuple[RawForecast, bool]:
-        """
-        Применяет Blind Protocol и обновляет alignment_cache.
-        Возвращает (прогноз, блокирован_ли_прогноз).
-        """
-        # 1. Проверяем статус
-        status = await self._get_test_status(user_id, session)
-        
-        # 2. Обновляем alignment_cache
-        if status.has_pending:
-            await alignment_cache.invalidate(user_id)
-            logger.info(f"Alignment cache invalidated for user {user_id}")
-        
-        # 3. Применяем фильтрацию
-        forecast = await self.apply(user_id, forecast, session)
-        
-        # 4. Определяем, был ли прогноз заблокирован
-        is_blocked = status.has_pending and (
-            not forecast.triggers or 
-            len(forecast.triggers) < 3
-        )
-        
-        return forecast, is_blocked
-```
-
----
-
-## 9. Internal API для Alignment Engine
-
-### 9.1. GET /internal/v1/users/{user_id}/astro-profile
-
-```python
-# api/routes_internal.py
-
-@router.get("/internal/v1/users/{user_id}/astro-profile")
-async def get_astro_profile(
-    user_id: int,
-    date: Optional[date] = Query(None, description="Дата для расчёта профиля"),
-    session: AsyncSession = Depends(get_session)
-):
-    """
-    Возвращает астро-профиль для Alignment Engine.
-    
-    Используется Alignment Engine для сопоставления профилей.
-    Использует alignment_cache для быстрого ответа.
-    
-    Заголовки:
-    - X-Internal-API-Key: ${INTERNAL_API_KEY}
-    - X-Service-Name: alignment-engine
-    """
-    # 1. Проверяем API Key
-    verify_internal_api_key(request)
-    
-    # 2. Определяем дату
-    target_date = date or date.today()
-    
-    # 3. Проверяем кэш
-    cached = await alignment_cache.get(user_id, target_date)
-    if cached:
-        return cached
-    
-    # 4. Рассчитываем профиль
-    profile = await astro_profile_service.build_profile(
-        user_id=user_id,
-        date=target_date,
-        session=session
-    )
-    
-    # 5. Сохраняем в кэш
-    await alignment_cache.set(user_id, target_date, profile)
-    
-    # 6. Логируем
-    await log_internal_api_call('astro-profile', user_id, 200)
-    
-    return profile
-```
-
-**Response:**
-```json
-{
-  "user_id": 123,
-  "date": "2026-08-04",
-  "dasha": {
-    "maha": "Saturn",
-    "antar": "Jupiter",
-    "pratyantar": "Mars"
-  },
-  "transits": {
-    "saturn_house": 8,
-    "jupiter_house": 5,
-    "rahu_house": 2,
-    "moon_house": 7,
-    "moon_sign": "Leo",
-    "moon_phase": "first_quarter"
-  },
-  "retro": {
-    "mercury": false,
-    "venus": true,
-    "mars": false
-  },
-  "elements": {
-    "fire": 2,
-    "earth": 3,
-    "air": 1,
-    "water": 2
-  },
-  "confidence": 0.85,
-  "calculated_at": "2026-08-04T12:00:00Z"
-}
-```
-
-### 9.2. GET /internal/v1/users/{user_id}/astro-context
-
-```python
-@router.get("/internal/v1/users/{user_id}/astro-context")
-async def get_astro_context(
-    user_id: int,
-    at: datetime = Query(..., description="Момент времени для расчёта"),
-    session: AsyncSession = Depends(get_session)
-):
-    """
-    Возвращает астро-контекст для Psychometry Service.
-    
-    Заголовки:
-    - X-Internal-API-Key: ${INTERNAL_API_KEY}
-    - X-Service-Name: psychometry-service
-    """
-    verify_internal_api_key(request)
-    
-    # 1. Загружаем данные
-    natal = await get_natal_chart(user_id, session)
-    transit = await get_transit_positions(at.date(), session)
-    dasha = await get_current_dasha(user_id, at.date(), session)
-    
-    # 2. Формируем ответ
-    return {
-        "dasha_maha": dasha.maha.planet,
-        "dasha_antar": dasha.antar.planet,
-        "dasha_pratyantar": dasha.pratyantar.planet,
-        "transit_saturn_house": self._get_house(transit['Saturn'], natal),
-        "transit_jupiter_house": self._get_house(transit['Jupiter'], natal),
-        "transit_rahu_house": self._get_house(transit['Rahu'], natal),
-        "moon_sign": self._get_sign(transit['Moon'].longitude),
-        "moon_house": self._get_house(transit['Moon'], natal),
-        "moon_phase": self._get_moon_phase(transit['Moon'], transit['Sun']),
-        "is_retro_mercury": transit['Mercury'].longitude_speed < 0,
-        "is_retro_venus": transit['Venus'].longitude_speed < 0,
-        "is_retro_mars": transit['Mars'].longitude_speed < 0,
-    }
-```
-
-### 9.3. GET /internal/v1/users/{user_id}/test-status
-
-```python
-@router.get("/internal/v1/users/{user_id}/test-status")
-async def get_test_status(
-    user_id: int,
-    session: AsyncSession = Depends(get_session)
-):
-    """
-    Возвращает статус тестирования из кэша.
-    """
-    verify_internal_api_key(request)
-    
-    cache = await session.get(TestStatusCache, user_id)
-    
-    if cache:
-        return {
-            "has_pending_mmpi": cache.has_pending_mmpi,
-            "has_pending_iat": cache.has_pending_iat,
-            "next_mmpi_due": cache.next_mmpi_due,
-            "next_iat_due": cache.next_iat_due,
-        }
-    
-    # Если нет — обращаемся к Psychometry Service
-    return await self._get_status_from_psychometry(user_id)
-```
-
-### 9.4. POST /internal/v1/psych/event
-
-```python
-@router.post("/internal/v1/psych/event")
-async def handle_psych_event(
-    event: PsychEvent,
-    session: AsyncSession = Depends(get_session)
-):
-    """
-    Принимает событие от Psychometry Service.
-    """
-    verify_internal_api_key(request)
-    
-    if event.event_type == 'test.completed':
-        await self._update_test_status(event.user_id, event.test_type, session)
-    
-    return {"success": True}
-
-async def _update_test_status(
-    self,
-    user_id: int,
-    test_type: str,
-    session: AsyncSession
-):
-    """
-    Обновляет test_status_cache после прохождения теста.
-    """
-    cache = await session.get(TestStatusCache, user_id)
-    if not cache:
-        cache = TestStatusCache(user_id=user_id)
-        session.add(cache)
-    
-    if test_type == 'mmpi':
-        cache.has_pending_mmpi = False
-        cache.next_mmpi_due = date.today() + timedelta(days=90)
-    elif test_type == 'iat':
-        cache.has_pending_iat = False
-        cache.next_iat_due = date.today() + timedelta(days=30)
-    
-    cache.updated_at = datetime.now()
-    await session.commit()
-    
-    # Инвалидируем alignment_cache
-    await alignment_cache.invalidate(user_id)
-```
-
----
-
-## 10. НОВЫЙ: AstroProfileService
-
-```python
-# services/astro_profile_service.py
-
-class AstroProfileService:
-    """
-    Строит астро-профиль для Alignment Engine.
-    """
-    
-    def __init__(
-        self,
-        ephemeris_service: EphemerisService,
-        vimshottari_engine: VimshottariEngine,
-        aspect_engine: AspectEngine,
-        house_engine: HouseEngine,
-        retro_engine: RetroEngine,
-        element_engine: ElementEngine
-    ):
-        self.ephemeris = ephemeris_service
-        self.vimshottari = vimshottari_engine
-        self.aspect = aspect_engine
-        self.house = house_engine
-        self.retro = retro_engine
-        self.element = element_engine
-    
-    async def build_profile(
-        self,
-        user_id: int,
-        date: date,
-        session: AsyncSession
+        user_id: UUID,
+        target_date: date,
+        natal_houses: Optional[Dict] = None
     ) -> Dict:
         """
-        Строит полный астро-профиль для Alignment Engine.
+        Рассчитывает упрощённые транзиты.
+        
+        Returns:
+            {
+                "transits": {
+                    "Saturn": {"sign": "Pisces", "degree": 12.5, "house": 8, "strength": 0.7},
+                    ...
+                },
+                "planet_strengths": {"sun": 0.75, "moon": 0.62, ...}
+            }
         """
-        # 1. Загружаем натальную карту
-        natal = await self._get_natal(user_id, session)
+        # 1. Получаем позиции планет
+        positions = await self._get_planet_positions(target_date)
         
-        # 2. Рассчитываем транзиты
-        transits = await self.ephemeris.get_planets_for_date(date)
+        # 2. Вычисляем дома (если есть натальная карта)
+        houses = await self._get_houses(positions, natal_houses)
         
-        # 3. Рассчитываем даши
-        dasha_state = await self._get_dasha(user_id, date, session)
+        # 3. Вычисляем силу планет
+        strengths = await self._calculate_planet_strengths(positions, houses)
         
-        # 4. Определяем дома транзитов
-        transit_houses = {
-            'saturn_house': self.house.get_house(transits['Saturn'].longitude, natal.ascendant),
-            'jupiter_house': self.house.get_house(transits['Jupiter'].longitude, natal.ascendant),
-            'rahu_house': self.house.get_house(transits['Rahu'].longitude, natal.ascendant),
-            'moon_house': self.house.get_house(transits['Moon'].longitude, natal.ascendant),
-        }
-        
-        # 5. Определяем знаки и фазы
-        moon_sign = self._get_sign(transits['Moon'].longitude)
-        moon_phase = self._get_moon_phase(transits['Moon'], transits['Sun'])
-        
-        # 6. Определяем ретроградность
-        retro_planets = self.retro.get_retrograde_planets(transits)
-        
-        # 7. Определяем стихии
-        elements = self.element.get_elements(transits)
-        
-        # 8. Рассчитываем confidence
-        confidence = self._calculate_confidence(natal, transits)
+        # 4. Формируем ответ
+        transits = {}
+        for planet, pos in positions.items():
+            sign = self.SIGNS[int(pos['longitude'] / 30)]
+            degree = pos['longitude'] % 30
+            
+            transits[planet] = {
+                'sign': sign,
+                'degree': round(degree, 1),
+                'house': houses.get(planet, 0),
+                'strength': strengths.get(planet, 0.5),
+                'retrograde': pos.get('speed', 0) < 0
+            }
         
         return {
-            "user_id": user_id,
-            "date": date.isoformat(),
-            "dasha": {
-                "maha": dasha_state.maha.planet,
-                "antar": dasha_state.antar.planet,
-                "pratyantar": dasha_state.pratyantar.planet,
-            },
-            "transits": {
-                "saturn_house": transit_houses['saturn_house'],
-                "jupiter_house": transit_houses['jupiter_house'],
-                "rahu_house": transit_houses['rahu_house'],
-                "moon_house": transit_houses['moon_house'],
-                "moon_sign": moon_sign,
-                "moon_phase": moon_phase,
-            },
-            "retro": {
-                "mercury": 'Mercury' in retro_planets,
-                "venus": 'Venus' in retro_planets,
-                "mars": 'Mars' in retro_planets,
-            },
-            "elements": elements,
-            "confidence": confidence,
-            "calculated_at": datetime.now().isoformat()
+            'transits': transits,
+            'planet_strengths': strengths
+        }
+    
+    async def _get_planet_positions(self, target_date: date) -> Dict:
+        """
+        Получает позиции планет из кэша эфемерид.
+        """
+        planets = ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars',
+                   'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto']
+        
+        positions = {}
+        for planet in planets:
+            pos = await self.ephemeris_service.get_planet_position(
+                planet=planet,
+                date=target_date
+            )
+            positions[planet] = {
+                'longitude': pos.longitude,
+                'speed': pos.longitude_speed
+            }
+        
+        return positions
+    
+    async def _get_houses(
+        self,
+        positions: Dict,
+        natal_houses: Optional[Dict]
+    ) -> Dict[str, int]:
+        """
+        Определяет дома для планет.
+        Если натальная карта есть — использует её, иначе — эвристика.
+        """
+        if natal_houses and 'asc' in natal_houses:
+            # Используем натальные дома
+            asc = natal_houses['asc']
+            houses = {}
+            for planet, pos in positions.items():
+                degree = pos['longitude']
+                house = int(((degree - asc) % 360) / 30) + 1
+                houses[planet] = house
+            return houses
+        
+        # Упрощённая эвристика (без натальной карты)
+        # Используем дома по умолчанию
+        default_houses = {
+            'Sun': 5, 'Moon': 4, 'Mercury': 3, 'Venus': 7,
+            'Mars': 1, 'Jupiter': 9, 'Saturn': 10,
+            'Uranus': 11, 'Neptune': 12, 'Pluto': 8
+        }
+        return default_houses
+    
+    async def _calculate_planet_strengths(
+        self,
+        positions: Dict,
+        houses: Dict[str, int]
+    ) -> Dict[str, float]:
+        """
+        Вычисляет силу планет (0..1) на основе знака и дома.
+        """
+        strengths = {}
+        
+        for planet, pos in positions.items():
+            sign = self.SIGNS[int(pos['longitude'] / 30)]
+            house = houses.get(planet, 0)
+            
+            # 1. Влияние экзальтации/дебилитации
+            if sign == self.EXALTATIONS.get(planet):
+                dignity = 1.0
+            elif sign == self.DEBILITIES.get(planet):
+                dignity = 0.2
+            else:
+                dignity = 0.6
+            
+            # 2. Влияние дома
+            house_power = self.HOUSE_POWER.get(house, 0.5)
+            
+            # 3. Финальная сила
+            strength = dignity * 0.6 + house_power * 0.4
+            
+            # 4. Корректировка на ретроградность
+            if pos.get('speed', 0) < 0:
+                strength *= 0.8
+            
+            strengths[planet] = round(max(0.1, min(1.0, strength)), 2)
+        
+        return strengths
+```
+
+### 3.3. Seasonal Booster
+
+```python
+# src/core/seasonal_booster.py
+
+from datetime import datetime
+from typing import Dict, Optional
+
+class SeasonalBooster:
+    """
+    Сезонные корректировки для индексов достижения.
+    """
+    
+    # Сезонные бусты по категориям и месяцам
+    SEASONAL_BOOSTS = {
+        'family': {
+            1: 0.1, 2: 0.1, 3: 0.0, 4: 0.0,
+            5: 0.0, 6: 0.0, 7: 0.05, 8: 0.05,
+            9: 0.0, 10: 0.0, 11: 0.05, 12: 0.1
+        },
+        'work': {
+            1: 0.0, 2: 0.0, 3: 0.1, 4: 0.1,
+            5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0,
+            9: 0.1, 10: 0.1, 11: 0.0, 12: 0.0
+        },
+        'health': {
+            1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0,
+            5: 0.1, 6: 0.1, 7: 0.1, 8: 0.1,
+            9: 0.0, 10: 0.0, 11: 0.0, 12: 0.0
+        },
+        'self': {
+            1: 0.05, 2: 0.05, 3: 0.0, 4: 0.0,
+            5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0,
+            9: 0.1, 10: 0.1, 11: 0.05, 12: 0.05
+        }
+    }
+    
+    @classmethod
+    def get_boost(cls, category: str, date: datetime) -> float:
+        """
+        Возвращает сезонный буст для категории в указанную дату.
+        """
+        month = date.month
+        category_boosts = cls.SEASONAL_BOOSTS.get(category, {})
+        return category_boosts.get(month, 0.0)
+    
+    @classmethod
+    def get_all_boosts(cls, date: datetime) -> Dict[str, float]:
+        """
+        Возвращает бусты для всех категорий.
+        """
+        month = date.month
+        boosts = {}
+        for category, category_boosts in cls.SEASONAL_BOOSTS.items():
+            boosts[category] = category_boosts.get(month, 0.0)
+        return boosts
+    
+    @classmethod
+    def get_season_name(cls, date: datetime) -> str:
+        """
+        Возвращает название сезона для даты.
+        """
+        month = date.month
+        if month in [12, 1, 2]:
+            return 'зима'
+        elif month in [3, 4, 5]:
+            return 'весна'
+        elif month in [6, 7, 8]:
+            return 'лето'
+        else:
+            return 'осень'
+```
+
+---
+
+## 4. SERVICE LAYER
+
+### 4.1. Biorhythm Service
+
+```python
+# src/services/biorhythm_service.py
+
+from datetime import datetime, date
+from typing import Dict, Optional
+from uuid import UUID
+
+from ..core.biorhythm_core import BiorhythmCore
+from ..models import BiorhythmResult
+
+class BiorhythmService:
+    """
+    Сервис для работы с биоритмами.
+    """
+    
+    def __init__(self):
+        self.core = BiorhythmCore
+    
+    async def calculate(
+        self,
+        user_id: UUID,
+        target_date: Optional[date] = None
+    ) -> BiorhythmResult:
+        """
+        Рассчитывает биоритмы для пользователя.
+        """
+        if target_date is None:
+            target_date = date.today()
+        
+        # 1. Получаем дату рождения пользователя
+        birth_date = await self._get_birth_date(user_id)
+        
+        if not birth_date:
+            # Если дата рождения неизвестна — возвращаем нейтральные значения
+            return self._neutral_biorhythms(user_id)
+        
+        # 2. Рассчитываем биоритмы
+        biorhythms = self.core.calculate(birth_date, target_date)
+        
+        # 3. Генерируем интерпретацию
+        interpretation = self.core.get_interpretation(biorhythms)
+        
+        # 4. Сохраняем в БД
+        result = await self._save_biorhythms(
+            user_id=user_id,
+            biorhythms=biorhythms,
+            interpretation=interpretation
+        )
+        
+        return result
+    
+    def _neutral_biorhythms(self, user_id: UUID) -> Dict:
+        """
+        Возвращает нейтральные биоритмы (когда нет даты рождения).
+        """
+        return {
+            'user_id': user_id,
+            'calculated_at': datetime.now(),
+            'physical': 0.0,
+            'emotional': 0.0,
+            'intellectual': 0.0,
+            'phase_physical': 'neutral',
+            'phase_emotional': 'neutral',
+            'phase_intellectual': 'neutral',
+            'interpretation': 'Дата рождения не указана — биоритмы не рассчитаны'
         }
 ```
 
----
-
-## 11. Миграция данных
-
-### 11.1. Скрипт миграции (без изменений)
+### 4.2. Transit Service (упрощённый)
 
 ```python
-# scripts/migrate_forecasts.py
+# src/services/transit_service.py
 
-async def migrate_forecasts(batch_size: int = 100):
-    """
-    Переносит прогнозы из forecasts (JSONB) в forecasts_v2.
-    """
-    async with async_session() as session:
-        stmt = select(Forecast).where(Forecast.migrated_to_v2.is_(False)).limit(batch_size)
-        result = await session.execute(stmt)
-        old_forecasts = result.scalars().all()
-        
-        for old in old_forecasts:
-            raw = RawForecast.from_json(old.data)
-            
-            new = ForecastV2(
-                user_id=old.user_id,
-                forecast_date=old.forecast_date,
-                overall_confidence=raw.overall_confidence,
-                dominant_theme=raw.dominant_theme,
-                calculated_at=old.calculated_at
-            )
-            session.add(new)
-            await session.flush()
-            
-            for axis in raw.axes:
-                session.add(ForecastAxisV2(
-                    forecast_id=new.id,
-                    axis_name=axis.name,
-                    static_value=axis.static_value,
-                    delta=axis.delta,
-                    daily_value=axis.daily_value,
-                    trend=axis.trend,
-                    advice=axis.advice
-                ))
-            
-            old.migrated_to_v2 = True
-        
-        await session.commit()
-```
+from datetime import date
+from typing import Dict, Optional
+from uuid import UUID
 
-### 11.2. НОВЫЙ: Backfill alignment_cache
+from ..core.transit_core import SimplifiedTransitCore
+from ..core.ephemeris import EphemerisService
 
-```python
-# scripts/backfill_alignment_cache.py
-
-async def backfill_alignment_cache():
+class TransitService:
     """
-    Заполняет alignment_cache для существующих пользователей.
-    Запускается после рефакторинга.
+    Сервис для упрощённых транзитов.
     """
-    async with async_session() as session:
-        # 1. Находим всех пользователей с прогнозами
-        stmt = select(ForecastV2.user_id).distinct()
-        result = await session.execute(stmt)
-        users = result.scalars().all()
+    
+    def __init__(self, ephemeris_service: EphemerisService):
+        self.ephemeris_service = ephemeris_service
+        self.core = SimplifiedTransitCore(ephemeris_service)
+    
+    async def get_transits(
+        self,
+        user_id: UUID,
+        target_date: date
+    ) -> Dict:
+        """
+        Возвращает упрощённые транзиты для пользователя.
+        """
+        # 1. Получаем натальную карту пользователя (если есть)
+        natal_houses = await self._get_natal_houses(user_id)
         
-        for user_id in users:
-            # 2. Для каждого пользователя рассчитываем профиль
-            profile = await astro_profile_service.build_profile(
-                user_id=user_id,
-                date=date.today(),
-                session=session
-            )
-            
-            # 3. Сохраняем в кэш
-            await alignment_cache.set(user_id, date.today(), profile)
-            
-            # 4. Пауза (не перегружать)
-            await asyncio.sleep(0.1)
+        # 2. Рассчитываем транзиты
+        transits = await self.core.calculate_transits(
+            user_id=user_id,
+            target_date=target_date,
+            natal_houses=natal_houses
+        )
         
-        logger.info(f"Backfilled {len(users)} users")
+        # 3. Сохраняем в БД
+        await self._save_transits(user_id, target_date, transits)
+        
+        return transits
 ```
 
 ---
 
-## 12. Конфигурация и развертывание
+## 5. API INTERFACES
 
-### 12.1. Настройки
+### 5.1. Новые внутренние эндпоинты
 
 ```python
-class Settings(BaseSettings):
-    # Сервис
-    SERVICE_NAME: str = "astro-service"
-    DEBUG: bool = False
+# src/api/routes_internal.py
+
+from fastapi import APIRouter, Depends, Query
+from uuid import UUID
+from datetime import date, datetime
+from typing import Optional
+
+router = APIRouter(prefix="/internal/v4", tags=["Internal"])
+
+
+@router.get("/users/{user_id}/biorhythms")
+async def get_biorhythms(
+    user_id: UUID,
+    date: Optional[date] = Query(None, description="Дата расчёта"),
+    service: BiorhythmService = Depends(get_biorhythm_service)
+):
+    """
+    Возвращает биоритмы пользователя.
     
-    # База данных
-    DATABASE_URL: str = "postgresql://user:pass@postgres:5432/personal_assistant"
+    Используется Psychometry Service для синтеза состояния.
+    """
+    if date is None:
+        date = datetime.now().date()
     
-    # Psychometry Service
-    PSYCHOMETRY_URL: str = "http://psychometry-service:8000"
-    INTERNAL_API_KEY: str = "internal-secret-key"
+    result = await service.calculate(user_id, date)
     
-    # Alignment Engine (НОВОЕ!)
-    ALIGNMENT_CACHE_TTL: int = 3600 * 24 * 7  # 7 дней
-    ALIGNMENT_CACHE_BATCH_SIZE: int = 50
+    return {
+        "user_id": str(user_id),
+        "calculated_at": datetime.now().isoformat(),
+        "biorhythms": {
+            "physical": result.physical,
+            "emotional": result.emotional,
+            "intellectual": result.intellectual,
+            "phases": {
+                "physical": result.phase_physical,
+                "emotional": result.phase_emotional,
+                "intellectual": result.phase_intellectual
+            }
+        },
+        "interpretation": result.interpretation
+    }
+
+
+@router.get("/users/{user_id}/transits")
+async def get_simplified_transits(
+    user_id: UUID,
+    date: Optional[date] = Query(None, description="Дата расчёта"),
+    service: TransitService = Depends(get_transit_service)
+):
+    """
+    Возвращает упрощённые транзиты.
     
-    # Веса слоёв
-    WEIGHT_REFRESH_INTERVAL: int = 3600 * 6  # 6 часов
+    Используется Psychometry Service для расчёта синхронности.
+    """
+    if date is None:
+        date = datetime.now().date()
     
-    # Система домов
-    HOUSE_SYSTEM: str = "W"  # Whole Sign
+    result = await service.get_transits(user_id, date)
     
-    # Режим работы
-    USE_V2_FORECASTS: bool = False  # переключатель
+    return {
+        "user_id": str(user_id),
+        "calculated_at": datetime.now().isoformat(),
+        "transits": result["transits"],
+        "planet_strengths": result["planet_strengths"]
+    }
+
+
+@router.get("/seasonal-boosts")
+async def get_seasonal_boosts(
+    date: Optional[date] = Query(None, description="Дата для расчёта")
+):
+    """
+    Возвращает сезонные бусты для всех категорий.
+    """
+    if date is None:
+        date = datetime.now().date()
+    
+    boosts = SeasonalBooster.get_all_boosts(date)
+    season = SeasonalBooster.get_season_name(date)
+    
+    return {
+        "date": date.isoformat(),
+        "season": season,
+        "boosts": boosts
+    }
 ```
 
-### 12.2. Docker Compose
+### 5.2. Health Check
+
+```python
+@router.get("/health")
+async def health_check():
+    """
+    Проверка состояния сервиса.
+    """
+    status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "components": {}
+    }
+    
+    # 1. Проверка БД
+    try:
+        # Проверка подключения
+        status["components"]["database"] = "healthy"
+    except Exception as e:
+        status["components"]["database"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    # 2. Проверка эфемеридного кэша
+    try:
+        # Проверка кэша
+        status["components"]["ephemeris_cache"] = "healthy"
+    except Exception as e:
+        status["components"]["ephemeris_cache"] = f"unhealthy: {e}"
+        status["status"] = "unhealthy"
+    
+    return status
+```
+
+---
+
+## 6. КЭШИРОВАНИЕ ЭФЕМЕРИД
+
+### 6.1. Обновлённый Ephemeris Service
+
+```python
+# src/core/ephemeris.py (дополнение)
+
+from functools import lru_cache
+from datetime import date, datetime
+from typing import Dict, Optional
+import swisseph as swe
+
+class EphemerisService:
+    """
+    Сервис эфемерид с кэшированием.
+    """
+    
+    def __init__(self, session):
+        self.session = session
+        self.cache_ttl = 3600  # 1 час
+    
+    @lru_cache(maxsize=128)
+    async def get_planet_position(
+        self,
+        planet: str,
+        date: date,
+        force_recalc: bool = False
+    ) -> Dict:
+        """
+        Возвращает позицию планеты с кэшированием.
+        """
+        # 1. Проверяем кэш
+        if not force_recalc:
+            cached = await self._get_from_cache(date, planet)
+            if cached:
+                return cached
+        
+        # 2. Рассчитываем
+        jd = swe.julday(date.year, date.month, date.day, 12.0)
+        planet_num = self._get_planet_number(planet)
+        pos, speed = swe.calc_ut(jd, planet_num)
+        
+        result = {
+            'longitude': pos[0],
+            'latitude': pos[1],
+            'distance': pos[2],
+            'speed': speed[0],
+            'longitude_speed': speed[0],
+            'latitude_speed': speed[1],
+            'distance_speed': speed[2]
+        }
+        
+        # 3. Сохраняем в кэш
+        await self._save_to_cache(date, planet, result)
+        
+        return result
+    
+    def _get_planet_number(self, planet: str) -> int:
+        """Возвращает номер планеты для Swiss Ephemeris."""
+        planets = {
+            'Sun': swe.SUN,
+            'Moon': swe.MOON,
+            'Mercury': swe.MERCURY,
+            'Venus': swe.VENUS,
+            'Mars': swe.MARS,
+            'Jupiter': swe.JUPITER,
+            'Saturn': swe.SATURN,
+            'Uranus': swe.URANUS,
+            'Neptune': swe.NEPTUNE,
+            'Pluto': swe.PLUTO,
+        }
+        return planets.get(planet, swe.SUN)
+    
+    async def _get_from_cache(self, date: date, planet: str) -> Optional[Dict]:
+        """Получает позицию из кэша."""
+        # Реализация с PostgreSQL
+        pass
+    
+    async def _save_to_cache(self, date: date, planet: str, position: Dict):
+        """Сохраняет позицию в кэш."""
+        # Реализация с PostgreSQL
+        pass
+```
+
+---
+
+## 7. DOCKER COMPOSE
 
 ```yaml
-# docker-compose.yml (дополнение)
+# docker-compose.yml (фрагмент для Astro Service)
 
 services:
   astro-service:
     build: ./astro-service
+    container_name: astro-service
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/personal_assistant
+      EPHEMERIS_CACHE_TTL: 3600
+      HOUSE_SYSTEM: W
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
     ports:
       - "8001:8000"
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/personal_assistant
-      PSYCHOMETRY_URL: http://psychometry-service:8000
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      USE_V2_FORECASTS: "false"
-      ALIGNMENT_CACHE_TTL: 604800  # 7 дней
+    volumes:
+      - ./ephemeris_data:/app/ephemeris_data
     depends_on:
       postgres:
-        condition: service_healthy
-      psychometry-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -1036,171 +888,52 @@ services:
       - app-network
 ```
 
-### 12.3. Переключение на v2
+---
 
-```python
-# В settings.py
-USE_V2_FORECASTS = os.getenv("USE_V2_FORECASTS", "false").lower() == "true"
+## 8. ЧЕК-ЛИСТ ПРИЁМКИ
 
-# В forecast_service.py
-async def get_forecast(self, user_id: int, date: date):
-    if settings.USE_V2_FORECASTS:
-        return await self._get_v2_forecast(user_id, date)
-    else:
-        return await self._get_v1_forecast(user_id, date)
-```
+### 8.1. Функциональные требования
+
+- [ ] Biorhythm Core рассчитывает 23/28/33 дня
+- [ ] Biorhythm Core определяет фазы (rising, falling, critical, peak, trough)
+- [ ] Simplified Transit Core рассчитывает силу планет (0-1)
+- [ ] Simplified Transit Core определяет экзальтацию/дебилитацию
+- [ ] Seasonal Booster возвращает бусты для всех категорий
+- [ ] Кэш эфемерид работает (TTL 1 час)
+- [ ] Все новые внутренние эндпоинты работают
+
+### 8.2. Совместимость
+
+- [ ] Существующий Forecast Service продолжает работать
+- [ ] Существующие эндпоинты /api/v3/forecast не изменились
+- [ ] Новые эндпоинты не конфликтуют с существующими
+- [ ] База данных дополнена без потери данных
+
+### 8.3. Производительность
+
+- [ ] Запрос биоритмов < 50 мс
+- [ ] Запрос транзитов < 100 мс
+- [ ] Кэш эфемерид > 90% hit rate
 
 ---
 
-## 13. Нефункциональные требования
+## 9. ЗАКЛЮЧЕНИЕ
 
-### 13.1. Производительность
+**Astro Service дополняется** новыми функциями для поддержки Psychometry Service v4.0:
 
-| Метрика | Требование |
-|---------|------------|
-| GET /api/v1/forecast | < 200 мс (из кэша) |
-| **GET /internal/astro-profile** | **< 100 мс (из кэша)** |
-| GET /internal/astro-context | < 100 мс |
-| Обновление весов | < 100 мс (кэш в памяти) |
-| Миграция прогнозов | < 1 минута на 1000 прогнозов |
+| Что добавляется | Для чего |
+|-----------------|----------|
+| **Biorhythm Core** | Расчёт 23/28/33 дней для синтеза состояния |
+| **Simplified Transit Calculator** | Сила планет для синхронности |
+| **Seasonal Booster** | Сезонные корректировки индексов |
+| **Internal API** | Эндпоинты для Psychometry Service |
 
-### 13.2. Ресурсы
+**Что остаётся без изменений:**
+- Эфемериды и аспекты (для Forecast Service)
+- Даши
+- Blind Protocol
+- /api/v3/forecast
 
-| Компонент | CPU | RAM |
-|-----------|-----|-----|
-| Astro Service | 1.2 ядра | 2 GB |
-| PostgreSQL | 1.5 ядра | 3 GB |
-| Redis (кэш) | 0.3 ядра | 512 MB |
+**Существующий Astro Service продолжает работать как раньше.** Новые функции добавляются без нарушения существующей логики.
 
-### 13.3. Health Checks
-
-```python
-@router.get("/health")
-async def health_check():
-    status = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "components": {}
-    }
-    
-    # 1. Проверка БД
-    try:
-        await session.execute("SELECT 1")
-        status["components"]["database"] = "healthy"
-    except Exception as e:
-        status["components"]["database"] = f"unhealthy: {e}"
-        status["status"] = "unhealthy"
-    
-    # 2. Проверка Psychometry Service
-    try:
-        await psych_client.health_check()
-        status["components"]["psychometry"] = "healthy"
-    except Exception:
-        status["components"]["psychometry"] = "degraded"
-        status["status"] = "degraded"
-    
-    # 3. Проверка alignment_cache
-    try:
-        await alignment_cache.health_check()
-        status["components"]["alignment_cache"] = "healthy"
-    except Exception as e:
-        status["components"]["alignment_cache"] = f"unhealthy: {e}"
-        status["status"] = "unhealthy"
-    
-    return status
-```
-
----
-
-## 14. Чек-лист приёмки
-
-### 14.1. Функциональные требования
-
-- [ ] Astro Service работает как отдельный микросервис
-- [ ] `GET /api/v1/forecast` возвращает прогноз
-- [ ] `GET /internal/v1/astro-context` возвращает астро-контекст
-- [ ] `GET /internal/v1/test-status` возвращает статус тестирования
-- [ ] `POST /internal/v1/psych/event` обновляет test_status_cache
-- [ ] **`GET /internal/v1/astro-profile` возвращает профиль для Alignment Engine**
-- [ ] Blind Protocol фильтрует слои на основе статуса
-- [ ] Веса обновляются из layer_config каждые 6 часов
-- [ ] alignment_cache работает корректно
-
-### 14.2. Технические требования
-
-- [ ] Все эндпоинты API документированы (OpenAPI)
-- [ ] Юнит-тесты покрывают > 80% core-модулей
-- [ ] Интеграционные тесты проходят
-- [ ] Миграции Alembic накатываются без ошибок
-- [ ] Docker Compose поднимает сервис
-- [ ] Health Check работает корректно
-- [ ] Логирование в JSON формате
-
-### 14.3. Интеграционные требования
-
-- [ ] Internal API работает с Psychometry Service
-- [ ] **Internal API работает с Alignment Engine**
-- [ ] alignment_cache обновляется при изменении статуса тестов
-- [ ] Blind Protocol корректно фильтрует прогнозы
-
----
-
-## 15. План реализации
-
-### Неделя 1: Фундамент
-
-| Задача | Оценка |
-|--------|--------|
-| Создание новых таблиц (alignment_cache, profile_history, internal_api_stats) | 4 ч |
-| Реализация AstroProfileService | 8 ч |
-| Реализация alignment_cache | 6 ч |
-| Юнит-тесты для core | 4 ч |
-
-### Неделя 2: Internal API
-
-| Задача | Оценка |
-|--------|--------|
-| Реализация GET /internal/astro-profile | 6 ч |
-| Реализация GET /internal/astro-context | 4 ч |
-| Реализация GET /internal/test-status | 4 ч |
-| Реализация POST /internal/psych/event | 4 ч |
-| Интеграционные тесты Internal API | 6 ч |
-
-### Неделя 3: Интеграция с Alignment Engine
-
-| Задача | Оценка |
-|--------|--------|
-| Интеграция AstroProfileService с Alignment Engine | 8 ч |
-| Обновление Blind Protocol (влияние на cache) | 4 ч |
-| Backfill alignment_cache | 6 ч |
-| Документация Internal API | 4 ч |
-
-### Неделя 4: Завершение
-
-| Задача | Оценка |
-|--------|--------|
-| Миграция прогнозов (v1 → v2) | 6 ч |
-| Переключение на v2 | 4 ч |
-| Финальное тестирование | 8 ч |
-
----
-
-## 16. Заключение
-
-**Astro Service v3.0** — это полностью переработанный микросервис, который:
-
-1. **Работает параллельно** со старой версией (Blue-Green)
-2. **Интегрирован с Psychometry Service** через Internal API
-3. **Интегрирован с Alignment Engine** через новый Internal API
-4. **Применяет Blind Protocol** на основе статуса тестирования
-5. **Кэширует астро-профили** для быстрого доступа
-6. **Поддерживает плавный переход** через флаг `USE_V2_FORECASTS`
-
-**Ключевые изменения:**
-- ✅ Добавлен `astro.alignment_cache` для быстрых ответов Alignment Engine
-- ✅ Добавлен `GET /internal/users/{id}/astro-profile` эндпоинт
-- ✅ Добавлен `AstroProfileService` для построения профилей
-- ✅ Blind Protocol влияет на alignment_cache
-- ✅ Добавлены метрики для Internal API
-
-**Критерий готовности:** После развертывания Alignment Engine может получать астро-профили через Internal API, а пользователи получают прогнозы с учётом статуса тестирования и адаптивными весами.
+**Статус:** Готово к разработке.

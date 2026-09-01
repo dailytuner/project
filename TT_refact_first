@@ -1,8 +1,17 @@
-# ПОЛНОЕ ТЕХНИЧЕСКОЕ ЗАДАНИЕ (ОБНОВЛЁННОЕ)
+# Отлично! Давайте зафиксируем полное уточнённое ТЗ как единый источник истины.
+
+Я создам **единый документ**, объединяющий:
+1. Исходное ТЗ (ваш первый файл)
+2. Ваши дополнения и исправления (второй файл)
+3. Мои рекомендации, которые вы приняли
+
+---
+
+# ПОЛНОЕ ТЕХНИЧЕСКОЕ ЗАДАНИЕ (ЕДИНЫЙ ИСТОЧНИК ИСТИНЫ)
 
 ## Внедрение Psychometry Service v4.0 с интеграцией в существующую астрологическую систему
 
-**Версия документа:** 7.0 (обновлённая)  
+**Версия документа:** 6.0 (финальная, утверждённая)  
 **Дата:** 02.09.2026  
 **Статус:** Утверждён
 
@@ -74,10 +83,9 @@
 | «Что будет со мной?» | «Что со мной сейчас?» + «Что делать?» |
 | Пассивное чтение | Активное управление |
 | Общие рекомендации | Персональные рекомендации по состоянию |
-| Одна ось (судьба/карма) | **5 категорий жизни** 🆕 |
+| Одна ось (судьба/карма) | 4 категории жизни |
 | «Сатурн в 8 доме» | «Ваше окно в работе закрыто — отложите решения» |
 | Нет обратной связи | «Оцените, помогла ли рекомендация» |
-| Нет прогноза окна | **Прогноз окна на 7 дней** 🆕 |
 
 ---
 
@@ -98,7 +106,6 @@
 │  │  • Вкладка "Моё состояние"                                              │   │
 │  │  • Кнопка "Пауза" (практика)                                            │   │
 │  │  • Интерактивный опросник                                               │   │
-│  │  • Прогноз окна на 7 дней 🆕                                           │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                          │
@@ -110,8 +117,7 @@
 │  │  /api/v3/* → Astro Service (существующий, без изменений)                │   │
 │  │  /api/v4/* → Psychometry Service (новый)                                │   │
 │  │  /api/v4/state, /api/v4/achievements, /api/v4/window,                   │   │
-│  │  /api/v4/window/forecast 🆕, /api/v4/recommendations,                  │   │
-│  │  /api/v4/practice, /api/v4/feedback                                    │   │
+│  │  /api/v4/recommendations, /api/v4/practice, /api/v4/feedback            │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                          │
@@ -135,10 +141,10 @@
 │  │  └─────────────────┘  └─────────────────┘  └─────────────────────────┘   │   │
 │  │                                                                         │   │
 │  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐   │   │
-│  │  │  Achievement    │  │  Window         │  │  Window Forecast 🆕    │   │   │
-│  │  │  Calculator     │  │  Calculator     │  │  (прогноз на 7 дней)   │   │   │
-│  │  │  (5 категорий)🆕│  │  (floor 0.05)  │  └─────────────────────────┘   │   │
-│  │  └─────────────────┘  └─────────────────┘                              │   │
+│  │  │  Achievement    │  │  Window         │  │  Recommendation         │   │   │
+│  │  │  Calculator     │  │  Calculator     │  │  Generator              │   │   │
+│  │  │  (4 категории)   │  │  (floor 0.05)  │  │  (шаблоны из БД)       │   │   │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────────────┘   │   │
 │  │                                                                         │   │
 │  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐   │   │
 │  │  │  Practice       │  │  Feedback       │  │  Awareness              │   │   │
@@ -155,7 +161,6 @@
 │  │  │  • Redis (приоритет) → Astro Service (fallback)                │   │   │
 │  │  │  • Circuit Breaker (3 failures → OPEN, 60s recovery)           │   │   │
 │  │  │  • Нейтральный контекст (при недоступности)                    │   │   │
-│  │  │  • Финансовые индикаторы (2 дом, Юпитер, Венера) 🆕           │   │   │
 │  │  └─────────────────────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -169,7 +174,6 @@
 │  • 9 осей Magic Profile                                                        │
 │  • Психоматрица (baseline)                                                     │
 │  • /internal/v4/biorhythms, /internal/v4/transits, /internal/v4/seasonal-boosts│
-│  • /internal/v4/financial-indicators 🆕                                       │
 │  • Ночной batch (запись в Redis)                                               │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                          │
@@ -182,29 +186,26 @@
 │  │  • users, natal_charts, ephemeris_cache, forecasts                     │   │
 │  │  • biorhythms_cache (новая)                                            │   │
 │  │  • transits_cache (новая)                                              │   │
-│  │  • financial_indicators_cache (новая) 🆕                              │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
-│  │  psych schema (новая) — 5 таблиц данных + 1 конфиг + 1 история 🆕     │   │
+│  │  psych schema (новая) — 5 таблиц данных + 1 конфиг                     │   │
 │  │  • full_profiles (полный профиль)                                      │   │
 │  │  • states (состояния с UPSERT)                                         │   │
 │  │  • recommendations (наборы рекомендаций)                               │   │
 │  │  • feedback (обратная связь)                                           │   │
 │  │  • practices (практики "Пауза")                                        │   │
 │  │  • recommendation_templates (шаблоны)                                  │   │
-│  │  • window_history (история окон) 🆕                                   │   │
 │  └─────────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                          │
                                          ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                   REDIS (общий для обоих сервисов)             │
+│                                   REDIS (новый — общий для обоих сервисов)     │
 │                                                                                 │
 │  • Кэш астро-контекста (TTL 48h)                                              │
 │  • Кэш эфемерид (TTL 24h)                                                      │
 │  • Кэш состояний (TTL 5min)                                                    │
-│  • Кэш окон (TTL 5min) 🆕                                                     │
 │  • Persistence: appendonly yes                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -215,9 +216,9 @@
 |-----------|--------|----------|
 | **Astro Service** | ✅ Существующий | Дополняется внутренними эндпоинтами и ночным batch |
 | **Psychometry Service** | 🆕 Новый | 1 контейнер FastAPI + 1 контейнер worker |
-| **PostgreSQL** | ✅ Существующий | Добавляется схема `psych` (6 таблиц) |
+| **PostgreSQL** | ✅ Существующий | Добавляется схема `psych` (5 таблиц) |
 | **Redis** | 🆕 Новый | Общий кэш для Astro + Psychometry |
-| **Frontend** | ✅ Существующий | Добавляется 1 вкладка + кнопка «Пауза» + прогноз окна |
+| **Frontend** | ✅ Существующий | Добавляется 1 вкладка + кнопка «Пауза» |
 | **API Gateway** | ✅ Существующий | Добавляется маршрутизация `/api/v4/*` |
 
 **Что отложено:**
@@ -264,43 +265,6 @@ CREATE TABLE astro.transits_cache (
     calculated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(user_id, calc_date),
     INDEX idx_transits_user_date (user_id, calc_date)
-);
-
--- ============================================================
--- 3. ФИНАНСОВЫЕ ИНДИКАТОРЫ (новая таблица) 🆕
--- ============================================================
-
-CREATE TABLE astro.financial_indicators_cache (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    calc_date DATE NOT NULL,
-    
-    -- 2 дом
-    second_house_sign VARCHAR(20),
-    second_house_ruler VARCHAR(20),
-    second_house_strength FLOAT,
-    planets_in_second_house JSONB,
-    
-    -- Юпитер
-    jupiter_house INTEGER,
-    jupiter_strength FLOAT,
-    jupiter_transiting_house INTEGER,
-    
-    -- Венера
-    venus_house INTEGER,
-    venus_strength FLOAT,
-    venus_transiting_house INTEGER,
-    
-    -- Финансовые аспекты
-    money_aspects JSONB,
-    -- [{"planet1": "Jupiter", "planet2": "Venus", "aspect": "trine", "strength": 0.85}]
-    
-    -- Общий финансовый потенциал (0-1)
-    financial_potential FLOAT,
-    
-    calculated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, calc_date),
-    INDEX idx_financial_user_date (user_id, calc_date)
 );
 ```
 
@@ -440,24 +404,7 @@ CREATE TABLE psych.practices (
 );
 
 -- ============================================================
--- 6. ИСТОРИЯ ОКОН (новая таблица) 🆕
--- ============================================================
-
-CREATE TABLE psych.window_history (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER NOT NULL,
-    state_id UUID REFERENCES psych.states(id),
-    window_date DATE NOT NULL,
-    window_value FLOAT CHECK (window_value BETWEEN 0 AND 1),
-    window_level VARCHAR(10) CHECK (window_level IN ('OPEN', 'PARTIAL', 'CLOSED')),
-    deviations JSONB,
-    calculated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, window_date),
-    INDEX idx_window_user_date (user_id, window_date)
-);
-
--- ============================================================
--- 7. КОНФИГУРАЦИЯ — ШАБЛОНЫ РЕКОМЕНДАЦИЙ
+-- 6. КОНФИГУРАЦИЯ — ШАБЛОНЫ РЕКОМЕНДАЦИЙ
 -- ============================================================
 
 CREATE TABLE psych.recommendation_templates (
@@ -473,39 +420,26 @@ CREATE TABLE psych.recommendation_templates (
 );
 
 -- ============================================================
--- 8. ПЕРВОНАЧАЛЬНЫЕ ШАБЛОНЫ (5 категорий) 🆕
+-- 7. ПЕРВОНАЧАЛЬНЫЕ ШАБЛОНЫ
 -- ============================================================
 
 INSERT INTO psych.recommendation_templates (category, level, template, priority, duration) VALUES
--- Семья
 ('family', 'HIGH', 'Запланируйте вечерний разговор с близкими', 3, '15 мин'),
 ('family', 'MEDIUM', 'Скажите близким что-то тёплое', 3, '5 мин'),
 ('family', 'LOW', 'Уделите время тишине и себе', 3, '10 мин'),
 ('family', 'CRITICAL', 'Лучше побыть наедине с собой', 1, '15 мин'),
-
--- Работа
 ('work', 'HIGH', 'Начните новый проект', 2, '30 мин'),
 ('work', 'MEDIUM', 'Займитесь текущими задачами', 2, '20 мин'),
 ('work', 'LOW', 'Отложите крупные решения', 2, '15 мин'),
 ('work', 'CRITICAL', 'Сосредоточьтесь на рутине', 1, '10 мин'),
-
--- Здоровье
 ('health', 'HIGH', 'Сходите на прогулку или в спортзал', 2, '20 мин'),
 ('health', 'MEDIUM', 'Выделите время для растяжки', 2, '10 мин'),
 ('health', 'LOW', 'Время восстановления — отдохните', 1, '15 мин'),
 ('health', 'CRITICAL', 'Обязательный отдых', 1, '30 мин'),
-
--- Self
 ('self', 'HIGH', 'Запишите свои идеи и мысли', 3, '15 мин'),
 ('self', 'MEDIUM', 'Посмотрите что-то вдохновляющее', 3, '10 мин'),
 ('self', 'LOW', 'Отложите грандиозные планы', 2, '10 мин'),
-('self', 'CRITICAL', 'Просто отдыхайте', 1, '15 мин'),
-
--- Деньги/Достаток (новая категория) 🆕
-('money', 'HIGH', 'Отличное время для инвестиций и крупных решений', 2, '30 мин'),
-('money', 'MEDIUM', 'Хорошее время для финансового планирования', 2, '20 мин'),
-('money', 'LOW', 'Отложите крупные финансовые решения', 1, '15 мин'),
-('money', 'CRITICAL', 'Не рискуйте деньгами — наблюдайте', 1, '10 мин');
+('self', 'CRITICAL', 'Просто отдыхайте', 1, '15 мин');
 ```
 
 ---
@@ -590,46 +524,7 @@ GET /internal/v4/seasonal-boosts?date={date}
     "family": 0.05,
     "work": 0.0,
     "health": 0.0,
-    "self": 0.05,
-    "money": 0.02
-  }
-}
-```
-
----
-
-```http
-GET /internal/v4/users/{user_id}/financial-indicators?date={date} 🆕
-```
-
-**Назначение:** Возвращает финансовые индикаторы (2 дом, Юпитер, Венера).
-
-**Ответ:**
-```json
-{
-  "user_id": 123,
-  "date": "2026-09-02",
-  "financial_indicators": {
-    "second_house": {
-      "sign": "Taurus",
-      "ruler": "Venus",
-      "strength": 0.7,
-      "planets": ["Venus", "Jupiter"]
-    },
-    "jupiter": {
-      "house": 5,
-      "strength": 0.82,
-      "transiting_house": 2
-    },
-    "venus": {
-      "house": 10,
-      "strength": 0.68,
-      "transiting_house": 8
-    },
-    "money_aspects": [
-      {"planet1": "Jupiter", "planet2": "Venus", "aspect": "trine", "strength": 0.85}
-    ],
-    "financial_potential": 0.72
+    "self": 0.05
   }
 }
 ```
@@ -652,7 +547,7 @@ def precompute_daily_context():
     """
     Каждую ночь в 3:00:
     1. Для всех активных пользователей (за последние 7 дней)
-    2. Рассчитывает биоритмы, транзиты, сезонные бусты, финансовые индикаторы
+    2. Рассчитывает биоритмы, транзиты, сезонные бусты
     3. Сохраняет в Redis с TTL 48 часов
     """
     logger.info("Starting daily context precomputation...")
@@ -671,14 +566,12 @@ def precompute_daily_context():
                 biorhythms = calculate_biorhythms(user_id, today)
                 transits = calculate_transits(user_id, today)
                 boosts = get_seasonal_boosts(today)
-                financial = calculate_financial_indicators(user_id, today)  # 🆕
                 
                 key = f"astro:{user_id}:{today.isoformat()}"
                 value = {
                     'biorhythms': biorhythms,
                     'transits': transits,
-                    'seasonal_boosts': boosts,
-                    'financial_indicators': financial  # 🆕
+                    'seasonal_boosts': boosts
                 }
                 redis_client.setex(key, 48 * 3600, json.dumps(value))
                 total_processed += 1
@@ -730,9 +623,8 @@ psychometry-service/
 │   ├── core/
 │   │   ├── scorer.py                # T-scores для полного профиля
 │   │   ├── state_synthesizer.py     # Синтез состояния
-│   │   ├── achievement_calc.py      # Индексы (5 категорий) 🆕
+│   │   ├── achievement_calc.py      # Индексы (сумма весов = 1.0)
 │   │   ├── window_calc.py           # Окна (с floor 0.05)
-│   │   ├── window_forecast.py       # Прогноз окон 🆕
 │   │   ├── recommendation_gen.py    # Рекомендации (из шаблонов БД)
 │   │   └── awareness.py             # Осознанность
 │   │
@@ -762,15 +654,14 @@ psychometry-service/
 from fastapi import APIRouter, Depends, HTTPException
 from uuid import UUID
 from datetime import date, datetime
-from typing import Optional, List
+from typing import Optional
 from pydantic import Field
 
 from .deps import get_current_user_id, get_service
 from .schemas import (
     QuickCheckRequest, FullProfileRequest, FeedbackRequest,
     PracticeRequest, StateResponse, AchievementsResponse,
-    WindowResponse, WindowForecastResponse,  # 🆕
-    RecommendationsResponse
+    WindowResponse, RecommendationsResponse
 )
 
 router = APIRouter(prefix="/api/v4", tags=["Psychometry"])
@@ -842,7 +733,7 @@ async def get_state(
 
 
 # ============================================================
-# ИНДЕКСЫ ДОСТИЖЕНИЯ (5 категорий) 🆕
+# ИНДЕКСЫ ДОСТИЖЕНИЯ
 # ============================================================
 
 @router.get("/achievements")
@@ -852,7 +743,7 @@ async def get_achievements(
     service: PsychometryService = Depends(get_service)
 ):
     """
-    Получить индексы достижения (5 категорий: семья, работа, здоровье, self, деньги).
+    Получить индексы достижения (4 категории).
     Рассчитываются на лету.
     """
     achievements = await service.get_achievements(user_id, state_id)
@@ -871,30 +762,10 @@ async def get_window(
 ):
     """
     Получить окно возможностей.
-    Рассчитывается на лету с кэшированием (TTL 5 минут).
+    Рассчитывается на лету.
     """
     window = await service.get_window(user_id, state_id)
     return {"success": True, "window": window}
-
-
-# ============================================================
-# ПРОГНОЗ ОКНА (НОВЫЙ ЭНДПОИНТ) 🆕
-# ============================================================
-
-@router.get("/window/forecast")
-async def get_window_forecast(
-    days: int = 7,
-    user_id: int = Depends(get_current_user_id),
-    service: PsychometryService = Depends(get_service)
-):
-    """
-    Прогноз окна возможностей на N дней вперёд (до 30 дней).
-    """
-    if days > 30:
-        raise HTTPException(status_code=400, detail="Maximum 30 days")
-    
-    forecast = await service.get_window_forecast(user_id, days)
-    return {"success": True, "forecast": forecast}
 
 
 # ============================================================
@@ -1142,7 +1013,7 @@ class StateSynthesizer:
         return f"Ваше состояние: {', '.join(parts)}. Уровень: {level.lower()}."
 ```
 
-#### 5.3.2. Индексы достижения (5 категорий) 🆕
+#### 5.3.2. Индексы достижения (исправленная формула)
 
 ```python
 # src/core/achievement_calc.py
@@ -1152,7 +1023,7 @@ from datetime import datetime
 
 class AchievementCalculator:
     """
-    Расчёт индексов достижения по 5 категориям.
+    Расчёт индексов достижения по 4 категориям.
     Сумма весов = 1.0. seasonal_boost как множитель базового значения.
     """
     
@@ -1176,22 +1047,6 @@ class AchievementCalculator:
             'scales': ['ma', 'pa'],
             'biorhythm': 'intellectual',
             'seasonal_boost': {1: 0.05, 2: 0.05, 9: 0.1, 10: 0.1}
-        },
-        # 🆕 НОВАЯ КАТЕГОРИЯ: ДЕНЬГИ/ДОСТАТОК
-        'money': {
-            'scales': ['ma', 'pa'],          # гипомания + паранойя (финансовая тревога)
-            'biorhythm': 'intellectual',     # финансовое планирование
-            'seasonal_boost': {
-                1: 0.05, 2: 0.05,           # январь-февраль — постановка целей
-                5: 0.10, 6: 0.10,           # май-июнь — активность
-                9: 0.10, 10: 0.10,          # сентябрь-октябрь — сборы
-                11: 0.10, 12: 0.10          # ноябрь-декабрь — закрытие года
-            },
-            'astrological': {
-                'house': 2,                  # 2 дом — деньги
-                'planet': 'jupiter',         # Юпитер — изобилие
-                'aspect': 'jupiter_venus'    # финансовый аспект
-            }
         }
     }
     
@@ -1250,18 +1105,12 @@ class AchievementCalculator:
         # Сезонный буст — передаём имя категории
         seasonal_boost = self._get_seasonal_boost(astro_context, category_name)
         
-        # 🆕 Для категории "Деньги" — добавляем астрологический фактор
-        astrological_factor = 0.0
-        if category_name == 'money' and astro_context:
-            financial = astro_context.get('financial_indicators', {})
-            astrological_factor = financial.get('financial_potential', 0.0) * 0.15
-        
         # ИСПРАВЛЕННАЯ ФОРМУЛА
         # Сумма базовых весов = 1.0
         base = clarity * 0.35 + synchronicity * 0.35 + resource * 0.30
         
         # Буст как множитель (0-20% от базового значения)
-        boost_factor = seasonal_boost * 0.20 + astrological_factor
+        boost_factor = seasonal_boost * 0.20
         raw_value = base * (1 + boost_factor) - inertia * 0.10
         
         value = max(0.05, min(1, raw_value))
@@ -1281,7 +1130,7 @@ class AchievementCalculator:
         template = self.templates.get(template_key)
         recommendation = template['template'] if template else self._get_fallback(category_name, level)
         
-        result = {
+        return {
             'value': round(value, 3),
             'level': level,
             'clarity': round(clarity, 3),
@@ -1291,18 +1140,6 @@ class AchievementCalculator:
             'recommendation': recommendation,
             'seasonal_boost': round(seasonal_boost, 3)
         }
-        
-        # 🆕 Для категории "Деньги" — добавляем астрологический индикатор
-        if category_name == 'money' and astro_context:
-            financial = astro_context.get('financial_indicators', {})
-            result['astrological_indicator'] = {
-                'jupiter_strength': financial.get('jupiter', {}).get('strength', 0),
-                'venus_strength': financial.get('venus', {}).get('strength', 0),
-                'second_house_strength': financial.get('second_house', {}).get('strength', 0),
-                'financial_potential': financial.get('financial_potential', 0)
-            }
-        
-        return result
     
     def _get_seasonal_boost(self, astro_context, category_name: str) -> float:
         """Получает сезонный буст для категории."""
@@ -1320,8 +1157,7 @@ class AchievementCalculator:
             'family': {'HIGH': 'Проведите время с семьёй', 'MEDIUM': 'Поговорите с близкими', 'LOW': 'Отдохните', 'CRITICAL': 'Побудьте наедине'},
             'work': {'HIGH': 'Начните новый проект', 'MEDIUM': 'Работайте над текущими задачами', 'LOW': 'Отложите решения', 'CRITICAL': 'Рутина'},
             'health': {'HIGH': 'Займитесь спортом', 'MEDIUM': 'Разомнитесь', 'LOW': 'Отдохните', 'CRITICAL': 'Обязательный отдых'},
-            'self': {'HIGH': 'Творите', 'MEDIUM': 'Развивайтесь', 'LOW': 'Отдохните', 'CRITICAL': 'Просто отдыхайте'},
-            'money': {'HIGH': 'Инвестируйте', 'MEDIUM': 'Планируйте бюджет', 'LOW': 'Будьте осторожны', 'CRITICAL': 'Не рискуйте'}  # 🆕
+            'self': {'HIGH': 'Творите', 'MEDIUM': 'Развивайтесь', 'LOW': 'Отдохните', 'CRITICAL': 'Просто отдыхайте'}
         }
         return fallbacks.get(category_name, {}).get(level, 'Рекомендация')
 ```
@@ -1406,79 +1242,7 @@ class WindowCalculator:
         return (state.get('emotional_score', 0.5) + avg_achievement) / 2
 ```
 
-#### 5.3.4. Прогноз окна 🆕
-
-```python
-# src/core/window_forecast.py
-
-from typing import List, Dict
-from datetime import date, timedelta
-
-class WindowForecastCalculator:
-    """
-    Расчёт прогноза окна возможностей на N дней вперёд.
-    """
-    
-    def __init__(self, window_calculator, astro_client):
-        self.window_calculator = window_calculator
-        self.astro_client = astro_client
-    
-    async def calculate_forecast(
-        self,
-        user_id: int,
-        current_state: Dict,
-        current_achievements: Dict,
-        current_astro_context: Dict,
-        days: int = 7
-    ) -> List[Dict]:
-        """
-        Рассчитывает прогноз окна на N дней вперёд.
-        """
-        forecast = []
-        today = date.today()
-        
-        # Сохраняем базовое состояние (предполагаем, что оно не меняется)
-        state = current_state.copy()
-        achievements = current_achievements.copy()
-        
-        for day in range(1, days + 1):
-            future_date = today + timedelta(days=day)
-            
-            # Получаем астро-контекст на будущую дату
-            astro_context = await self.astro_client.get_astro_context(
-                user_id, future_date
-            )
-            
-            # Рассчитываем окно
-            window = self.window_calculator.calculate(
-                state, achievements, astro_context
-            )
-            
-            forecast.append({
-                'date': future_date.isoformat(),
-                'value': window['value'],
-                'level': window['level'],
-                'trend': self._calculate_trend(forecast, window['value']),
-                'practice_recommendation': window['practice_recommendation']
-            })
-        
-        return forecast
-    
-    def _calculate_trend(self, forecast: List[Dict], current_value: float) -> str:
-        """Рассчитывает тренд на основе истории."""
-        if len(forecast) < 2:
-            return 'stable'
-        
-        previous = forecast[-1]['value']
-        if current_value > previous * 1.05:
-            return 'improving'
-        elif current_value < previous * 0.95:
-            return 'declining'
-        else:
-            return 'stable'
-```
-
-#### 5.3.5. Рекомендации (из шаблонов БД)
+#### 5.3.4. Рекомендации (из шаблонов БД)
 
 ```python
 # src/core/recommendation_gen.py
@@ -1508,7 +1272,7 @@ class RecommendationGenerator:
     def generate(self, state, achievements, window) -> List[Dict]:
         recommendations = []
         
-        # 1. По категориям (включая новую категорию "Деньги") 🆕
+        # 1. По категориям
         for cat, idx in achievements.items():
             template = self.templates.get(f"{cat}_{idx['level']}")
             if template:
@@ -1657,13 +1421,11 @@ class AstroClient:
         biorhythms = await self._get_biorhythms(user_id, target_date)
         transits = await self._get_transits(user_id, target_date)
         boosts = await self._get_seasonal_boosts(target_date)
-        financial = await self._get_financial_indicators(user_id, target_date)  # 🆕
         
         return {
             'biorhythms': biorhythms,
             'transits': transits,
-            'seasonal_boosts': boosts,
-            'financial_indicators': financial  # 🆕
+            'seasonal_boosts': boosts
         }
     
     async def _get_biorhythms(self, user_id: int, target_date: date) -> Dict:
@@ -1693,28 +1455,12 @@ class AstroClient:
         response.raise_for_status()
         return response.json()
     
-    async def _get_financial_indicators(self, user_id: int, target_date: date) -> Dict:  # 🆕
-        """Получает финансовые индикаторы из Astro Service."""
-        response = await self._client.get(
-            f"{self.base_url}/internal/v4/users/{user_id}/financial-indicators",
-            params={"date": target_date.isoformat()},
-            headers={"X-Internal-API-Key": self.api_key}
-        )
-        response.raise_for_status()
-        return response.json()
-    
     def _get_neutral_context(self) -> Dict:
         """Нейтральный контекст при недоступности Astro Service."""
         return {
             'biorhythms': {'physical': 0, 'emotional': 0, 'intellectual': 0},
             'transits': {},
-            'seasonal_boosts': {'family': 0, 'work': 0, 'health': 0, 'self': 0, 'money': 0},
-            'financial_indicators': {
-                'second_house': {'strength': 0},
-                'jupiter': {'strength': 0},
-                'venus': {'strength': 0},
-                'financial_potential': 0
-            }
+            'seasonal_boosts': {'family': 0, 'work': 0, 'health': 0, 'self': 0}
         }
     
     async def health_check(self) -> bool:
@@ -1728,7 +1474,7 @@ class AstroClient:
 
 ---
 
-## 6. FRONTEND
+## 6. FRONTEND (НОВАЯ ВКЛАДКА)
 
 ### 6.1. Компоненты
 
@@ -1736,17 +1482,15 @@ class AstroClient:
 // src/components/StateTab/StateTab.tsx
 
 import React, { useEffect, useState } from 'react';
-import { MetricCard, AchievementCard, RecommendationItem, WindowIndicator, WindowForecast } from './components';
+import { MetricCard, AchievementCard, RecommendationItem, WindowIndicator } from './components';
 import { api } from '../../api';
 
 export const StateTab: React.FC = () => {
   const [state, setState] = useState(null);
   const [achievements, setAchievements] = useState(null);
   const [window, setWindow] = useState(null);
-  const [forecast, setForecast] = useState(null); // 🆕
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showForecast, setShowForecast] = useState(false); // 🆕
   
   useEffect(() => {
     fetchState();
@@ -1770,16 +1514,6 @@ export const StateTab: React.FC = () => {
       console.error('Failed to fetch state:', error);
     } finally {
       setLoading(false);
-    }
-  };
-  
-  const fetchForecast = async () => { // 🆕
-    try {
-      const response = await api.get('/api/v4/window/forecast?days=7');
-      setForecast(response.data.forecast);
-      setShowForecast(true);
-    } catch (error) {
-      console.error('Failed to fetch forecast:', error);
     }
   };
   
@@ -1837,16 +1571,9 @@ export const StateTab: React.FC = () => {
           level={window.level}
           deviations={window.deviations}
         />
-        {/* 🆕 Кнопка для прогноза */}
-        <button onClick={fetchForecast} className="forecast-button">
-          📈 Прогноз на 7 дней
-        </button>
-        {showForecast && forecast && (
-          <WindowForecast data={forecast} />
-        )}
       </section>
       
-      {/* Индексы (5 категорий) 🆕 */}
+      {/* Индексы */}
       <section className="achievements-section">
         <h2>📈 Индексы достижения</h2>
         <div className="achievements-grid">
@@ -1858,13 +1585,11 @@ export const StateTab: React.FC = () => {
                 family: '👨‍👩‍👧‍👦 Семья',
                 work: '💼 Работа',
                 health: '❤️ Здоровье',
-                self: '🧘 Self',
-                money: '💰 Достаток' // 🆕
+                self: '🧘 Self'
               }[key]}
               value={value.value}
               level={value.level}
               recommendation={value.recommendation}
-              astrologicalIndicator={value.astrological_indicator} // 🆕 для money
             />
           ))}
         </div>
@@ -1880,7 +1605,6 @@ export const StateTab: React.FC = () => {
             reason={rec.reason}
             priority={rec.priority}
             duration={rec.duration}
-            category={rec.category}
             onFeedback={(rating) => submitFeedback(rec.id, rating)}
           />
         ))}
@@ -1890,9 +1614,51 @@ export const StateTab: React.FC = () => {
 };
 ```
 
+### 6.2. API клиент
+
+```tsx
+// src/api/psychometry.ts
+
+import { api } from './index';
+
+// Быстрый опросник
+export const submitQuickCheck = async (data: {
+  energy: number;
+  anxiety: number;
+  emotional: number;
+  comment?: string;
+}) => {
+  return api.post('/api/v4/quick-check', data);
+};
+
+// Полный профиль
+export const submitFullProfile = async (answers: Record<string, boolean>) => {
+  return api.post('/api/v4/full-profile', { answers });
+};
+
+// Обратная связь
+export const submitFeedback = async (data: {
+  recommendation_set_id: string;
+  recommendation_index: number;
+  rating: number;
+  outcome?: number;
+  comment?: string;
+}) => {
+  return api.post('/api/v4/feedback', data);
+};
+
+// Практика "Пауза"
+export const savePractice = async (data: {
+  thought: string;
+  duration: number;
+}) => {
+  return api.post('/api/v4/practice', data);
+};
+```
+
 ---
 
-## 7. API GATEWAY
+## 7. API GATEWAY (ДОПОЛНЕНИЕ)
 
 ```python
 # api_gateway/routes.py (дополнение)
@@ -1923,10 +1689,6 @@ async def get_achievements(request: Request):
 async def get_window(request: Request):
     return await proxy_to_psychometry(request)
 
-@router.get("/api/v4/window/forecast")  # 🆕
-async def get_window_forecast(request: Request):
-    return await proxy_to_psychometry(request)
-
 @router.get("/api/v4/recommendations")
 async def get_recommendations(request: Request):
     return await proxy_to_psychometry(request)
@@ -1942,10 +1704,10 @@ async def save_practice(request: Request):
 
 ---
 
-## 8. DOCKER COMPOSE
+## 8. DOCKER COMPOSE (ПОЛНЫЙ)
 
 ```yaml
-# docker-compose.yml (без изменений — полный состав)
+# docker-compose.yml
 
 services:
   # ============================================================
@@ -2090,12 +1852,12 @@ networks:
 
 ## 9. МИГРАЦИИ
 
-### 9.1. Миграции для Astro Service (обновлённые)
+### 9.1. Миграции для Astro Service
 
 ```python
-# astro-service/alembic/versions/001_add_astro_cache.py
+# astro-service/alembic/versions/001_add_biorhythms_cache.py
 
-"""Добавление кэша биоритмов, транзитов и финансовых индикаторов
+"""Добавление кэша биоритмов и транзитов
 
 Revision ID: 001
 Revises: 
@@ -2157,50 +1919,19 @@ def upgrade():
         ['user_id', 'calc_date'],
         schema='astro'
     )
-    
-    # 🆕 Создаём таблицу financial_indicators_cache
-    op.create_table(
-        'financial_indicators_cache',
-        sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('calc_date', sa.Date(), nullable=False),
-        sa.Column('second_house_sign', sa.String(20), nullable=True),
-        sa.Column('second_house_ruler', sa.String(20), nullable=True),
-        sa.Column('second_house_strength', sa.Float(), nullable=True),
-        sa.Column('planets_in_second_house', JSONB(), nullable=True),
-        sa.Column('jupiter_house', sa.Integer(), nullable=True),
-        sa.Column('jupiter_strength', sa.Float(), nullable=True),
-        sa.Column('jupiter_transiting_house', sa.Integer(), nullable=True),
-        sa.Column('venus_house', sa.Integer(), nullable=True),
-        sa.Column('venus_strength', sa.Float(), nullable=True),
-        sa.Column('venus_transiting_house', sa.Integer(), nullable=True),
-        sa.Column('money_aspects', JSONB(), nullable=True),
-        sa.Column('financial_potential', sa.Float(), nullable=True),
-        sa.Column('calculated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('user_id', 'calc_date'),
-        schema='astro'
-    )
-    op.create_index(
-        'idx_financial_user_date',
-        'financial_indicators_cache',
-        ['user_id', 'calc_date'],
-        schema='astro'
-    )
 
 
 def downgrade():
-    op.drop_table('financial_indicators_cache', schema='astro')
     op.drop_table('transits_cache', schema='astro')
     op.drop_table('biorhythms_cache', schema='astro')
 ```
 
-### 9.2. Миграции для Psychometry Service (обновлённые)
+### 9.2. Миграции для Psychometry Service
 
 ```python
 # psychometry-service/alembic/versions/001_create_psych_schema.py
 
-"""Создание схемы psych (5 категорий + история окон)
+"""Создание схемы psych
 
 Revision ID: 001
 Revises: 
@@ -2222,7 +1953,7 @@ def upgrade():
     # Создаём схему
     op.execute("CREATE SCHEMA IF NOT EXISTS psych")
     
-    # 1. full_profiles (без изменений)
+    # 1. full_profiles
     op.create_table(
         'full_profiles',
         sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
@@ -2244,7 +1975,7 @@ def upgrade():
     )
     op.create_index('idx_full_user', 'full_profiles', ['user_id', 'taken_at'], schema='psych')
     
-    # 2. states (без изменений)
+    # 2. states
     op.create_table(
         'states',
         sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
@@ -2272,7 +2003,7 @@ def upgrade():
     )
     op.create_index('idx_states_user', 'states', ['user_id', 'state_date'], schema='psych')
     
-    # 3. recommendations (без изменений)
+    # 3. recommendations
     op.create_table(
         'recommendations',
         sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
@@ -2288,7 +2019,7 @@ def upgrade():
     )
     op.create_index('idx_recommendations_user', 'recommendations', ['user_id'], schema='psych')
     
-    # 4. feedback (без изменений)
+    # 4. feedback
     op.create_table(
         'feedback',
         sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
@@ -2307,7 +2038,7 @@ def upgrade():
     op.create_index('idx_feedback_user', 'feedback', ['user_id', 'created_at'], schema='psych')
     op.create_index('idx_feedback_recommendation', 'feedback', ['recommendation_set_id'], schema='psych')
     
-    # 5. practices (без изменений)
+    # 5. practices
     op.create_table(
         'practices',
         sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
@@ -2323,25 +2054,7 @@ def upgrade():
     )
     op.create_index('idx_practices_user', 'practices', ['user_id', 'created_at'], schema='psych')
     
-    # 6. window_history (новая таблица) 🆕
-    op.create_table(
-        'window_history',
-        sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('state_id', UUID(), nullable=True),
-        sa.Column('window_date', sa.Date(), nullable=False),
-        sa.Column('window_value', sa.Float(), nullable=False),
-        sa.Column('window_level', sa.String(10), nullable=False),
-        sa.Column('deviations', JSONB(), nullable=True),
-        sa.Column('calculated_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('user_id', 'window_date'),
-        sa.ForeignKeyConstraint(['state_id'], ['psych.states.id']),
-        schema='psych'
-    )
-    op.create_index('idx_window_user_date', 'window_history', ['user_id', 'window_date'], schema='psych')
-    
-    # 7. recommendation_templates (обновлённые шаблоны с категорией money) 🆕
+    # 6. recommendation_templates
     op.create_table(
         'recommendation_templates',
         sa.Column('id', UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
@@ -2357,7 +2070,7 @@ def upgrade():
     )
     op.create_index('idx_templates', 'recommendation_templates', ['category', 'level', 'is_active'], schema='psych')
     
-    # Вставляем начальные шаблоны (5 категорий) 🆕
+    # Вставляем начальные шаблоны
     op.execute("""
         INSERT INTO psych.recommendation_templates (category, level, template, priority, duration) VALUES
         ('family', 'HIGH', 'Запланируйте вечерний разговор с близкими', 3, '15 мин'),
@@ -2375,18 +2088,12 @@ def upgrade():
         ('self', 'HIGH', 'Запишите свои идеи и мысли', 3, '15 мин'),
         ('self', 'MEDIUM', 'Посмотрите что-то вдохновляющее', 3, '10 мин'),
         ('self', 'LOW', 'Отложите грандиозные планы', 2, '10 мин'),
-        ('self', 'CRITICAL', 'Просто отдыхайте', 1, '15 мин'),
-        -- 🆕 Новая категория: Деньги
-        ('money', 'HIGH', 'Отличное время для инвестиций и крупных решений', 2, '30 мин'),
-        ('money', 'MEDIUM', 'Хорошее время для финансового планирования', 2, '20 мин'),
-        ('money', 'LOW', 'Отложите крупные финансовые решения', 1, '15 мин'),
-        ('money', 'CRITICAL', 'Не рискуйте деньгами — наблюдайте', 1, '10 мин')
+        ('self', 'CRITICAL', 'Просто отдыхайте', 1, '15 мин')
     """)
 
 
 def downgrade():
     op.drop_table('recommendation_templates', schema='psych')
-    op.drop_table('window_history', schema='psych')
     op.drop_table('practices', schema='psych')
     op.drop_table('feedback', schema='psych')
     op.drop_table('recommendations', schema='psych')
@@ -2397,15 +2104,15 @@ def downgrade():
 
 ---
 
-## 10. ПЛАН ВНЕДРЕНИЯ (ОБНОВЛЁННЫЙ)
+## 10. ПЛАН ВНЕДРЕНИЯ
 
 ### Фаза 0: Подготовка (День 1)
 
 | Задача | Оценка | Ответственный |
 |--------|--------|---------------|
 | Развернуть Redis | 1 ч | DevOps |
-| Создать миграции для `astro` схемы (включая financial_indicators_cache) 🆕 | 2 ч | Backend |
-| Создать миграции для `psych` схемы (включая window_history) 🆕 | 2 ч | Backend |
+| Создать миграции для `astro` схемы | 2 ч | Backend |
+| Создать миграции для `psych` схемы | 2 ч | Backend |
 | Настроить Alembic | 1 ч | Backend |
 | Настроить переменные окружения | 1 ч | DevOps |
 
@@ -2416,7 +2123,6 @@ def downgrade():
 | Добавить внутренние эндпоинты `/internal/v4/*` | 4 ч | Backend |
 | Реализовать расчёт биоритмов | 3 ч | Backend |
 | Реализовать расчёт транзитов | 3 ч | Backend |
-| Реализовать расчёт финансовых индикаторов 🆕 | 4 ч | Backend |
 | Реализовать ночной batch с пагинацией | 4 ч | Backend |
 | Написать тесты | 4 ч | Backend |
 
@@ -2425,8 +2131,7 @@ def downgrade():
 | Задача | Оценка | Ответственный |
 |--------|--------|---------------|
 | Создать структуру сервиса | 2 ч | Backend |
-| Реализовать Core модули (5 категорий) 🆕 | 8 ч | Backend |
-| Реализовать Window Forecast 🆕 | 4 ч | Backend |
+| Реализовать Core модули | 8 ч | Backend |
 | Реализовать Service слой | 6 ч | Backend |
 | Реализовать API роуты | 6 ч | Backend |
 | Реализовать JWT auth + Rate Limiting | 4 ч | Backend |
@@ -2439,7 +2144,6 @@ def downgrade():
 |--------|--------|---------------|
 | Новая вкладка «Моё состояние» | 4 ч | Frontend |
 | Кнопка «Пауза» | 2 ч | Frontend |
-| Прогноз окна 🆕 | 2 ч | Frontend |
 | Интеграция с API | 2 ч | Frontend |
 
 ### Фаза 4: Интеграция и тестирование (День 8)
@@ -2455,7 +2159,7 @@ def downgrade():
 
 ---
 
-## 11. ЧЕК-ЛИСТ ПРИЁМКИ (ОБНОВЛЁННЫЙ)
+## 11. ЧЕК-ЛИСТ ПРИЁМКИ
 
 ### 11.1. Безопасность
 
@@ -2477,7 +2181,6 @@ def downgrade():
 - [ ] `idempotency_key` добавлен
 - [ ] Миграции применяются без ошибок
 - [ ] Индексы созданы
-- [ ] История окон сохраняется 🆕
 
 ### 11.4. Функциональность
 
@@ -2486,18 +2189,15 @@ def downgrade():
 - [ ] Рекомендации с числовыми индексами
 - [ ] Feedback привязан к индексу
 - [ ] Health Check показывает статус всех зависимостей
-- [ ] **5 категорий индексов** (включая «Деньги») 🆕
-- [ ] **Прогноз окна на 7 дней** 🆕
-- [ ] **Астрологический индикатор для категории «Деньги»** 🆕
 
 ---
 
 ## 12. ЗАКЛЮЧЕНИЕ
 
-### 12.1. Что сделано в этой версии
+### 12.1. Что сделано
 
 - ✅ 1 новый сервис (Psychometry Service)
-- ✅ 1 новая схема в БД (6 таблиц: 5 данных + 1 конфиг + 1 история) 🆕
+- ✅ 1 новая схема в БД (5 таблиц + 1 конфиг)
 - ✅ 1 новая вкладка во Frontend
 - ✅ Ночной batch + Redis кэш
 - ✅ Базовые алгоритмы (состояние, индексы, окна, рекомендации)
@@ -2505,10 +2205,6 @@ def downgrade():
 - ✅ Health Check с проверкой зависимостей
 - ✅ Миграции (Alembic)
 - ✅ Batch с пагинацией
-- ✅ **5 категорий достижения** (семья, работа, здоровье, self, деньги) 🆕
-- ✅ **Прогноз окна на 7 дней** 🆕
-- ✅ **Финансовые индикаторы из астрологии** 🆕
-- ✅ **История окон** 🆕
 
 ### 12.2. Что отложено
 
@@ -2527,7 +2223,6 @@ def downgrade():
 | Конверсия в опросник | > 30% |
 | Feedback rate | > 20% |
 | Доступность Psychometry | > 99.9% |
-| Использование категории «Деньги» | > 40% пользователей 🆕 |
 
 ---
 
@@ -2562,24 +2257,20 @@ RATE_LIMIT_PER_MINUTE=100
 # Circuit Breaker
 CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
 CIRCUIT_BREAKER_RECOVERY_TIMEOUT=60
-
-# Финансовые индикаторы 🆕
-FINANCIAL_INDICATORS_ENABLED=true
 ```
 
 ---
 
-**Документ утверждён. Версия 7.0 — обновлённая.**
-
-Изменения по сравнению с версией 6.0:
-1. ✅ Добавлена категория «Деньги/Достаток» (5-я категория)
-2. ✅ Добавлен эндпоинт `/api/v4/window/forecast` (прогноз на 7 дней)
-3. ✅ Добавлена таблица `financial_indicators_cache` в схеме astro
-4. ✅ Добавлена таблица `window_history` в схеме psych
-5. ✅ Добавлен астрологический индикатор для категории «Деньги»
-6. ✅ Обновлены миграции
-7. ✅ Обновлены фронтенд-компоненты
+**Документ утверждён.** Начинаем реализацию с Фазы 0.
 
 ---
 
-**Теперь ТЗ полностью согласовано и готово к реализации.** Начинаем с Фазы 0.
+Отлично! Теперь у нас есть **единый источник истины** — полное уточнённое ТЗ версии 6.0.
+
+**Что дальше?** Я предлагаю начать с:
+
+1. **Создания файлов миграций** (Alembic) для обеих схем
+2. **Написания Dockerfile** для Psychometry Service
+3. **Написания core алгоритмов** (State, Achievements, Window, Recommendations)
+
+С чего начнём писать код?

@@ -1,0 +1,1624 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ ДЛЯ FRONTEND-РАЗРАБОТЧИКА
+
+## Внедрение Psychometry Service v4.0 — Frontend-часть
+
+**Версия документа:** 1.0 (для фронтенда)  
+**Дата:** 02.09.2026  
+**Статус:** Утверждён
+
+---
+
+## ОГЛАВЛЕНИЕ
+
+1. [ВВЕДЕНИЕ](#1-введение)
+   - 1.1. Контекст проекта
+   - 1.2. Что нужно сделать
+   - 1.3. Сроки и объём
+2. [ТЕХНИЧЕСКИЙ СТЕК](#2-технический-стек)
+   - 2.1. Используемые технологии
+   - 2.2. Структура проекта
+3. [СОСТАВ РАБОТ](#3-состав-работ)
+   - 3.1. Новая вкладка «Моё состояние»
+   - 3.2. Быстрый опросник
+   - 3.3. Отображение состояния
+   - 3.4. Индексы достижения (5 категорий)
+   - 3.5. Окно возможностей
+   - 3.6. Прогноз окна на 7 дней
+   - 3.7. Рекомендации
+   - 3.8. Обратная связь
+   - 3.9. Практика «Пауза»
+4. [API ЭНДПОИНТЫ](#4-api-эндпоинты)
+   - 4.1. Полный список
+   - 4.2. Форматы запросов и ответов
+5. [КОМПОНЕНТЫ ИНТЕРФЕЙСА](#5-компоненты-интерфейса)
+   - 5.1. Карточка состояния
+   - 5.2. Индикатор окна
+   - 5.3. Карточка индекса достижения
+   - 5.4. Рекомендация
+   - 5.5. Прогноз окна
+   - 5.6. Практика «Пауза»
+   - 5.7. Быстрый опросник (модальное окно)
+6. [UX/UI ТРЕБОВАНИЯ](#6-uxui-требования)
+   - 6.1. Общие принципы
+   - 6.2. Состояния загрузки
+   - 6.3. Обработка ошибок
+   - 6.4. Адаптивность
+   - 6.5. Анимации
+7. [ТЕСТИРОВАНИЕ](#7-тестирование)
+   - 7.1. Тест-кейсы
+   - 7.2. Критерии приёмки
+8. [ЧЕК-ЛИСТ](#8-чек-лист)
+
+---
+
+## 1. ВВЕДЕНИЕ
+
+### 1.1. Контекст проекта
+
+У вас уже работает:
+- **Astro Service** — астрологический бэкенд
+- **Frontend** — астропредикт с вкладками
+- **API Gateway** — маршрутизация запросов
+
+В рамках проекта **Psychometry Service v4.0** добавляется новый бэкенд-сервис, который предоставляет API для:
+- Оценки текущего состояния (энергия, тревога, эмоции)
+- Индексов достижения по 5 категориям (семья, работа, здоровье, self, деньги)
+- Окна возможностей и его прогноза
+- Персональных рекомендаций
+- Практики осознанности «Пауза»
+- Сбора обратной связи
+
+### 1.2. Что нужно сделать
+
+Вам необходимо:
+
+1. **Добавить новую вкладку «Моё состояние»** в существующее приложение
+2. **Реализовать все компоненты** согласно макетам и ТЗ
+3. **Интегрироваться с новым API** `/api/v4/*`
+4. **Обеспечить удобный UX** с загрузками, ошибками и обратной связью
+
+### 1.3. Сроки и объём
+
+| Этап | Длительность | Описание |
+|------|--------------|----------|
+| **Подготовка** | 2 часа | Изучение API, настройка окружения |
+| **Компоненты** | 6 часов | Разработка всех UI-компонентов |
+| **Интеграция** | 4 часа | Подключение к API, обработка состояний |
+| **Тестирование** | 3 часа | Ручное и автоматическое тестирование |
+| **Правки** | 3 часа | Исправление замечаний |
+
+**Итого:** ~18 часов (2-3 рабочих дня)
+
+---
+
+## 2. ТЕХНИЧЕСКИЙ СТЕК
+
+### 2.1. Используемые технологии
+
+| Технология | Версия | Назначение |
+|------------|--------|------------|
+| **React** | 18.x | Основной фреймворк |
+| **TypeScript** | 5.x | Типизация |
+| **React Query** | 4.x | Управление состоянием и кэширование API |
+| **Tailwind CSS** | 3.x | Стилизация |
+| **Framer Motion** | 10.x | Анимации |
+| **React Hook Form** | 7.x | Управление формами |
+| **Zod** | 3.x | Валидация схем |
+| **Axios** | 1.x | HTTP-клиент |
+
+### 2.2. Структура проекта
+
+```
+src/
+├── api/
+│   ├── client.ts                 # Настройка Axios
+│   ├── endpoints.ts              # Все API эндпоинты
+│   └── psychometry/
+│       ├── types.ts              # TypeScript типы
+│       ├── hooks.ts              # React Query хуки
+│       └── queries.ts            # Запросы к API
+│
+├── components/
+│   ├── StateTab/                 # Новая вкладка
+│   │   ├── StateTab.tsx          # Основной компонент
+│   │   ├── StateTab.styles.ts    # Стили (опционально)
+│   │   └── index.ts              # Экспорт
+│   │
+│   ├── StateTab/components/      # Компоненты вкладки
+│   │   ├── StateHeader/          # Заголовок
+│   │   ├── QuickCheckModal/      # Модалка опросника
+│   │   ├── MetricsGrid/          # 3 метрики состояния
+│   │   ├── AchievementsGrid/     # 5 индексов достижения
+│   │   ├── WindowIndicator/      # Окно возможностей
+│   │   ├── WindowForecast/       # Прогноз на 7 дней
+│   │   ├── RecommendationsList/  # Список рекомендаций
+│   │   ├── PracticeButton/       # Кнопка «Пауза»
+│   │   ├── PracticeModal/        # Модалка практики
+│   │   └── FeedbackButton/       # Кнопка обратной связи
+│   │
+│   ├── shared/                   # Переиспользуемые компоненты
+│   │   ├── Spinner/
+│   │   ├── ErrorBoundary/
+│   │   ├── ProgressBar/
+│   │   └── Toast/
+│   │
+│   └── hooks/                    # Кастомные хуки
+│       ├── usePsychometry.ts
+│       └── usePractice.ts
+│
+├── store/                        # Zustand / Redux (опционально)
+│   └── psychometryStore.ts
+│
+└── utils/
+    ├── formatters.ts            # Форматирование данных
+    └── constants.ts             # Константы
+```
+
+---
+
+## 3. СОСТАВ РАБОТ
+
+### 3.1. Новая вкладка «Моё состояние»
+
+**Описание:** Добавить новую вкладку в основную навигацию рядом с существующими вкладками.
+
+**Требования:**
+- Вкладка должна быть доступна только авторизованным пользователям
+- Название: «Моё состояние» или «Состояние»
+- Иконка: 📊 или 🧠 или пользовательская SVG
+- При переходе на вкладку — автоматическая загрузка всех данных
+
+**Реализация:**
+
+```tsx
+// Пример добавления вкладки в роутинг
+<Route path="/state" element={<StateTab />} />
+
+// Пример добавления в навигацию
+<NavLink to="/state" className="nav-link">
+  <IconBrain className="w-5 h-5" />
+  Моё состояние
+</NavLink>
+```
+
+---
+
+### 3.2. Быстрый опросник
+
+**Описание:** Модальное окно с 10 вопросами для ежедневной оценки состояния.
+
+**Требования:**
+- Открывается по кнопке «Пройти опрос» или автоматически (если нет данных за сегодня)
+- 10 вопросов (энергия, тревога, эмоции) с оценкой 1-5
+- Поле для комментария (опционально)
+- Отправка через API `/api/v4/quick-check`
+- После отправки — обновление всех данных на странице
+
+**UI:**
+
+```
+┌─────────────────────────────────────────────────┐
+│  📋 Быстрый опросник                   ✕       │
+│  Оцените своё состояние сегодня                │
+│                                                 │
+│  1. Какой у вас уровень энергии сегодня?       │
+│  [1] [2] [3] [4] [5]                           │
+│                                                 │
+│  2. Какой уровень тревоги вы чувствуете?       │
+│  [1] [2] [3] [4] [5]                           │
+│                                                 │
+│  3. Какой у вас эмоциональный фон сегодня?     │
+│  [1] [2] [3] [4] [5]                           │
+│                                                 │
+│  Комментарий:                                   │
+│  [________________________]                    │
+│                                                 │
+│  [  Отправить  ]  [  Позже  ]                  │
+└─────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+interface QuickCheckData {
+  energy: number;    // 1-5
+  anxiety: number;   // 1-5
+  emotional: number; // 1-5
+  comment?: string;
+}
+
+// Использование React Hook Form + Zod
+const schema = z.object({
+  energy: z.number().min(1).max(5),
+  anxiety: z.number().min(1).max(5),
+  emotional: z.number().min(1).max(5),
+  comment: z.string().optional(),
+});
+
+const QuickCheckModal: React.FC = () => {
+  const { register, handleSubmit, formState: { errors } } = useForm({
+    resolver: zodResolver(schema),
+    defaultValues: { energy: 3, anxiety: 3, emotional: 3 }
+  });
+
+  const { mutate: submitQuickCheck, isLoading } = useSubmitQuickCheck();
+
+  const onSubmit = (data: QuickCheckData) => {
+    submitQuickCheck(data, {
+      onSuccess: () => {
+        // Закрыть модалку
+        // Обновить данные
+      }
+    });
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose}>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        {/* Вопросы с RadioGroup или ButtonGroup */}
+      </form>
+    </Modal>
+  );
+};
+```
+
+---
+
+### 3.3. Отображение состояния
+
+**Описание:** Карточки с 3 метриками состояния (энергия, тревога, эмоции).
+
+**Требования:**
+- Каждая метрика — отдельная карточка с иконкой, названием, значением и цветовым индикатором
+- Цветовая индикация: зелёный (высокий), жёлтый (средний), красный (низкий)
+- Текстовое описание (сводка) под карточками
+- Уровень осознанности (HIGH/MEDIUM/LOW) с советом
+
+**UI:**
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  📊 Ваше состояние                                           │
+│  Обновлено: сегодня, 14:30                                  │
+│                                                               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                    │
+│  │ ⚡ Энергия│ │ 🧠 Тревога│ │ 💫 Эмоции│                    │
+│  │  ████████ │ │  ████░░░░ │ │  ██████░░ │                    │
+│  │  0.72     │ │  0.38     │ │  0.55     │                    │
+│  │  Высокая  │ │  Низкая   │ │  В норме  │                    │
+│  └──────────┘ └──────────┘ └──────────┘                    │
+│                                                               │
+│  📝 Ваше состояние: энергия на подъёме, тревожность          │
+│  умеренная, эмоциональный фон в норме. Уровень: средний.     │
+│                                                               │
+│  🧘 Осознанность: MEDIUM                                    │
+│  Совет: Вам помогает практика наблюдения                     │
+│  Практика: 5 минут дыхания                                   │
+│                                                               │
+│  [📋 Пройти опрос]                                          │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+interface StateMetrics {
+  energy_score: number;    // 0-1
+  anxiety_score: number;   // 0-1
+  emotional_score: number; // 0-1
+  state_level: 'HIGH' | 'MEDIUM' | 'LOW';
+  state_summary: string;
+  awareness: {
+    level: 'HIGH' | 'MEDIUM' | 'LOW';
+    tip: string;
+    practice: string;
+  };
+}
+
+const MetricCard: React.FC<{
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  status: 'high' | 'medium' | 'low';
+}> = ({ label, value, icon, status }) => {
+  const percentage = Math.round(value * 100);
+  const color = status === 'high' ? 'bg-green-500' : 
+                status === 'medium' ? 'bg-yellow-500' : 'bg-red-500';
+  
+  return (
+    <div className="bg-white rounded-xl p-4 shadow-sm">
+      <div className="flex items-center gap-2">
+        {icon}
+        <span className="text-gray-600">{label}</span>
+      </div>
+      <div className="mt-3">
+        <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div 
+            className={`absolute left-0 top-0 h-full ${color} rounded-full transition-all duration-500`}
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        <div className="flex justify-between mt-1">
+          <span className="text-sm font-semibold">{value.toFixed(2)}</span>
+          <span className="text-sm text-gray-500">
+            {status === 'high' ? 'Высокий' : status === 'medium' ? 'Средний' : 'Низкий'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+### 3.4. Индексы достижения (5 категорий)
+
+**Описание:** Отображение 5 индексов достижения по категориям.
+
+**Требования:**
+- Каждая категория — отдельная карточка
+- Отображение значения (0-1) в виде прогресс-бара
+- Уровень: HIGH, MEDIUM, LOW, CRITICAL с цветовой индикацией
+- Краткая рекомендация под карточкой
+- Для категории «Деньги» — дополнительный астрологический индикатор 🆕
+
+**UI:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  📈 Индексы достижения                                             │
+│                                                                     │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                  │
+│  │ 👨‍👩‍👧‍👦 Семья  │ │ 💼 Работа   │ │ ❤️ Здоровье │                  │
+│  │ ████████░░  │ │ ██████████  │ │ ████░░░░░░  │                  │
+│  │ 0.65 MEDIUM │ │ 0.82 HIGH   │ │ 0.45 LOW    │                  │
+│  │ Скажите     │ │ Начните     │ │ Время       │                  │
+│  │ близким...  │ │ новый...    │ │ восстанов.. │                  │
+│  └─────────────┘ └─────────────┘ └─────────────┘                  │
+│                                                                     │
+│  ┌─────────────┐ ┌─────────────┐                                   │
+│  │ 🧘 Self     │ │ 💰 Достаток │  ← 🆕 Новая категория             │
+│  │ ████████░░  │ │ ███████░░░  │                                   │
+│  │ 0.71 HIGH   │ │ 0.58 MEDIUM │                                   │
+│  │ Запишите    │ │ Отличное    │                                   │
+│  │ свои идеи   │ │ время для   │                                   │
+│  └─────────────┘ │ инвестиций  │                                   │
+│                  └─────────────┘                                   │
+│                                                                     │
+│  🔮 Астрологический индикатор (Деньги): Юпитер 0.82, Венера 0.68  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+interface Achievement {
+  value: number;
+  level: 'HIGH' | 'MEDIUM' | 'LOW' | 'CRITICAL';
+  clarity: number;
+  synchronicity: number;
+  resource: number;
+  inertia: number;
+  recommendation: string;
+  seasonal_boost: number;
+  astrological_indicator?: {  // 🆕 Только для категории "Деньги"
+    jupiter_strength: number;
+    venus_strength: number;
+    second_house_strength: number;
+    financial_potential: number;
+  };
+}
+
+const categoryColors = {
+  HIGH: 'text-green-600 bg-green-50 border-green-200',
+  MEDIUM: 'text-yellow-600 bg-yellow-50 border-yellow-200',
+  LOW: 'text-orange-600 bg-orange-50 border-orange-200',
+  CRITICAL: 'text-red-600 bg-red-50 border-red-200',
+};
+
+const AchievementCard: React.FC<{
+  category: string;
+  icon: React.ReactNode;
+  name: string;
+  data: Achievement;
+}> = ({ category, icon, name, data }) => {
+  const percentage = Math.round(data.value * 100);
+  const levelColor = categoryColors[data.level];
+  
+  return (
+    <div className={`rounded-xl p-4 border ${levelColor}`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {icon}
+          <span className="font-medium">{name}</span>
+        </div>
+        <span className="text-xs px-2 py-1 rounded-full bg-white/50">
+          {data.level}
+        </span>
+      </div>
+      
+      <div className="mt-3">
+        <div className="relative h-3 bg-gray-100 rounded-full overflow-hidden">
+          <div 
+            className="absolute left-0 top-0 h-full rounded-full transition-all duration-500 bg-gradient-to-r from-blue-400 to-indigo-500"
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        <div className="flex justify-between mt-1">
+          <span className="text-sm font-semibold">{data.value.toFixed(2)}</span>
+          <span className="text-xs text-gray-500">{percentage}%</span>
+        </div>
+      </div>
+      
+      <p className="mt-3 text-sm text-gray-600 line-clamp-2">
+        {data.recommendation}
+      </p>
+      
+      {/* 🆕 Астрологический индикатор для денег */}
+      {category === 'money' && data.astrological_indicator && (
+        <div className="mt-2 p-2 bg-blue-50 rounded-lg text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-blue-600">🔮</span>
+            <span className="text-blue-700">
+              Юпитер {Math.round(data.astrological_indicator.jupiter_strength * 100)}%
+              · Венера {Math.round(data.astrological_indicator.venus_strength * 100)}%
+              · Потенциал {Math.round(data.astrological_indicator.financial_potential * 100)}%
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+```
+
+---
+
+### 3.5. Окно возможностей
+
+**Описание:** Индикатор текущего состояния «окна» — возможности для действий.
+
+**Требования:**
+- Круговой или линейный индикатор со значением (0-1)
+- Уровень: OPEN, PARTIAL, CLOSED
+- Отклонения по категориям (показать, где выше/ниже среднего)
+- Две рекомендации: для практики и для игры
+
+**UI:**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  🌤️ Окно возможностей                                    │
+│                                                           │
+│       ┌─────┐                                             │
+│       │ 0.58 │  ← PARTIAL                                 │
+│       │ 58%  │                                             │
+│       └─────┘                                             │
+│                                                           │
+│  📊 Отклонения:                                           │
+│  Семья    ████████░░ -0.02   ──                          │
+│  Работа   ██████████ +0.12   ↑↑                          │
+│  Здоровье ████░░░░░░ -0.08   ↓↓                          │
+│  Self     ██████░░░░ -0.03   ──                          │
+│  Деньги   ██████░░░░ -0.05   ──                          │
+│                                                           │
+│  📌 Практика: «Готовься, но не торопись»                 │
+│  🎮 Игра: «Попробуй что-то новое с осторожностью»        │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+interface WindowData {
+  value: number;
+  level: 'OPEN' | 'PARTIAL' | 'CLOSED';
+  deviations: Record<string, number>;  // category → deviation
+  practice_recommendation: string;
+  play_recommendation: string;
+}
+
+const WindowIndicator: React.FC<{ data: WindowData }> = ({ data }) => {
+  const percentage = Math.round(data.value * 100);
+  
+  const levelConfig = {
+    OPEN: { color: 'text-green-600 bg-green-50', label: 'Открыто', icon: '🌤️' },
+    PARTIAL: { color: 'text-yellow-600 bg-yellow-50', label: 'Частично', icon: '⛅' },
+    CLOSED: { color: 'text-gray-600 bg-gray-50', label: 'Закрыто', icon: '☁️' },
+  };
+  
+  const config = levelConfig[data.level];
+  
+  return (
+    <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div className="relative">
+          {/* Круговой индикатор */}
+          <svg className="w-24 h-24 transform -rotate-90">
+            <circle
+              cx="48" cy="48" r="42"
+              className="text-gray-200 stroke-current"
+              strokeWidth="8"
+              fill="none"
+            />
+            <circle
+              cx="48" cy="48" r="42"
+              className="text-indigo-500 stroke-current transition-all duration-1000"
+              strokeWidth="8"
+              fill="none"
+              strokeDasharray={`${percentage * 2.64} 264`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-2xl font-bold">{data.value.toFixed(2)}</div>
+              <div className="text-xs text-gray-500">{percentage}%</div>
+            </div>
+          </div>
+        </div>
+        
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{config.icon}</span>
+            <span className={`text-lg font-semibold ${config.color} px-3 py-1 rounded-full`}>
+              {config.label}
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      {/* Отклонения */}
+      <div className="mt-4">
+        <div className="text-sm font-medium text-gray-700 mb-2">Отклонения:</div>
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(data.deviations).map(([category, deviation]) => {
+            const categoryNames: Record<string, string> = {
+              family: '👨‍👩‍👧‍👦 Семья',
+              work: '💼 Работа',
+              health: '❤️ Здоровье',
+              self: '🧘 Self',
+              money: '💰 Деньги',
+            };
+            const isPositive = deviation >= 0;
+            const bars = Math.abs(Math.round(deviation * 10));
+            
+            return (
+              <div key={category} className="flex items-center gap-2">
+                <span className="text-sm w-24 truncate">{categoryNames[category]}</span>
+                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      isPositive ? 'bg-green-500' : 'bg-red-500'
+                    }`}
+                    style={{ width: `${bars * 10}%` }}
+                  />
+                </div>
+                <span className={`text-xs font-mono ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                  {isPositive ? '+' : ''}{deviation.toFixed(2)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      
+      {/* Рекомендации */}
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <div className="p-3 bg-indigo-50 rounded-lg">
+          <div className="text-xs text-indigo-600 font-medium">📌 Практика</div>
+          <div className="text-sm text-gray-700">{data.practice_recommendation}</div>
+        </div>
+        <div className="p-3 bg-purple-50 rounded-lg">
+          <div className="text-xs text-purple-600 font-medium">🎮 Игра</div>
+          <div className="text-sm text-gray-700">{data.play_recommendation}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+### 3.6. Прогноз окна на 7 дней 🆕
+
+**Описание:** Отображение прогноза окна возможностей на неделю вперёд.
+
+**Требования:**
+- Отображается по нажатию кнопки «Прогноз на 7 дней»
+- График или таблица с 7 днями
+- Для каждого дня: значение, уровень, тренд (rising/falling/stable)
+- Подсветка лучших дней для действий
+- Анимация при загрузке
+
+**UI:**
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  📈 Прогноз окна на 7 дней                                     │
+│  [Закрыть]                                                      │
+│                                                                  │
+│  1.0 ┤                                             ┌─┐        │
+│  0.8 ┤          ┌─┐          ┌─┐                  │ │        │
+│  0.6 ┤    ┌─┐  │ │  ┌─┐    │ │  ┌─┐            │ │        │
+│  0.4 ┤    │ │  │ │  │ │    │ │  │ │  ┌─┐      │ │        │
+│  0.2 ┤    │ │  │ │  │ │    │ │  │ │  │ │      │ │        │
+│  0.0 ┤────┴─┴──┴─┴──┴─┴────┴─┴──┴─┴──┴─┴──────┴─┴────────┘  │
+│       Пн    Вт    Ср    Чт    Пт    Сб    Вс                  │
+│                                                                  │
+│  ┌──────────┬──────────┬────────────┬──────────────┐          │
+│  │   День   │ Значение │   Уровень  │     Тренд    │          │
+│  ├──────────┼──────────┼────────────┼──────────────┤          │
+│  │   Пн 03.09│ 0.72     │  🟢 OPEN   │  📈 rising   │          │
+│  │   Вт 04.09│ 0.58     │  🟡 PARTIAL│  📉 falling  │          │
+│  │   Ср 05.09│ 0.45     │  🟡 PARTIAL│  ➡️ stable  │          │
+│  │   Чт 06.09│ 0.38     │  🔴 CLOSED │  📉 falling  │          │
+│  │   Пт 07.09│ 0.52     │  🟡 PARTIAL│  📈 rising   │          │
+│  │   Сб 08.09│ 0.65     │  🟡 PARTIAL│  📈 rising   │          │
+│  │   Вс 09.09│ 0.78     │  🟢 OPEN   │  📈 rising   │          │
+│  └──────────┴──────────┴────────────┴──────────────┘          │
+│                                                                  │
+│  💡 Лучшие дни для действий: Пн 03.09, Вс 09.09               │
+│  🧘 Дни для наблюдения: Чт 06.09                               │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+interface ForecastDay {
+  date: string;
+  value: number;
+  level: 'OPEN' | 'PARTIAL' | 'CLOSED';
+  trend: 'rising' | 'falling' | 'stable';
+  practice_recommendation: string;
+}
+
+const WindowForecast: React.FC<{ data: ForecastDay[] }> = ({ data }) => {
+  const levelColors = {
+    OPEN: 'text-green-600',
+    PARTIAL: 'text-yellow-600',
+    CLOSED: 'text-red-600',
+  };
+  
+  const levelIcons = {
+    OPEN: '🟢',
+    PARTIAL: '🟡',
+    CLOSED: '🔴',
+  };
+  
+  const trendIcons = {
+    rising: '📈',
+    falling: '📉',
+    stable: '➡️',
+  };
+  
+  const maxValue = Math.max(...data.map(d => d.value));
+  const minValue = Math.min(...data.map(d => d.value));
+  const range = maxValue - minValue || 0.1;
+  
+  return (
+    <div className="bg-white rounded-xl p-6 shadow-sm">
+      <h3 className="text-lg font-semibold mb-4">📈 Прогноз окна на 7 дней</h3>
+      
+      {/* График */}
+      <div className="relative h-48 mb-6">
+        <div className="absolute inset-0 flex items-end justify-between">
+          {data.map((day, index) => {
+            const height = ((day.value - minValue) / range) * 100;
+            const color = day.level === 'OPEN' ? 'bg-green-500' :
+                          day.level === 'PARTIAL' ? 'bg-yellow-500' : 'bg-red-500';
+            
+            return (
+              <div key={index} className="flex-1 flex flex-col items-center">
+                <div className="w-full flex justify-center">
+                  <div
+                    className={`w-12 rounded-t-lg transition-all duration-700 ${color}`}
+                    style={{ height: `${Math.max(10, height)}%` }}
+                  />
+                </div>
+                <div className="text-xs text-gray-500 mt-2">
+                  {new Date(day.date).toLocaleDateString('ru', { weekday: 'short' })}
+                </div>
+                <div className="text-xs font-mono">
+                  {day.value.toFixed(2)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      
+      {/* Таблица */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="text-left py-2">День</th>
+              <th className="text-right py-2">Значение</th>
+              <th className="text-right py-2">Уровень</th>
+              <th className="text-right py-2">Тренд</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((day, index) => (
+              <tr key={index} className="border-b border-gray-50">
+                <td className="py-2">
+                  {new Date(day.date).toLocaleDateString('ru', { 
+                    weekday: 'short', 
+                    day: '2-digit', 
+                    month: '2-digit' 
+                  })}
+                </td>
+                <td className="text-right font-mono">{day.value.toFixed(2)}</td>
+                <td className={`text-right ${levelColors[day.level]}`}>
+                  {levelIcons[day.level]} {day.level}
+                </td>
+                <td className="text-right">{trendIcons[day.trend]} {day.trend}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      
+      {/* Инсайты */}
+      <div className="mt-4 p-4 bg-indigo-50 rounded-lg">
+        <div className="text-sm text-indigo-700">
+          💡 Лучшие дни для действий: {data
+            .filter(d => d.level === 'OPEN')
+            .map(d => new Date(d.date).toLocaleDateString('ru', { weekday: 'short', day: '2-digit', month: '2-digit' }))
+            .join(', ') || 'нет в ближайшее время'}
+        </div>
+        <div className="text-sm text-indigo-700">
+          🧘 Дни для наблюдения: {data
+            .filter(d => d.level === 'CLOSED')
+            .map(d => new Date(d.date).toLocaleDateString('ru', { weekday: 'short', day: '2-digit', month: '2-digit' }))
+            .join(', ') || 'нет в ближайшее время'}
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+### 3.7. Рекомендации
+
+**Описание:** Список персонализированных рекомендаций (до 5 шт).
+
+**Требования:**
+- Каждая рекомендация: действие, причина, приоритет, длительность
+- Приоритет: ★★★ (высокий), ★★ (средний), ★ (низкий)
+- Кнопка обратной связи (звёздочки 1-5) для каждой рекомендации
+- При нажатии на звезду — открывается модалка с подробностями
+
+**UI:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  📋 Рекомендации                                              │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ ★★★ Выделите 15 минут на тишину без гаджетов              │ │
+│  │     Энергия снижена, нужна пауза                          │ │
+│  │     ⏱ 15 мин  ·  ⭐⭐⭐⭐⭐ (оценить)                      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ ★★ Сделайте глубокий вдох и выдох 5 раз                   │ │
+│  │     Тревожность повышена                                  │ │
+│  │     ⏱ 2 мин  ·  ⭐⭐⭐⭐⭐ (оценить)                       │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ ★★ Начните новый проект                                   │ │
+│  │     Индекс работы: высокий                                │ │
+│  │     ⏱ 30 мин  ·  ⭐⭐⭐⭐⭐ (оценить)                      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ ★ Отличное время для инвестиций                           │ │
+│  │     Индекс денег: средний, Юпитер усиливает 🆕          │ │
+│  │     ⏱ 20 мин  ·  ⭐⭐⭐⭐⭐ (оценить)                      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ ★ Запланируйте вечерний разговор с близкими               │ │
+│  │     Индекс семьи: средний                                  │ │
+│  │     ⏱ 15 мин  ·  ⭐⭐⭐⭐⭐ (оценить)                      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+interface Recommendation {
+  id: number;          // индекс в массиве
+  action: string;
+  reason: string;
+  priority: number;    // 1-3
+  duration: string;
+  category: string;
+}
+
+interface RecommendationSet {
+  id: string;
+  recommendations: Recommendation[];
+}
+
+const RecommendationItem: React.FC<{
+  recommendation: Recommendation;
+  setId: string;
+  onFeedback: (rating: number) => void;
+}> = ({ recommendation, setId, onFeedback }) => {
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [selectedRating, setSelectedRating] = useState<number | null>(null);
+  
+  const priorityStars = {
+    1: '⭐',
+    2: '⭐⭐',
+    3: '⭐⭐⭐',
+  };
+  
+  const priorityLabels = {
+    1: 'Низкий',
+    2: 'Средний',
+    3: 'Высокий',
+  };
+  
+  const handleRatingClick = (rating: number) => {
+    setSelectedRating(rating);
+    onFeedback(rating);
+    setShowFeedback(false);
+  };
+  
+  return (
+    <div className="p-4 border border-gray-100 rounded-xl hover:shadow-sm transition-shadow">
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm">{priorityStars[recommendation.priority]}</span>
+            <span className="text-sm text-gray-500">{priorityLabels[recommendation.priority]}</span>
+            {recommendation.category && (
+              <span className="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-500">
+                {recommendation.category}
+              </span>
+            )}
+          </div>
+          <p className="font-medium text-gray-800 mt-1">{recommendation.action}</p>
+          <p className="text-sm text-gray-500">{recommendation.reason}</p>
+          <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
+            <span>⏱ {recommendation.duration}</span>
+            <button
+              onClick={() => setShowFeedback(!showFeedback)}
+              className="flex items-center gap-1 hover:text-indigo-600 transition-colors"
+            >
+              <span>⭐</span>
+              <span>Оценить</span>
+            </button>
+          </div>
+          
+          {/* Обратная связь */}
+          {showFeedback && (
+            <div className="mt-2 p-3 bg-gray-50 rounded-lg flex items-center gap-2 animate-fadeIn">
+              <span className="text-sm text-gray-600">Помогло?</span>
+              {[1, 2, 3, 4, 5].map(rating => (
+                <button
+                  key={rating}
+                  onClick={() => handleRatingClick(rating)}
+                  className="p-1 hover:scale-110 transition-transform"
+                >
+                  <span className="text-xl">
+                    {selectedRating && rating <= selectedRating ? '⭐' : '☆'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+### 3.8. Обратная связь
+
+**Описание:** Отправка оценки рекомендации.
+
+**Требования:**
+- После оценки рекомендации — отображение сообщения «Спасибо!»
+- Оценки сохраняются в БД через API `/api/v4/feedback`
+- Возможность добавить комментарий
+
+**API вызов:**
+
+```tsx
+// src/api/psychometry/queries.ts
+
+export const submitFeedback = async (data: {
+  recommendation_set_id: string;
+  recommendation_index: number;
+  rating: number;
+  outcome?: number;
+  comment?: string;
+}) => {
+  const response = await apiClient.post('/api/v4/feedback', data);
+  return response.data;
+};
+
+// Использование с React Query
+export const useSubmitFeedback = () => {
+  return useMutation({
+    mutationFn: submitFeedback,
+    onSuccess: () => {
+      toast.success('Спасибо за обратную связь!');
+    },
+    onError: (error) => {
+      toast.error('Не удалось отправить оценку');
+    },
+  });
+};
+```
+
+---
+
+### 3.9. Практика «Пауза»
+
+**Описание:** Интерактивная практика осознанности с таймером 15 секунд.
+
+**Требования:**
+- Кнопка «Сделать паузу» в правом нижнем углу или в отдельном блоке
+- При нажатии — открывается модальное окно с таймером 15 секунд
+- Таймер обратного отсчёта с анимацией
+- После завершения — поле для ввода мысли «Что я сейчас автоматически подумал?»
+- Сохранение через API `/api/v4/practice`
+
+**UI:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  🧘 Практика «Пауза»                                        │
+│                                                              │
+│  Сделайте паузу на 15 секунд, чтобы заметить, что          │
+│  происходит в вашем сознании.                               │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │                                                         │ │
+│  │             15                                         │ │
+│  │             ⏱                                          │ │
+│  │                                                         │ │
+│  │         [ 🧘 Сделать паузу ]                          │ │
+│  │                                                         │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  После паузы запишите:                                      │
+│  «Что я сейчас автоматически подумал?»                     │
+│  [________________________________________]                │
+│                                                              │
+│  [  Сохранить  ]                                            │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```tsx
+const PracticeModal: React.FC = () => {
+  const [isRunning, setIsRunning] = useState(false);
+  const [seconds, setSeconds] = useState(15);
+  const [thought, setThought] = useState('');
+  const [isComplete, setIsComplete] = useState(false);
+  
+  const { mutate: savePractice, isLoading } = useSavePractice();
+  
+  const startPractice = () => {
+    setIsRunning(true);
+    setSeconds(15);
+    setIsComplete(false);
+  };
+  
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (isRunning && seconds > 0) {
+      timer = setInterval(() => {
+        setSeconds(prev => prev - 1);
+      }, 1000);
+    } else if (seconds === 0 && isRunning) {
+      setIsRunning(false);
+      setIsComplete(true);
+    }
+    return () => clearInterval(timer);
+  }, [isRunning, seconds]);
+  
+  const handleSave = () => {
+    savePractice({
+      thought,
+      duration: 15 - seconds,
+    });
+  };
+  
+  return (
+    <Modal isOpen={isOpen} onClose={onClose}>
+      <div className="p-6 text-center">
+        <h2 className="text-2xl font-bold mb-2">🧘 Практика «Пауза»</h2>
+        <p className="text-gray-600 mb-6">
+          Сделайте паузу на 15 секунд, чтобы заметить, что происходит в вашем сознании.
+        </p>
+        
+        {/* Таймер */}
+        <div className="relative w-32 h-32 mx-auto mb-6">
+          <svg className="w-32 h-32 transform -rotate-90">
+            <circle
+              cx="64" cy="64" r="56"
+              className="text-gray-200 stroke-current"
+              strokeWidth="8"
+              fill="none"
+            />
+            <circle
+              cx="64" cy="64" r="56"
+              className={`text-indigo-500 stroke-current transition-all duration-1000 ${
+                isRunning ? 'stroke-dasharray-[calculate]' : ''
+              }`}
+              strokeWidth="8"
+              fill="none"
+              strokeDasharray={`${seconds * 3.73} 352`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-4xl font-bold">
+              {isRunning || isComplete ? seconds : '15'}
+            </div>
+          </div>
+        </div>
+        
+        {/* Кнопка */}
+        {!isRunning && !isComplete && (
+          <button
+            onClick={startPractice}
+            className="px-6 py-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors"
+          >
+            🧘 Сделать паузу
+          </button>
+        )}
+        
+        {isRunning && (
+          <div className="text-sm text-gray-500">
+            Осталось {seconds} секунд...
+          </div>
+        )}
+        
+        {/* Поле для мысли */}
+        {isComplete && (
+          <div className="mt-4 text-left">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Что я сейчас автоматически подумал?
+            </label>
+            <textarea
+              value={thought}
+              onChange={(e) => setThought(e.target.value)}
+              className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              rows={2}
+              placeholder="Напишите свою мысль..."
+            />
+            <button
+              onClick={handleSave}
+              disabled={isLoading}
+              className="mt-2 w-full py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors disabled:opacity-50"
+            >
+              {isLoading ? 'Сохранение...' : 'Сохранить'}
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+};
+```
+
+---
+
+## 4. API ЭНДПОИНТЫ
+
+### 4.1. Полный список
+
+| Метод | Эндпоинт | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v4/quick-check` | Отправить быстрый опросник |
+| `POST` | `/api/v4/full-profile` | Отправить полный профиль (опционально) |
+| `GET` | `/api/v4/state` | Получить текущее состояние |
+| `GET` | `/api/v4/achievements` | Получить индексы достижения |
+| `GET` | `/api/v4/window` | Получить окно возможностей |
+| `GET` | `/api/v4/window/forecast` | Получить прогноз на 7 дней 🆕 |
+| `GET` | `/api/v4/recommendations` | Получить рекомендации |
+| `POST` | `/api/v4/feedback` | Отправить обратную связь |
+| `POST` | `/api/v4/practice` | Сохранить практику «Пауза» |
+| `GET` | `/api/v4/practice/history` | История практик |
+
+### 4.2. Форматы запросов и ответов
+
+#### GET /api/v4/state
+
+**Запрос:**
+```
+GET /api/v4/state?date=2026-09-02
+Authorization: Bearer {token}
+```
+
+**Ответ:**
+```json
+{
+  "success": true,
+  "state": {
+    "user_id": 123,
+    "state_date": "2026-09-02",
+    "energy_score": 0.72,
+    "anxiety_score": 0.38,
+    "emotional_score": 0.55,
+    "state_level": "MEDIUM",
+    "state_summary": "Ваше состояние: энергия на подъёме, тревожность умеренная, эмоциональный фон в норме. Уровень: medium.",
+    "awareness": {
+      "level": "MEDIUM",
+      "tip": "Вам помогает практика наблюдения",
+      "practice": "5 минут дыхания"
+    },
+    "quick_check": {
+      "energy": 4,
+      "anxiety": 2,
+      "emotional": 3,
+      "comment": "Чувствую себя хорошо"
+    }
+  }
+}
+```
+
+#### GET /api/v4/achievements
+
+**Ответ:**
+```json
+{
+  "success": true,
+  "achievements": {
+    "family": {
+      "value": 0.65,
+      "level": "MEDIUM",
+      "clarity": 0.70,
+      "synchronicity": 0.55,
+      "resource": 0.60,
+      "inertia": 0.35,
+      "recommendation": "Скажите близким что-то тёплое",
+      "seasonal_boost": 0.05
+    },
+    "work": {
+      "value": 0.82,
+      "level": "HIGH",
+      "clarity": 0.85,
+      "synchronicity": 0.80,
+      "resource": 0.75,
+      "inertia": 0.20,
+      "recommendation": "Начните новый проект",
+      "seasonal_boost": 0.10
+    },
+    "health": {
+      "value": 0.45,
+      "level": "LOW",
+      "clarity": 0.50,
+      "synchronicity": 0.40,
+      "resource": 0.35,
+      "inertia": 0.50,
+      "recommendation": "Время восстановления — отдохните",
+      "seasonal_boost": 0.00
+    },
+    "self": {
+      "value": 0.71,
+      "level": "HIGH",
+      "clarity": 0.75,
+      "synchronicity": 0.70,
+      "resource": 0.65,
+      "inertia": 0.25,
+      "recommendation": "Запишите свои идеи и мысли",
+      "seasonal_boost": 0.05
+    },
+    "money": {  // 🆕
+      "value": 0.58,
+      "level": "MEDIUM",
+      "clarity": 0.55,
+      "synchronicity": 0.60,
+      "resource": 0.50,
+      "inertia": 0.40,
+      "recommendation": "Хорошее время для финансового планирования",
+      "seasonal_boost": 0.02,
+      "astrological_indicator": {
+        "jupiter_strength": 0.82,
+        "venus_strength": 0.68,
+        "second_house_strength": 0.70,
+        "financial_potential": 0.72
+      }
+    }
+  }
+}
+```
+
+#### GET /api/v4/window/forecast 🆕
+
+**Ответ:**
+```json
+{
+  "success": true,
+  "forecast": [
+    {
+      "date": "2026-09-03",
+      "value": 0.72,
+      "level": "OPEN",
+      "trend": "rising",
+      "practice_recommendation": "Действуй! Сейчас хорошее время для новых начинаний"
+    },
+    {
+      "date": "2026-09-04",
+      "value": 0.58,
+      "level": "PARTIAL",
+      "trend": "falling",
+      "practice_recommendation": "Готовься, но не торопись"
+    },
+    {
+      "date": "2026-09-05",
+      "value": 0.45,
+      "level": "PARTIAL",
+      "trend": "stable",
+      "practice_recommendation": "Готовься, но не торопись"
+    },
+    {
+      "date": "2026-09-06",
+      "value": 0.38,
+      "level": "CLOSED",
+      "trend": "falling",
+      "practice_recommendation": "Наблюдай и восстанавливайся"
+    },
+    {
+      "date": "2026-09-07",
+      "value": 0.52,
+      "level": "PARTIAL",
+      "trend": "rising",
+      "practice_recommendation": "Готовься, но не торопись"
+    },
+    {
+      "date": "2026-09-08",
+      "value": 0.65,
+      "level": "PARTIAL",
+      "trend": "rising",
+      "practice_recommendation": "Готовься, но не торопись"
+    },
+    {
+      "date": "2026-09-09",
+      "value": 0.78,
+      "level": "OPEN",
+      "trend": "rising",
+      "practice_recommendation": "Действуй! Сейчас хорошее время для новых начинаний"
+    }
+  ]
+}
+```
+
+---
+
+## 5. КОМПОНЕНТЫ ИНТЕРФЕЙСА
+
+### 5.1. Карточка состояния
+
+**Props:**
+```tsx
+interface StateCardProps {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  status: 'high' | 'medium' | 'low';
+  description?: string;
+}
+```
+
+**Визуальные состояния:**
+
+| Статус | Цвет | Описание |
+|--------|------|----------|
+| `high` | Зелёный | Высокое значение |
+| `medium` | Жёлтый | Среднее значение |
+| `low` | Красный | Низкое значение |
+
+### 5.2. Индикатор окна
+
+**Props:**
+```tsx
+interface WindowIndicatorProps {
+  value: number;
+  level: 'OPEN' | 'PARTIAL' | 'CLOSED';
+  deviations: Record<string, number>;
+  practiceRecommendation: string;
+  playRecommendation: string;
+}
+```
+
+**Визуальные состояния:**
+
+| Уровень | Цвет | Иконка |
+|---------|------|--------|
+| `OPEN` | Зелёный | 🌤️ |
+| `PARTIAL` | Жёлтый | ⛅ |
+| `CLOSED` | Серый | ☁️ |
+
+### 5.3. Карточка индекса достижения
+
+**Props:**
+```tsx
+interface AchievementCardProps {
+  category: string;
+  icon: React.ReactNode;
+  name: string;
+  value: number;
+  level: 'HIGH' | 'MEDIUM' | 'LOW' | 'CRITICAL';
+  recommendation: string;
+  astrologicalIndicator?: {  // 🆕
+    jupiter_strength: number;
+    venus_strength: number;
+    second_house_strength: number;
+    financial_potential: number;
+  };
+}
+```
+
+**Визуальные состояния:**
+
+| Уровень | Цвет |
+|---------|------|
+| `HIGH` | Зелёный |
+| `MEDIUM` | Жёлтый |
+| `LOW` | Оранжевый |
+| `CRITICAL` | Красный |
+
+### 5.4. Рекомендация
+
+**Props:**
+```tsx
+interface RecommendationItemProps {
+  recommendation: {
+    id: number;
+    action: string;
+    reason: string;
+    priority: number;
+    duration: string;
+    category: string;
+  };
+  setId: string;
+  onFeedback: (rating: number) => void;
+}
+```
+
+### 5.5. Прогноз окна 🆕
+
+**Props:**
+```tsx
+interface WindowForecastProps {
+  data: Array<{
+    date: string;
+    value: number;
+    level: 'OPEN' | 'PARTIAL' | 'CLOSED';
+    trend: 'rising' | 'falling' | 'stable';
+    practice_recommendation: string;
+  }>;
+}
+```
+
+### 5.6. Практика «Пауза»
+
+**Props:**
+```tsx
+interface PracticeModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (data: { thought: string; duration: number }) => void;
+}
+```
+
+### 5.7. Быстрый опросник
+
+**Props:**
+```tsx
+interface QuickCheckModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: QuickCheckData) => void;
+  isLoading: boolean;
+}
+
+interface QuickCheckData {
+  energy: number;
+  anxiety: number;
+  emotional: number;
+  comment?: string;
+}
+```
+
+---
+
+## 6. UX/UI ТРЕБОВАНИЯ
+
+### 6.1. Общие принципы
+
+| Принцип | Описание |
+|---------|----------|
+| **Минимализм** | Чистый дизайн, без перегруженности |
+| **Понятность** | Каждый элемент должен быть интуитивно понятен |
+| **Доступность** | Контрастность, размер шрифта, aria-атрибуты |
+| **Единообразие** | Единый стиль с существующим приложением |
+| **Обратная связь** | Каждое действие пользователя должно иметь отклик |
+
+### 6.2. Состояния загрузки
+
+```tsx
+// Skeleton Loader для карточек
+const StateSkeleton: React.FC = () => (
+  <div className="animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-1/2 mb-2" />
+    <div className="h-20 bg-gray-200 rounded" />
+  </div>
+);
+
+// Использование
+if (isLoading) {
+  return <StateSkeleton />;
+}
+```
+
+### 6.3. Обработка ошибок
+
+```tsx
+// Error Boundary
+const ErrorBoundary: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [hasError, setHasError] = useState(false);
+  
+  if (hasError) {
+    return (
+      <div className="p-4 text-center">
+        <div className="text-4xl mb-2">😕</div>
+        <h3 className="text-lg font-medium">Что-то пошло не так</h3>
+        <p className="text-gray-500">Попробуйте обновить страницу</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-2 px-4 py-2 bg-indigo-500 text-white rounded-lg"
+        >
+          Обновить
+        </button>
+      </div>
+    );
+  }
+  
+  return children;
+};
+```
+
+### 6.4. Адаптивность
+
+| Устройство | Ширина экрана | Колонки |
+|------------|---------------|---------|
+| **Desktop** | ≥ 1024px | 3-4 колонки |
+| **Tablet** | 768-1023px | 2-3 колонки |
+| **Mobile** | < 768px | 1 колонка |
+
+```tsx
+// Адаптивная сетка
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {metrics.map(metric => (
+    <MetricCard key={metric.label} {...metric} />
+  ))}
+</div>
+```
+
+### 6.5. Анимации
+
+| Элемент | Анимация | Длительность |
+|---------|----------|--------------|
+| Прогресс-бар | Плавное заполнение | 500ms |
+| Появление карточек | Fade-in + Slide-up | 300ms |
+| Таймер практики | Обратный отсчёт с анимацией | 1000ms |
+| Модальные окна | Fade + Scale | 200ms |
+| Оценка звёздами | Scale + Bounce | 150ms |
+
+---
+
+## 7. ТЕСТИРОВАНИЕ
+
+### 7.1. Тест-кейсы
+
+#### Компонент: StateTab
+
+| # | Тест-кейс | Ожидаемый результат |
+|---|-----------|---------------------|
+| 1 | Открытие вкладки | Данные загружаются, нет ошибок |
+| 2 | Нет данных за сегодня | Показывается приглашение пройти опрос |
+| 3 | Есть данные за сегодня | Показываются все карточки |
+| 4 | Ошибка API | Показывается сообщение об ошибке |
+
+#### Компонент: QuickCheckModal
+
+| # | Тест-кейс | Ожидаемый результат |
+|---|-----------|---------------------|
+| 1 | Открытие модалки | Показываются все вопросы |
+| 2 | Выбор ответов | Значения сохраняются |
+| 3 | Отправка с комментарием | Данные отправлены, модалка закрыта |
+| 4 | Отправка без комментария | Данные отправлены, модалка закрыта |
+| 5 | Закрытие без отправки | Модалка закрывается без сохранения |
+
+#### Компонент: Feedback
+
+| # | Тест-кейс | Ожидаемый результат |
+|---|-----------|---------------------|
+| 1 | Выбор звёзд | Показывается сообщение «Спасибо!» |
+| 2 | Отправка оценки | Данные отправлены в API |
+
+### 7.2. Критерии приёмки
+
+- [ ] Все компоненты отображаются корректно
+- [ ] Все API-запросы работают
+- [ ] Состояния загрузки отображаются
+- [ ] Ошибки обрабатываются и показываются пользователю
+- [ ] Анимации плавные и не мешают
+- [ ] Интерфейс адаптивен на всех устройствах
+- [ ] Категория «Деньги» отображается с астрологическим индикатором 🆕
+- [ ] Прогноз окна работает и отображается в виде графика 🆕
+
+---
+
+## 8. ЧЕК-ЛИСТ
+
+### 8.1. Подготовка
+
+- [ ] Изучен API `/api/v4/*`
+- [ ] Настроено окружение для разработки
+- [ ] Установлены зависимости
+
+### 8.2. Компоненты
+
+- [ ] StateTab — основная страница
+- [ ] QuickCheckModal — модалка опросника
+- [ ] MetricsGrid — 3 карточки состояния
+- [ ] AchievementsGrid — 5 карточек индексов
+- [ ] WindowIndicator — окно возможностей
+- [ ] WindowForecast — прогноз на 7 дней 🆕
+- [ ] RecommendationsList — список рекомендаций
+- [ ] PracticeModal — модалка практики
+- [ ] FeedbackButton — обратная связь
+
+### 8.3. Интеграция
+
+- [ ] GET `/api/v4/state`
+- [ ] GET `/api/v4/achievements`
+- [ ] GET `/api/v4/window`
+- [ ] GET `/api/v4/window/forecast` 🆕
+- [ ] GET `/api/v4/recommendations`
+- [ ] POST `/api/v4/quick-check`
+- [ ] POST `/api/v4/feedback`
+- [ ] POST `/api/v4/practice`
+
+### 8.4. UX
+
+- [ ] Состояния загрузки
+- [ ] Состояния ошибок
+- [ ] Анимации
+- [ ] Адаптивность (Desktop, Tablet, Mobile)
+- [ ] Доступность (aria-атрибуты)
+
+### 8.5. Качество
+
+- [ ] Код проходит линтер
+- [ ] Все компоненты типизированы (TypeScript)
+- [ ] Нет консольных ошибок
+- [ ] Производительность: нет лишних ре-рендеров
+
+---
+
+**Документ утверждён. Версия 1.0 для фронтенд-разработчика.**

@@ -178,28 +178,28 @@ class PsyhoMatrixCalculator:
 
     def _calculate_third_number(self, first_number: int, day: int) -> int:
         """
-        Третье число = первое число - 2 * ПОЛНЫЙ день рождения
-        Если результат отрицательный, добавляем 40 (кармический цикл)
+        Третье число = первое число - 2 * ПЕРВАЯ ЦИФРА дня рождения
         """
-        third_raw = first_number - (2 * day)
-        logger.debug(f"third_raw = {first_number} - 2*{day} = {third_raw}")
-
-        if third_raw < 0:
-            third_raw += self.karmic_cycle
-            logger.debug(f"After adding karmic_cycle={self.karmic_cycle}: {third_raw}")
-
+        first_digit_of_day = int(str(day)[0])  # ✅ Берем первую цифру
+        third_raw = first_number - (2 * first_digit_of_day)
         result = self._reduction_with_masters(third_raw)
-        logger.debug(f"After reduction: {result}")
-
+        logger.debug(f"third_raw = {first_number} - 2*{first_digit_of_day} = {third_raw} -> {result}")
         return result
 
     def _calculate_fourth_number(self, third_number: int) -> int:
-        """Четвертое число = редукция третьего числа до однозначного"""
+        """
+        Четвертое число = редукция третьего числа до однозначного
+        или сохранение мастер-числа
+        """
+        if third_number in self.master_numbers:
+            return third_number  # ✅ Сохраняем мастер-число
+
         number = third_number
-        
         while number > 9:
             number = sum(int(d) for d in str(number))
-        
+            if number in self.master_numbers:
+                return number  # ✅ Проверяем после каждой итерации
+
         return number
 
     def _reduction_with_masters(self, number: int) -> int:
@@ -225,6 +225,10 @@ class PsyhoMatrixCalculator:
         - Дата рождения
         - 4 рабочих числа
         """
+        # Валидация чисел
+        for num in [first, second, third, fourth]:
+            if num < 0:
+                raise ValueError(f"Negative number in working numbers: {num}")
         # Собираем все цифры в одну строку
         working_numbers_str = ''.join(map(str, [first, second, third, fourth]))  # Только НЕ редуцированные!
         all_digits = f"{day:02d}{month:02d}{year}" + working_numbers_str
@@ -352,22 +356,23 @@ class PsyhoMatrixCalculator:
         balance = max(0, 100 - (std_dev / max_possible * 100))
         return int(balance)
 
-    def _calculate_indices(self, matrix_digits: Dict[str, int], 
-                          matrix_3x3: List[List[int]]) -> Dict[str, float]:
-        """Расчет дополнительных индексов"""
-        purpose_index = matrix_digits.get('1', 0) * 10
-        energy_index = matrix_digits.get('2', 0) * 15
+    def _calculate_indices(self, matrix_digits: Dict[str, int],
+                           matrix_3x3: List[List[int]]) -> Dict[str, float]:
+        """Расчет дополнительных индексов с корректными весами"""
+        # ✅ Корректируем веса
+        purpose_index = matrix_digits.get('1', 0) * 15  # +5
+        energy_index = matrix_digits.get('2', 0) * 10  # -5
         interest_index = matrix_digits.get('3', 0) * 12
-        health_index = matrix_digits.get('4', 0) * 10
+        health_index = matrix_digits.get('4', 0) * 12  # +2
         logic_index = matrix_digits.get('5', 0) * 15
         labor_index = matrix_digits.get('6', 0) * 10
-        luck_index = matrix_digits.get('7', 0) * 20
-        duty_index = matrix_digits.get('8', 0) * 12
-        memory_index = matrix_digits.get('9', 0) * 8
-        
+        luck_index = matrix_digits.get('7', 0) * 18  # -2
+        duty_index = matrix_digits.get('8', 0) * 10  # -2
+        memory_index = matrix_digits.get('9', 0) * 10  # +2
+
         total_digits = sum(matrix_digits.values())
         development_index = (total_digits / 27) * 100 if total_digits else 0
-        
+
         return {
             'purpose_index': min(purpose_index, 100),
             'energy_index': min(energy_index, 100),
@@ -384,10 +389,31 @@ class PsyhoMatrixCalculator:
     # ==================== ЭНЕРГЕТИЧЕСКИЙ УРОВЕНЬ ====================
 
     def _get_energy_level(self, matrix_digits: Dict[str, int]) -> str:
-        """Энергетический уровень ТОЛЬКО по количеству двоек"""
+        """
+        Энергетический уровень на основе:
+        1. Количество двоек (основной показатель)
+        2. Общее количество цифр (дополнительный)
+        """
         twos = matrix_digits.get('2', 0)
-        levels = ['very_low', 'low', 'medium', 'high', 'very_high']
-        return levels[min(twos, 4)]
+        total = sum(matrix_digits.values())
+
+        # Базовая оценка по двойкам
+        if twos >= 3:
+            base_level = "high"
+        elif twos == 2:
+            base_level = "medium"
+        elif twos == 1:
+            base_level = "low"
+        else:
+            base_level = "very_low"
+
+        # Корректировка по общему количеству цифр
+        if total >= 20 and base_level in ["low", "very_low"]:
+            base_level = "medium"  # Много цифр компенсирует недостаток энергии
+        elif total <= 8 and base_level in ["high", "medium"]:
+            base_level = "low"  # Мало цифр — энергия рассеивается
+
+        return base_level
 
     # ==================== КОДЫ ТАЛАНТОВ ====================
 
@@ -893,35 +919,47 @@ class PsyhoMatrixCalculator:
 
     def _calculate_karmic_maturity(self, matrix_digits: Dict[str, int]) -> int:
         """
-        🔴 ИСПРАВЛЕНО: Расчет кармической зрелости с бонусами за ВСЕ цифры >=2
-        
-        Args:
-            matrix_digits: Словарь количеств цифр
+        Кармическая зрелость:
+        - База: общее количество цифр * 5
+        - Бонус: за отсутствие цифр (0) или их сбалансированность (2)
         """
         total_digits = sum(matrix_digits.values())
         maturity = total_digits * 5
-        
-        # Бонус за ЛЮБУЮ цифру с количеством >=2 (не только 1,2,3)
+
+        # ✅ Бонус за сбалансированность (ровно 2 цифры)
         for digit in range(1, 10):
-            if matrix_digits.get(str(digit), 0) >= 2:
-                maturity += 10
-        
-        return min(maturity, 100)
+            count = matrix_digits.get(str(digit), 0)
+            if count == 2:
+                maturity += 5  # Сбалансированное качество
+
+        # ✅ Бонус за отсутствие кармических долгов
+        # (проверяем, нет ли цифр с 0, кроме 4 и 8, которые часто отсутствуют)
+        zero_count = sum(1 for d in range(1, 10) if matrix_digits.get(str(d), 0) == 0)
+        if zero_count <= 2:
+            maturity += 10  # Мало пустых клеток — хорошая карма
+
+        # ❌ Штраф за перекос (слишком много цифр > 3)
+        overused = sum(1 for d in range(1, 10) if matrix_digits.get(str(d), 0) >= 4)
+        if overused >= 2:
+            maturity -= 10
+
+        return min(max(maturity, 10), 100)  # Ограничиваем 10-100
 
     def _calculate_soul_age(self, matrix_digits: Dict[str, int]) -> str:
-        """Расчет возраста души"""
+        """Расчет возраста души по сумме всех цифр"""
         total_digits = sum(matrix_digits.values())
-        
-        if total_digits <= 9:
-            return "Infant soul (0-9)"
-        elif total_digits <= 14:
-            return "Young soul (10-14)"
-        elif total_digits <= 19:
-            return "Mature soul (15-19)"
-        elif total_digits <= 24:
-            return "Advanced soul (20-24)"
+
+        # ✅ Уточненные пороги
+        if total_digits <= 7:
+            return "Infant soul (0-7)"
+        elif total_digits <= 13:
+            return "Young soul (8-13)"
+        elif total_digits <= 18:
+            return "Mature soul (14-18)"
+        elif total_digits <= 23:
+            return "Advanced soul (19-23)"
         else:
-            return "Ancient soul (25+)"
+            return "Ancient soul (24+)"
 
     # ==================== ПРОГНОСТИКА ====================
 

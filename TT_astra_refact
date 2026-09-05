@@ -1,0 +1,998 @@
+Отлично. Теперь у нас есть **полная картина** — все модули, все проблемы, все возможности. Мы готовы сформулировать **полное техническое задание на рефакторинг**.
+
+Это ТЗ должно быть:
+1. **Достаточно подробным**, чтобы разработчик мог работать без уточнений.
+2. **Учитывающим все выявленные проблемы**.
+3. **Ориентированным на production** — стабильность, нагрузка, энергоэффективность.
+4. **С измеримыми критериями успеха**.
+
+---
+
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РЕФАКТОРИНГ
+## Астролого-эзотерическая платформа v3.0
+### "Сделал и забыл" — Enterprise-версия
+
+---
+
+## 1. ЦЕЛИ РЕФАКТОРИНГА
+
+### 1.1. Бизнес-цели
+
+| № | Цель | Критерий успеха |
+|---|------|-----------------|
+| 1 | **Методологическая чистота** | Система использует одну астрологическую систему как основную (западную), ведическая — как дополнительный слой |
+| 2 | **Прозрачность для пользователя** | Каждый совет имеет указание источника ("Западная астрология:", "Ведическая:", "Биоритмы:") |
+| 3 | **Отказ от псевдонауки** | Убрать "ML" из названий, переименовать в "ScoreCalculator" или "IndicatorGenerator" |
+| 4 | **Стабильность** | Время ответа < 2 секунды, ошибки < 0.1% |
+| 5 | **Энергоэффективность** | Оптимизировать кэширование, уменьшить количество тяжелых расчетов |
+
+### 1.2. Технические цели
+
+| № | Цель | Критерий успеха |
+|---|------|-----------------|
+| 1 | **Модульность** | Каждый модуль можно заменить без влияния на другие |
+| 2 | **Тестируемость** | Покрытие тестами > 80% |
+| 3 | **Документированность** | Каждый публичный метод имеет docstring |
+| 4 | **Производительность** | Использовать кэширование, асинхронность, пулы соединений |
+| 5 | **Безопасность** | Валидация всех входных данных, защита от SQL-инъекций |
+
+---
+
+## 2. АРХИТЕКТУРА
+
+### 2.1. Общая схема
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           API / Bot Layer                              │
+│                    (FastAPI / Aiogram handlers)                        │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Orchestration Layer                             │
+│                         (Service Coordinators)                         │
+│                                                                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
+│  │UserProfileService│  │NatalChartService│  │ForecastOrchestrator     │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Core Business Logic                            │
+│                    (Independent Calculators)                           │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    ASTROLOGICAL CORE                             │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │EphemerisCore    │  │HouseCalculator  │  │AspectCalculator │  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │DashaCalculator  │  │PanchangaCalc    │  │TransitCalculator│  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    WESTERN SYSTEM                                │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │WesternTransits  │  │WesternAspects   │  │WesternInterpreter│  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    VEDIC SYSTEM (Optional)                       │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │DashaService     │  │PanchangaService │  │VedicInterpreter │  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    BIORHYTHM CORE                                │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │BiorhythmCalc    │  │BiorhythmProfile │  │BiorhythmDaily   │  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    SCORE GENERATORS                              │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │AxisScoreCalc    │  │ActivityScoreCalc│  │FinancialScore   │  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Data Layer                                     │
+│                    (PostgreSQL + Redis)                                │
+│                                                                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
+│  │   PostgreSQL    │  │     Redis       │  │     Cache Manager       │ │
+│  │ (Main DB)       │  │ (Cache + Queue) │  │ (LRU + TTL)             │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2. Принципы архитектуры
+
+| Принцип | Описание |
+|---------|----------|
+| **Single Responsibility** | Каждый класс — одна задача |
+| **Dependency Injection** | Все зависимости передаются через конструктор |
+| **Interface Segregation** | Интерфейсы специфичны для клиентов |
+| **Liskov Substitution** | Подклассы могут заменять родительские |
+| **Open/Closed** | Открыто для расширения, закрыто для модификации |
+| **Clean Architecture** | Бизнес-логика не зависит от фреймворков и БД |
+
+---
+
+## 3. ДЕТАЛЬНЫЙ ПЛАН ИСПРАВЛЕНИЙ ПО МОДУЛЯМ
+
+### 3.1. `ephemeris_base.py` — Фундамент ✅ **Оставить без изменений**
+
+| Что делать | Почему |
+|------------|--------|
+| ✅ Оставить как есть | Работает идеально |
+| ✅ Убрать fallback `planetary_hour` | Заменить на корректный расчет или `None` |
+| ✅ Убрать `calculate_jyotish` | Перенести в отдельный модуль ведической системы |
+
+**Оценка после исправления:** 5/5
+
+---
+
+### 3.2. `natal_charts.py` — **Рефакторинг**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Кустарная сила планет | `_calculate_planet_strength` — произвольная формула |
+| 2 | Кустарная сила домов | `_calculate_house_strength` — среднее арифметическое |
+| 3 | Кустарная сила аспектов | `_calculate_aspect_strength` — линейная по орбису |
+| 4 | Двойной расчет | `calculate_jyotish_chart` вызывает `calculate_natal_chart` |
+| 5 | Смешение систем | В одном методе — западная и ведическая |
+
+#### Решение:
+
+```python
+# НОВАЯ СТРУКТУРА
+
+class NatalChartCalculator:
+    """Расчет натальной карты — только западная система"""
+    
+    def __init__(self, ephemeris: EphemerisCalculator):
+        self.ephemeris = ephemeris
+    
+    async def calculate_western(
+        self,
+        lat: float,
+        lon: float,
+        birth_datetime_local: datetime,
+        timezone_str: str,
+        house_system: str = 'P'
+    ) -> WesternChart:
+        """Расчет только западной карты"""
+        # 1. Эфемериды (тропические)
+        chart = await self.ephemeris.calculate(...)
+        
+        # 2. Сила планет — по эссенциальным достоинствам (НЕ кустарная)
+        for planet in chart.planets.values():
+            planet.strength = self._calculate_essential_dignity(planet)
+        
+        # 3. Сила домов — по куспидам и управителям (НЕ среднее арифметическое)
+        for house_num, house in chart.houses.items():
+            house.strength = self._calculate_house_strength(
+                house, chart.planets, chart.aspects
+            )
+        
+        return WesternChart.from_raw(chart)
+    
+    def _calculate_essential_dignity(self, planet: PlanetPosition) -> float:
+        """Реальная астрологическая сила — сумма достоинств"""
+        # Используем уже рассчитанные dignity_score
+        # Нормализуем от -5..+5 до 0..1 с сигмоидой
+        score = planet.dignity_score  # уже рассчитан в ephemeris_base.py
+        return self._sigmoid((score + 5) / 10)
+    
+    def _calculate_house_strength(
+        self,
+        house: House,
+        planets: Dict,
+        aspects: List[Aspect]
+    ) -> float:
+        """Сила дома = управитель + планеты в доме + аспекты"""
+        # 1. Управитель дома (по знаку куспида)
+        ruler = self._get_house_ruler(house.sign)
+        ruler_strength = planets.get(ruler, {}).get('strength', 0.5)
+        
+        # 2. Планеты в доме (усиливают или ослабляют)
+        planets_in_house = [p for p in planets.values() if p.house == house.number]
+        planet_factor = sum(p.strength for p in planets_in_house) / max(1, len(planets_in_house))
+        
+        # 3. Аспекты к куспиду дома
+        aspect_factor = self._calculate_aspects_to_cusp(house.cusp, aspects)
+        
+        # 4. Комбинация
+        return self._sigmoid(
+            ruler_strength * 0.4 +
+            planet_factor * 0.3 +
+            aspect_factor * 0.3
+        )
+    
+    def _calculate_aspects_to_cusp(self, cusp: float, aspects: List[Aspect]) -> float:
+        """Аспекты к куспиду дома"""
+        # Реализация
+        pass
+```
+
+#### Ведическая система — отдельный модуль:
+
+```python
+class JyotishChartCalculator:
+    """Расчет джйотиш карты — отдельный модуль"""
+    
+    def __init__(self, ephemeris: EphemerisCalculator):
+        self.ephemeris = ephemeris
+    
+    async def calculate_vedic(
+        self,
+        lat: float,
+        lon: float,
+        birth_datetime_local: datetime,
+        timezone_str: str,
+        house_system: str = 'P'
+    ) -> VedicChart:
+        """Расчет только ведической карты"""
+        # 1. Эфемериды (сидерические)
+        chart = await self.ephemeris.calculate_jyotish(...)
+        
+        # 2. Даша
+        chart.dasha = self._calculate_dasha(chart.moon_longitude, birth_datetime)
+        
+        # 3. Панчанга
+        chart.panchanga = self._calculate_panchanga(
+            chart.sun_longitude, chart.moon_longitude
+        )
+        
+        return VedicChart.from_raw(chart)
+```
+
+**Итого изменений:** ~300 строк нового кода, ~150 строк удалено
+
+---
+
+### 3.3. `psyho_matrix.py` — **Полная переработка или удаление**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Третье число — ошибка | `first - 2*day` вместо `first - 2*первая_цифра_дня` |
+| 2 | Кармический цикл 40 | Необоснованное добавление |
+| 3 | Произвольные веса | Индексы — субъективные числа |
+| 4 | Выдается за классику | Но является авторской модификацией |
+
+#### Решение — Два варианта:
+
+**Вариант A: Привести к классике**
+
+```python
+class ClassicalPsyhoMatrixCalculator:
+    """Классическая психоматрица Александрова"""
+    
+    def _calculate_third_number(self, first_number: int, day: int) -> int:
+        # Исправлено: используем ПЕРВУЮ цифру дня
+        first_digit_of_day = int(str(day)[0])
+        third_raw = first_number - 2 * first_digit_of_day
+        # НЕТ добавления 40!
+        return self._reduction_with_masters(third_raw)
+    
+    def _calculate_indices(self, matrix_digits: Dict) -> Dict:
+        # Убрать произвольные веса
+        # Использовать классическую интерпретацию
+        pass
+```
+
+**Вариант B: Честное переименование**
+
+```python
+class AuthorPsyhoMatrixCalculator:
+    """Авторская нумерологическая модель (на основе психоматрицы)"""
+    
+    def __init__(self):
+        # Четко указать, что это авторская интерпретация
+        pass
+    
+    def calculate(self, birth_date: date) -> AuthorMatrix:
+        # Оставить текущую логику, но переименовать
+        # Все индексы назвать custom_* или author_*
+        pass
+```
+
+**Рекомендация:** Вариант B — меньше работы, честнее для пользователя.
+
+**Итого изменений:** ~100 строк (переименование) или ~300 строк (исправление)
+
+---
+
+### 3.4. `magic_profile.py` — **Полная переработка**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Смешение систем | Астрология + нумерология + биоритмы |
+| 2 | Произвольные веса | Все коэффициенты — авторские |
+| 3 | Псевдо-Big Five | Не имеет отношения к реальной психологии |
+| 4 | `confidence_score` | Иллюзия точности |
+
+#### Решение:
+
+```python
+class AxisScoreCalculator:
+    """
+    Калькулятор баллов по 9 осям.
+    НЕ претендует на психологию, НЕ использует Big Five.
+    Просто агрегирует данные из разных источников.
+    """
+    
+    def __init__(self):
+        self.weights = self._load_weights_from_config()
+    
+    def calculate_axes(
+        self,
+        natal_chart: WesternChart,
+        biorhythms: BiorhythmSet,
+        user_profile: UserProfile
+    ) -> Dict[str, AxisScore]:
+        """Расчет 9 осей с ЧЕСТНЫМ указанием источников"""
+        
+        axes = {}
+        
+        # Ось 1: Энергия и воля
+        axes['energy_will'] = AxisScore(
+            name="Энергия и воля",
+            value=self._calculate_energy_will(natal_chart, biorhythms),
+            sources={
+                'astrology': 0.6,   # 60% из натальной карты
+                'biorhythms': 0.3,  # 30% из биоритмов
+                'user': 0.1         # 10% из профиля пользователя
+            },
+            confidence=0.85
+        )
+        
+        # ... аналогично для всех 9 осей
+        
+        return axes
+    
+    def _calculate_energy_will(self, chart: WesternChart, biorhythms: BiorhythmSet) -> float:
+        """Честный расчет с указанием формулы"""
+        # Формула прозрачна и задокументирована
+        mars = chart.planets['Mars'].strength
+        sun = chart.planets['Sun'].strength
+        physical = biorhythms.cycles['physical'].value
+        
+        # Простая формула с понятными коэффициентами
+        return self._sigmoid(
+            mars * 0.4 +
+            sun * 0.3 +
+            physical * 0.2 +
+            0.1  # база
+        )
+```
+
+**Итого изменений:** ~500 строк (полная переработка), ~400 строк удалено
+
+---
+
+### 3.5. `activity_services.py` — **Переименование и упрощение**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | "ML" в названии | Нет машинного обучения |
+| 2 | Произвольные веса | Коэффициенты — авторские |
+| 3 | feature_vector нестабилен | Длина меняется |
+| 4 | Рекомендации пустые | `recommendations: {}` в данных |
+
+#### Решение:
+
+```python
+class ActivityScoreCalculator:
+    """
+    Калькулятор баллов для активностей.
+    НЕ ML — просто взвешенная сумма признаков.
+    """
+    
+    def __init__(self):
+        # Веса вынесены в конфиг с комментариями
+        self.config = self._load_config()
+    
+    def calculate_activity_scores(
+        self,
+        axes: Dict[str, AxisScore]
+    ) -> Dict[str, ActivityScore]:
+        """Расчет баллов для 7 типов активностей"""
+        
+        scores = {}
+        for activity_type in ActivityType:
+            score = self._calculate_single_activity(activity_type, axes)
+            scores[activity_type.value] = score
+        
+        return scores
+    
+    def _calculate_single_activity(
+        self,
+        activity_type: ActivityType,
+        axes: Dict[str, AxisScore]
+    ) -> float:
+        """Прозрачная формула для одной активности"""
+        
+        config = self.config[activity_type.value]
+        
+        total = 0.0
+        for axis_name, weight in config.weights.items():
+            total += axes[axis_name].value * weight
+        
+        return self._sigmoid(total)
+```
+
+**Итого изменений:** ~150 строк (переименование), ~100 строк изменено
+
+---
+
+### 3.6. `daily_forecast_service.py` — **Полный рефакторинг**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Монстр | >600 строк, нарушение SRP |
+| 2 | Смешение систем | Западная + ведическая + биоритмы |
+| 3 | Дублирование | Одно и то же в разных местах |
+| 4 | Нет четкого разделения | Все в одном файле |
+
+#### Решение:
+
+```python
+# НОВАЯ СТРУКТУРА
+
+# 1. forecast_orchestrator.py — координатор
+class ForecastOrchestrator:
+    """Координатор всех систем прогнозирования"""
+    
+    def __init__(
+        self,
+        western_system: WesternSystem,
+        vedic_system: Optional[VedicSystem] = None,
+        biorhythm_system: BiorhythmSystem = None
+    ):
+        self.western = western_system
+        self.vedic = vedic_system
+        self.biorhythms = biorhythm_system
+        self.synthesizer = SynthesisLayer()
+    
+    async def get_daily_forecast(
+        self,
+        user_id: int,
+        target_date: date,
+        include_vedic: bool = False
+    ) -> CombinedForecast:
+        """Получить дневной прогноз"""
+        
+        tasks = []
+        
+        # 1. Западная система (всегда)
+        tasks.append(self.western.calculate(user_id, target_date))
+        
+        # 2. Ведическая (опционально)
+        if include_vedic:
+            tasks.append(self.vedic.calculate(user_id, target_date))
+        
+        # 3. Биоритмы (всегда)
+        tasks.append(self.biorhythms.calculate(user_id, target_date))
+        
+        results = await asyncio.gather(*tasks)
+        
+        return self.synthesizer.combine(*results)
+
+
+# 2. western_system.py — западная логика (отдельно)
+class WesternSystem:
+    """Западная астрологическая система"""
+    
+    def __init__(self, transit_calc: TransitCalculator, interpreter: WesternInterpreter):
+        self.transits = transit_calc
+        self.interpreter = interpreter
+    
+    async def calculate(self, user_id: int, target_date: date) -> WesternForecast:
+        # Только западная логика
+        transits = await self.transits.calculate_transit_aspects(
+            user_id, target_date, system='western'
+        )
+        return self.interpreter.interpret(transits)
+
+
+# 3. vedic_system.py — ведическая логика (отдельно)
+class VedicSystem:
+    """Ведическая астрологическая система"""
+    
+    def __init__(
+        self,
+        dasha_calc: DashaCalculator,
+        panchanga_calc: PanchangaCalculator,
+        interpreter: VedicInterpreter
+    ):
+        self.dasha = dasha_calc
+        self.panchanga = panchanga_calc
+        self.interpreter = interpreter
+    
+    async def calculate(self, user_id: int, target_date: date) -> VedicForecast:
+        # Только ведическая логика
+        dasha = self.dasha.calculate(user_id, target_date)
+        panchanga = self.panchanga.calculate(user_id, target_date)
+        return self.interpreter.interpret(dasha, panchanga)
+
+
+# 4. synthesis_layer.py — агрегация (без усреднения)
+class SynthesisLayer:
+    """Агрегация результатов разных систем"""
+    
+    def combine(self, *results) -> CombinedForecast:
+        # НЕ усреднение!
+        # Простое объединение с указанием источников
+        pass
+```
+
+**Итого изменений:** ~400 строк нового кода, ~600 строк удалено (разбито на 4 файла)
+
+---
+
+### 3.7. `recommendation_generator.py` — **Упрощение**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Дублирование | С `axis_modulator.py` |
+| 2 | Смешение логики | Рекомендации и расчеты в одном файле |
+
+#### Решение:
+
+```python
+class RecommendationGenerator:
+    """
+    Генератор текстовых рекомендаций.
+    ТОЛЬКО текст, НЕ расчеты.
+    """
+    
+    def generate_recommendations(
+        self,
+        axes: Dict[str, AxisScore],
+        western: WesternForecast,
+        vedic: Optional[VedicForecast] = None
+    ) -> List[Recommendation]:
+        """Генерация текста на основе готовых данных"""
+        
+        recommendations = []
+        
+        # 1. Оси
+        for axis_name, score in axes.items():
+            if score.value > 0.7:
+                recommendations.append(self._generate_high_advice(axis_name))
+            elif score.value < 0.4:
+                recommendations.append(self._generate_low_advice(axis_name))
+        
+        # 2. Западная система
+        recommendations.append(self._generate_western_advice(western))
+        
+        # 3. Ведическая (если есть)
+        if vedic:
+            recommendations.append(self._generate_vedic_advice(vedic))
+        
+        return recommendations
+    
+    def _generate_high_advice(self, axis_name: str) -> Recommendation:
+        """Совет для высокой оси"""
+        # Простые шаблоны
+        pass
+    
+    def _generate_low_advice(self, axis_name: str) -> Recommendation:
+        """Совет для низкой оси"""
+        pass
+```
+
+**Итого изменений:** ~100 строк (упрощение), ~200 строк удалено
+
+---
+
+### 3.8. Кэширование — **Унификация**
+
+#### Проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Много кэшей | Эфемериды, транзиты, прогнозы — отдельно |
+| 2 | Разные TTL | Где-то 1 день, где-то 31 день |
+| 3 | Нет единого управления | Сложно инвалидировать |
+
+#### Решение:
+
+```python
+class CacheManager:
+    """
+    Единый менеджер кэшей.
+    Инкапсулирует Redis + in-memory LRU.
+    """
+    
+    def __init__(self, redis_client: Optional[Redis] = None):
+        self.redis = redis_client
+        self.memory_cache = LRUCache(max_size=1000)
+    
+    async def get(
+        self,
+        key: str,
+        namespace: str,
+        ttl: Optional[int] = None
+    ) -> Optional[Any]:
+        """Получить из кэша (сначала память, потом Redis)"""
+        # 1. In-memory
+        value = self.memory_cache.get(self._make_key(key, namespace))
+        if value:
+            return value
+        
+        # 2. Redis
+        if self.redis:
+            value = await self.redis.get(self._make_key(key, namespace))
+            if value:
+                self.memory_cache.set(self._make_key(key, namespace), value)
+                return value
+        
+        return None
+    
+    async def set(
+        self,
+        key: str,
+        namespace: str,
+        value: Any,
+        ttl: Optional[int] = None
+    ) -> None:
+        """Сохранить в кэш"""
+        # 1. In-memory
+        self.memory_cache.set(self._make_key(key, namespace), value)
+        
+        # 2. Redis
+        if self.redis:
+            await self.redis.setex(
+                self._make_key(key, namespace),
+                ttl or 86400,  # 24 часа по умолчанию
+                value
+            )
+    
+    def invalidate(self, namespace: str, key: Optional[str] = None):
+        """Инвалидация кэша"""
+        # Удалить все ключи в namespace
+        pass
+```
+
+**TTL по типам данных:**
+
+| Тип данных | TTL | Почему |
+|------------|-----|--------|
+| Эфемериды | 365 дней | Не меняются |
+| Транзиты | 1 день | Меняются ежедневно |
+| Прогнозы | 31 день | Можно пересчитывать раз в месяц |
+| Биоритмы | 1 день | Зависят от даты |
+| Психоматрица | ∞ | Не меняется |
+| Натальная карта | ∞ | Не меняется |
+
+---
+
+### 3.9. База данных — **Оптимизация индексов**
+
+#### Текущие проблемы:
+
+| № | Проблема | Описание |
+|---|----------|----------|
+| 1 | Нет индексов для частых запросов | `user_id` + `calculation_date` |
+| 2 | JSONB поля без индексов | `planets`, `aspects` — часто запрашиваются |
+| 3 | Нет партиционирования | Таблицы растут |
+
+#### Решение:
+
+```sql
+-- 1. Составные индексы для частых запросов
+CREATE INDEX idx_natal_charts_user_date ON natal_charts (user_id, calculation_date DESC);
+CREATE INDEX idx_forecast_user_date ON daily_forecast_cache (user_id, forecast_date DESC);
+CREATE INDEX idx_activities_user_date ON optimal_activities (user_id, calculation_date DESC);
+
+-- 2. GIN индексы для JSONB
+CREATE INDEX idx_natal_planets_gin ON natal_charts USING GIN (planets);
+CREATE INDEX idx_natal_aspects_gin ON natal_charts USING GIN (aspects);
+
+-- 3. Партиционирование по времени
+CREATE TABLE natal_charts_partitioned (
+    LIKE natal_charts INCLUDING ALL
+) PARTITION BY RANGE (calculation_date);
+
+-- Создаем партиции по годам
+CREATE TABLE natal_charts_2024 PARTITION OF natal_charts_partitioned
+    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE natal_charts_2025 PARTITION OF natal_charts_partitioned
+    FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+-- ... и т.д.
+```
+
+---
+
+## 4. ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ
+
+### 4.1. Тяжелые расчеты — вынос в очередь
+
+| Расчет | Частота | Тяжесть | Решение |
+|--------|---------|---------|---------|
+| Натальная карта | 1 раз | Высокая | Вычислить сразу, сохранить |
+| Транзиты | Ежедневно | Средняя | Кэшировать на сутки |
+| Даша | При запросе | Низкая | Кэшировать на месяц |
+| Прогноз | Ежедневно | Средняя | Кэшировать на сутки |
+| Панчанга | Ежедневно | Низкая | Кэшировать на сутки |
+
+### 4.2. Пул соединений
+
+```python
+# database/core.py
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+# Оптимальные параметры пула
+engine = create_async_engine(
+    DATABASE_URL,
+    pool_size=20,          # Максимум соединений
+    max_overflow=10,       # Дополнительные при пике
+    pool_pre_ping=True,    # Проверка соединений
+    pool_recycle=3600,     # Пересоздавать через час
+    echo=False             # Отключить логирование SQL
+)
+
+AsyncSessionLocal = sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False
+)
+```
+
+### 4.3. Асинхронные задачи (для тяжелых операций)
+
+```python
+# tasks.py
+from celery import Celery
+
+celery_app = Celery(
+    'tasks',
+    broker='redis://localhost:6379/0',
+    backend='redis://localhost:6379/0'
+)
+
+@celery_app.task
+def calculate_natal_chart_async(user_id: int, birth_data: Dict) -> Dict:
+    """Тяжелый расчет в фоне"""
+    # Расчет натальной карты
+    pass
+
+@celery_app.task
+def generate_weekly_forecast_async(user_id: int) -> Dict:
+    """Генерация недельного прогноза в фоне"""
+    # 7 дней × тяжелые расчеты
+    pass
+```
+
+---
+
+## 5. ЭНЕРГОЭФФЕКТИВНОСТЬ
+
+### 5.1. Оптимизация вызовов Swiss Ephemeris
+
+| Текущее | Оптимизированное |
+|---------|------------------|
+| `swe.calc_ut` для каждой планеты отдельно | `swe.calc_ut` для всех планет в одном цикле |
+| Нет кэширования аянамши | Кэшировать аянамшу на сутки |
+| Нет кэширования звезд | Кэшировать звезды на месяц |
+
+### 5.2. Оптимизация JSONB
+
+| Текущее | Оптимизированное |
+|---------|------------------|
+| Хранятся как dict | Хранить сжатый JSON (pg compression) |
+| Нет индексов | Добавить GIN индексы для частых полей |
+| Все поля загружаются | Использовать `defer()` для тяжелых полей |
+
+### 5.3. Оптимизация запросов
+
+```python
+# Вместо:
+result = await session.execute(
+    select(NatalChart).where(NatalChart.user_id == user_id)
+)
+chart = result.scalar_one_or_none()
+
+# Использовать:
+result = await session.execute(
+    select(NatalChart)
+    .where(NatalChart.user_id == user_id)
+    .options(defer(NatalChart.planets))  # Не загружать тяжелые JSONB
+    .options(defer(NatalChart.aspects))
+)
+chart = result.scalar_one_or_none()
+# Загрузить только когда нужно
+```
+
+---
+
+## 6. ПОРЯДОК ВЫПОЛНЕНИЯ РАБОТ
+
+### 6.1. Этап 1: Подготовка (1 неделя)
+
+| № | Задача | Ответственный | Результат |
+|---|--------|---------------|-----------|
+| 1.1 | Создать бранч `refactor-v3.0` | Dev | Готовый бранч |
+| 1.2 | Написать тесты для текущей системы | QA | Тесты проходят |
+| 1.3 | Создать диаграмму зависимостей | Dev | Готовая диаграмма |
+| 1.4 | Документировать текущую архитектуру | Dev | Документ |
+
+### 6.2. Этап 2: Разделение ядра (2 недели)
+
+| № | Задача | Ответственный | Результат |
+|---|--------|---------------|-----------|
+| 2.1 | Создать датаклассы `WesternForecast`, `VedicForecast` | Dev | Готово |
+| 2.2 | Создать `ForecastOrchestrator` | Dev | Готово |
+| 2.3 | Выделить западную логику из `daily_forecast_service.py` | Dev | Готово |
+| 2.4 | Выделить ведическую логику в отдельный модуль | Dev | Готово |
+| 2.5 | Создать `SynthesisLayer` | Dev | Готово |
+
+### 6.3. Этап 3: Исправление расчетов (3 недели)
+
+| № | Задача | Ответственный | Результат |
+|---|--------|---------------|-----------|
+| 3.1 | Исправить `natal_charts.py` | Dev | Готово |
+| 3.2 | Переработать `magic_profile.py` | Dev | Готово |
+| 3.3 | Переименовать `activity_services.py` | Dev | Готово |
+| 3.4 | Исправить психоматрицу | Dev | Готово |
+| 3.5 | Убрать дублирование правил | Dev | Готово |
+
+### 6.4. Этап 4: Оптимизация (2 недели)
+
+| № | Задача | Ответственный | Результат |
+|---|--------|---------------|-----------|
+| 4.1 | Внедрить `CacheManager` | Dev | Готово |
+| 4.2 | Оптимизировать индексы БД | DBA | Готово |
+| 4.3 | Настроить пул соединений | DevOps | Готово |
+| 4.4 | Оптимизировать JSONB запросы | Dev | Готово |
+
+### 6.5. Этап 5: Тестирование (2 недели)
+
+| № | Задача | Ответственный | Результат |
+|---|--------|---------------|-----------|
+| 5.1 | Написать unit-тесты | QA | Покрытие > 80% |
+| 5.2 | Написать интеграционные тесты | QA | Все сценарии |
+| 5.3 | Нагрузочное тестирование | DevOps | < 2 сек |
+| 5.4 | User Acceptance Testing | PM | Принято |
+
+---
+
+## 7. КРИТЕРИИ УСПЕХА
+
+### 7.1. Технические критерии
+
+| № | Критерий | Порог | Метод проверки |
+|---|----------|-------|----------------|
+| 1 | Время ответа API | < 2 сек | Нагрузочное тестирование |
+| 2 | Покрытие тестами | > 80% | Coverage report |
+| 3 | Ошибки в логах | < 0.1% | Мониторинг |
+| 4 | Использование кэша | > 70% | Статистика кэша |
+| 5 | Запросов в БД | < 10 на запрос | SQL logging |
+
+### 7.2. Бизнес-критерии
+
+| № | Критерий | Порог | Метод проверки |
+|---|----------|-------|----------------|
+| 1 | Пользователь видит источник данных | 100% | UI проверка |
+| 2 | Нет "ML" в интерфейсе | 100% | UI проверка |
+| 3 | Прогнозы не противоречат друг другу | 100% | Логическая проверка |
+| 4 | Даша и транзиты не смешаны | 100% | Код-ревью |
+
+---
+
+## 8. РИСКИ И МИТИГАЦИЯ
+
+| № | Риск | Вероятность | Влияние | Митигация |
+|---|------|-------------|---------|-----------|
+| 1 | Регрессия в существующих расчетах | Высокая | Высокое | Тесты до/после, A/B тестирование |
+| 2 | Увеличение времени ответа | Средняя | Среднее | Профилирование, оптимизация |
+| 3 | Потеря данных при миграции | Низкая | Критическое | Бэкап, поэтапный rollout |
+| 4 | Непонимание новой архитектуры | Средняя | Среднее | Документация, код-ревью |
+| 5 | Конфликты при merge | Средняя | Низкое | Частые merge, CI/CD |
+
+---
+
+## 9. ИТОГОВЫЕ ЦИФРЫ
+
+| Параметр | Значение |
+|----------|----------|
+| Общее время | 10 недель |
+| Размер команды | 1-2 разработчика |
+| Строк кода изменено | ~3500 |
+| Строк кода добавлено | ~3000 |
+| Строк кода удалено | ~2500 |
+| Новых файлов | ~8 |
+| Измененных файлов | ~12 |
+
+---
+
+## 10. ПРИЛОЖЕНИЕ: КОНФИГУРАЦИЯ
+
+### 10.1. Конфиг для весов (вынесен из кода)
+
+```yaml
+# config/weights.yaml
+axes:
+  energy_will:
+    formula: "mars * 0.4 + sun * 0.3 + physical_biorhythm * 0.2 + 0.1"
+    sources:
+      - astrology: 0.6
+      - biorhythms: 0.3
+      - user: 0.1
+  intellect_logic:
+    formula: "mercury * 0.5 + uranus * 0.2 + intellectual_biorhythm * 0.3"
+    sources:
+      - astrology: 0.7
+      - biorhythms: 0.3
+  # ... и т.д.
+
+activities:
+  physical:
+    weights:
+      energy_will: 0.4
+      health_physical: 0.4
+      work_discipline: 0.2
+  # ... и т.д.
+```
+
+### 10.2. Конфиг для кэширования
+
+```yaml
+# config/cache.yaml
+cache:
+  ephemeris:
+    ttl: 31536000  # 1 год
+    max_size: 1000
+  transits:
+    ttl: 86400    # 1 день
+    max_size: 365
+  forecasts:
+    ttl: 2592000  # 30 дней
+    max_size: 1000
+  biorhythms:
+    ttl: 86400    # 1 день
+    max_size: 1000
+```
+
+---
+
+## 11. ЗАКЛЮЧЕНИЕ
+
+Данное ТЗ представляет собой **полный план рефакторинга** системы до состояния "сделал и забыл".
+
+**Ключевые изменения:**
+
+1. ✅ Разделение на две параллельные системы (западная + ведическая)
+2. ✅ Отказ от псевдонауки ("ML" → "ScoreCalculator")
+3. ✅ Исправление всех кустарных расчетов
+4. ✅ Унификация кэширования
+5. ✅ Оптимизация производительности
+6. ✅ Повышение тестируемости
+7. ✅ Честность перед пользователем
+
+**Результат:** Стабильная, быстрая, методологически чистая система, которую можно развернуть и забыть.

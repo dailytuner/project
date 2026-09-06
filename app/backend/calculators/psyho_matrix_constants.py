@@ -27,12 +27,12 @@ ANALYSIS_TEMPLATES: Dict[int, Dict[int, str]] = {
         1: "Balanced, stable character",
         2: "Strong character, leadership qualities",
         3: "Willful, purposeful character",
-        4: "Transformational character, powerful will"
+        4: "Very strong, potentially despotic character"
     },
     2: {  # Energy
         0: "Energy requires attention, conserve strength",
         1: "Balanced energy, stability",
-        2: "High energy, activity",
+        2: "Good, stable energy",
         3: "Powerful energy, needs direction",
         4: "Colossal energy, gift of influence"
     },
@@ -135,20 +135,8 @@ COMPATIBILITY_MAP: Dict[int, List[int]] = {
     33: [11, 22, 9]
 }
 
-# ==================== ПОРОГИ ЭНЕРГИИ ====================
-
-ENERGY_THRESHOLDS: List[Tuple[int, str]] = [
-    (6, 'very_low'),
-    (13, 'low'),
-    (21, 'medium'),
-    (28, 'high'),
-    (99, 'very_high')
-]
-
 # ==================== МАСТЕР-ЧИСЛА ====================
 
 MASTER_NUMBERS = frozenset({11, 22, 33})
 
-# ==================== КАРМИЧЕСКИЙ ЦИКЛ ====================
 
-KARMIC_CYCLE: int = 40

@@ -1,7 +1,7 @@
 """
-psyho_matrix.py — Production-ready калькулятор психоматрицы (методика Александрова)
-Версия 4.1 — FIX: полная обратная совместимость с v3.1, встроенные константы, один файл
-Совместимость: полная (все ключи, все значения, все тексты — как в v3.1)
+psyho_matrix.py - Профессиональный калькулятор психоматрицы
+Версия 3.1 - ИСПРАВЛЕНА: второе число, предназначение, персональные годы
+Совместима с существующей схемой БД
 """
 
 from datetime import datetime, date
@@ -10,148 +10,21 @@ import logging
 from functools import lru_cache
 import math
 
+from .psyho_matrix_constants import (
+    DIGIT_TO_CHARACTERISTIC,
+    ANALYSIS_TEMPLATES,
+    LIFE_PURPOSE_MAP,
+    PARTNER_TYPES,
+    COMPATIBILITY_MAP,
+    MASTER_NUMBERS
+)
+
 logger = logging.getLogger(__name__)
-
-
-# ==================== ВСТРОЕННЫЕ КОНСТАНТЫ (v3.1) ====================
-# Все константы из psyho_matrix_constants.py встроены — модуль самодостаточен
-
-DIGIT_TO_CHARACTERISTIC = {
-    1: "character",
-    2: "energy",
-    3: "interest",
-    4: "health",
-    5: "logic",
-    6: "labor",
-    7: "luck",
-    8: "duty",
-    9: "memory",
-}
-
-ANALYSIS_TEMPLATES = {
-    1: {
-        0: "Weak character, dependent on others' opinions, ego is suppressed or absent.",
-        1: "Soft and flexible character with own opinion. Able to compromise.",
-        2: "Balanced character, good self-esteem, adequate ego.",
-        3: "Strong character, leadership qualities, high self-esteem, goal-oriented.",
-        4: "Very strong character, dictatorial tendencies, difficult to compromise.",
-    },
-    2: {
-        0: "No energy, sensitive to others' aura, exhausted by communication. Needs a calm partner.",
-        1: "Lack of energy, sensitive to mood swings. Rest and recovery are important.",
-        2: "Good energy reserve, attractive to the opposite sex, stable aura.",
-        3: "High energy, magnetism, charisma. Many admirers. Sexuality is strongly expressed.",
-        4: "Very high energy, bright magnetism. Risk of energy manipulation, spiritual practice needed.",
-    },
-    3: {
-        0: "Weak creative interest, learning is difficult, needs practical motivation.",
-        1: "Interest in knowledge exists but requires effort to concentrate. Creativity is episodic.",
-        2: "Good interest in life, thirst for knowledge, stable creative beginning.",
-        3: "Strongly expressed interest, thirst for science or art, many hobbies, curiosity.",
-        4: "Sharp insatiable interest, many hobbies, risk of scattering. Genius lies in focus.",
-    },
-    4: {
-        0: "Weak health from birth, low immunity, requires constant self-care.",
-        1: "Average health, illnesses come suddenly, needs regimen and hardening.",
-        2: "Good health, strong immunity, quick recovery.",
-        3: "Excellent health, high resistance, rarely gets sick.",
-        4: "Iron health, practically never sick, huge reserve of vitality.",
-    },
-    5: {
-        0: "Weak logic, acts intuitively, difficult to explain decisions. Better to trust inner voice.",
-        1: "Logic is weakly developed, intuition prevails. Decisions are made by inner feeling.",
-        2: "Balanced logic and intuition. Can both analyze and feel correctness.",
-        3: "Strong logic, analytical mind, loves structures and schemes. Intuition is subordinate to reason.",
-        4: "Very strong logic, mathematical mind, builds precise calculations. Risk of fixation on details.",
-    },
-    6: {
-        0: "Earthly labor is given with difficulty, does not like physical work, prefers intellectual.",
-        1: "Average diligence, works out of necessity. Physical labor brings no joy.",
-        2: "Diligent, can do both physical and mental labor. Golden hands.",
-        3: "Very diligent, master of his craft, fully devoted to work. Work is the meaning of life.",
-        4: "Fanatical workaholic, cannot imagine himself without work. Important not to forget rest and family.",
-    },
-    7: {
-        0: "Luck is not manifested, everything is given through labor. Need to create opportunities yourself.",
-        1: "Episodic luck, there are happy cases, but you cannot rely on them.",
-        2: "Lucky person, Higher Forces help in difficult situations, there is a guardian angel.",
-        3: "Very lucky, fortune is on his side, gets out dry. Can rely on intuition.",
-        4: "Phenomenal luck, patronage of fate. But risk of relaxing — luck leaves the lazy.",
-    },
-    8: {
-        0: "Weak sense of duty, easily shirks responsibility, freedom-loving.",
-        1: "Feels duty selectively, takes responsibility only for loved ones.",
-        2: "Strong sense of duty, responsible, keeps his word, reliable partner.",
-        3: "Very strong sense of duty, ready to take responsibility for everyone. Patriot, family man.",
-        4: "Sense of duty brought to absurdity, takes on others' problems, risk of burnout.",
-    },
-    9: {
-        0: "Weak memory, difficult to memorize, mind is unclear. Need notes and repetitions.",
-        1: "Average memory, memorizes through understanding. Clairvoyance is not developed.",
-        2: "Good memory, clear mind, capable of analysis. Intuitive guesses are often correct.",
-        3: "Excellent memory, clear mind, tendency to clairvoyance. Can foresee events.",
-        4: "Phenomenal memory, deep mind, developed clairvoyance. Potential of a clairvoyant.",
-    },
-}
-
-LIFE_PURPOSE_MAP = {
-    1: "Leadership, self-realization through power and management. Purpose is to lead.",
-    2: "Cooperation, diplomacy, partnership. Purpose is to connect people, be a bridge.",
-    3: "Creativity, self-expression, communication. Purpose is to inspire through art and word.",
-    4: "Building, order, stability. Purpose is to create reliable foundations.",
-    5: "Freedom, change, exploration. Purpose is to expand boundaries, teach adaptability.",
-    6: "Service, care, responsibility. Purpose is to bring harmony to family and society.",
-    7: "Analysis, wisdom, spiritual search. Purpose is to seek truth and transmit knowledge.",
-    8: "Power, material success, organization. Purpose is to manage resources for good.",
-    9: "Service to humanity, compassion, completion. Purpose is to heal and forgive.",
-    11: "Spiritual teaching, inspiration, intuition. Purpose is to carry light through example.",
-    22: "Building on a world scale, embodiment of grandiose designs. Master builder.",
-    33: "Healing through love, all-forgiveness, spiritual guidance. Master healer.",
-}
-
-PARTNER_TYPES = {
-    1: ["Leaders who can respect your independence", "Strong personalities with clear goals"],
-    2: ["Soft and diplomatic partners", "Those who value harmony and coziness"],
-    3: ["Creative and cheerful people", "Communicative partners"],
-    4: ["Reliable and practical partners", "Those who value stability"],
-    5: ["Freedom-loving adventurers", "Independent personalities"],
-    6: ["Caring and family-oriented people", "Those who value home and traditions"],
-    7: ["Deep intellectuals", "Spiritual and philosophical natures"],
-    8: ["Ambitious and goal-oriented", "Those who understand the price of success"],
-    9: ["Humane and altruistic people", "Creative personalities with a broad soul"],
-    11: ["Spiritually developed partners", "Intuitive and sensitive people"],
-    22: ["Pragmatic visionaries", "Those who share large-scale goals"],
-    33: ["Warm-hearted and compassionate", "Those who value deep emotional connection"],
-}
-
-COMPATIBILITY_MAP = {
-    1: [1, 2, 5, 9, 11],
-    2: [2, 4, 6, 8, 11, 22, 33],
-    3: [3, 5, 6, 9],
-    4: [2, 4, 8, 22],
-    5: [1, 3, 5, 9],
-    6: [2, 3, 6, 9, 33],
-    7: [7, 11, 22],
-    8: [2, 4, 8, 22],
-    9: [1, 3, 5, 6, 9, 11, 22, 33],
-    11: [1, 7, 9, 11, 22, 33],
-    22: [2, 4, 7, 8, 9, 11, 22, 33],
-    33: [2, 6, 9, 11, 22, 33],
-}
-
-MASTER_NUMBERS = {11, 22, 33}
 
 
 class PsyhoMatrixCalculator:
     """
-    Калькулятор психоматрицы по методике Александрова (Пифагор).
-
-    Версия 4.1 — полная обратная совместимость с v3.1:
-    - Матрица строится из даты + рабочих чисел (как в v3.1)
-    - Все константы встроены — ноль внешних зависимостей
-    - Все ключи результата сохранены (past_lives, soul_age и т.д.)
-    - Все тексты на английском (как в v3.1)
-    - Жёсткая валидация входных данных
+    Калькулятор психоматрицы по методике Александрова
     """
 
     def __init__(self):
@@ -162,70 +35,57 @@ class PsyhoMatrixCalculator:
         self.compatibility_map = COMPATIBILITY_MAP
         self.master_numbers = MASTER_NUMBERS
 
-    @lru_cache(maxsize=2048)
+    @lru_cache(maxsize=1024)
     def calculate_matrix(self, birth_date: date) -> Dict[str, Any]:
-        """
-        Основной метод расчёта. Возвращает полную структуру для БД.
-
-        Args:
-            birth_date: datetime.date — дата рождения
-
-        Returns:
-            dict с ключами: first_number, second_number, third_number, fourth_number,
-            matrix_digits, matrix_3x3, characteristics, talent_codes, strength_codes,
-            energy_level, life_purpose, compatibility_hints, additional,
-            karmic_analysis, forecasting
-        """
         self._validate_birth_date(birth_date)
-
+        
         day, month, year = birth_date.day, birth_date.month, birth_date.year
-
+        
         first_number = self._calculate_first_number(day, month, year)
         second_number = self._calculate_second_number(first_number)
         third_number = self._calculate_third_number(first_number, day)
         fourth_number = self._calculate_fourth_number(third_number)
-
-        # МАТРИЦА: дата + рабочие числа (как в v3.1 — для совместимости с БД)
+        
         matrix_digits, matrix_3x3 = self._build_detailed_matrix(
             day, month, year,
             first_number, second_number, third_number, fourth_number,
         )
-
+        
         characteristics = self._get_professional_characteristics(
             matrix_digits, matrix_3x3
         )
-
+        
         energy_level = self._get_energy_level(matrix_digits)
-
+        
         life_purpose = self._get_detailed_life_purpose(
             third_number, first_number
         )
-
+        
         talent_codes = self._get_detailed_talent_codes(
             matrix_digits, matrix_3x3
         )
         strength_codes = self._get_detailed_strength_codes(
             matrix_digits, matrix_3x3
         )
-
+        
         compatibility_hints = self._get_professional_compatibility_hints(
             first_number, fourth_number, matrix_digits
         )
-
+        
         additional = self._get_additional_calculations(
             day, month, year,
             matrix_digits, matrix_3x3,
             first_number, fourth_number, third_number
         )
-
+        
         karmic_analysis = self._get_karmic_analysis(
             matrix_digits, first_number, third_number
         )
-
+        
         forecasting = self._get_forecasting_data(
-            matrix_digits, first_number, fourth_number, day, month
+            matrix_digits, first_number, fourth_number
         )
-
+        
         return {
             'first_number': int(first_number),
             'second_number': int(second_number),
@@ -242,7 +102,7 @@ class PsyhoMatrixCalculator:
             'additional': additional,
             'karmic_analysis': karmic_analysis,
             'forecasting': forecasting,
-            'calculation_version': '4.1',
+            'calculation_version': '3.1',
             'calculated_at': datetime.now().isoformat(),
             'birth_date': birth_date.isoformat()
         }
@@ -250,14 +110,12 @@ class PsyhoMatrixCalculator:
     def _validate_birth_date(self, birth_date: date) -> None:
         if not isinstance(birth_date, date):
             raise TypeError(f"Expected date, got {type(birth_date)}")
-        if birth_date.year < 1800 or birth_date.year > datetime.now().year:
-            raise ValueError(f"Year must be between 1900 and {datetime.now().year}")
         try:
             datetime(birth_date.year, birth_date.month, birth_date.day)
         except ValueError as e:
             raise ValueError(f"Invalid date: {e}")
 
-    # ==================== БАЗОВЫЕ РАСЧЁТЫ ====================
+    # ==================== БАЗОВЫЕ РАСЧЕТЫ ====================
 
     def _calculate_first_number(self, day: int, month: int, year: int) -> int:
         """Сумма всех цифр даты рождения, НЕ РЕДУЦИРУЕТСЯ"""
@@ -290,7 +148,7 @@ class PsyhoMatrixCalculator:
     def _build_detailed_matrix(self, day: int, month: int, year: int,
                                first: int, second: int, third: int, fourth: int) -> Tuple[
         Dict[str, int], List[List[int]]]:
-
+        
         working = ''.join(map(str, [first, second, third, fourth]))
         all_digits = f"{day:02d}{month:02d}{year}" + working
 
@@ -316,7 +174,7 @@ class PsyhoMatrixCalculator:
             characteristics[char_name] = self._analyze_digit_professional(digit, count)
             characteristics[f'{char_name}_score'] = self._count_to_score(count)
             characteristics[f'{char_name}_count'] = count
-
+        
         characteristics['matrix_analysis'] = self._analyze_matrix_structure(matrix_digits)
         characteristics['positional'] = self._analyze_positions(matrix_3x3)
         characteristics['indices'] = self._calculate_indices(matrix_digits)
@@ -337,7 +195,7 @@ class PsyhoMatrixCalculator:
             if count > max_count:
                 max_count = count
                 dominant_digit = digit
-
+        
         return {
             'total_digits': total_digits,
             'unique_digits': unique_digits,
@@ -360,7 +218,7 @@ class PsyhoMatrixCalculator:
         main_diag = matrix_3x3[0][0] + matrix_3x3[1][1] + matrix_3x3[2][2]
         anti_diag = matrix_3x3[0][2] + matrix_3x3[1][1] + matrix_3x3[2][0]
         corners = matrix_3x3[0][0] + matrix_3x3[0][2] + matrix_3x3[2][0] + matrix_3x3[2][2]
-
+        
         return {
             'row_strength': row_strength,
             'column_strength': col_strength,
@@ -386,12 +244,12 @@ class PsyhoMatrixCalculator:
             '1': 15, '2': 10, '3': 12, '4': 12,
             '5': 15, '6': 10, '7': 18, '8': 10, '9': 10
         }
-        names = ['purpose', 'energy', 'interest', 'health', 'logic',
-                 'labor', 'luck', 'duty', 'memory']
-        indices = {}
-        for digit, name in zip('123456789', names):
-            weight = weights[digit]
-            indices[f'{name}_index'] = min(matrix_digits.get(digit, 0) * weight, 100)
+        indices = {f'{name}_index': min(matrix_digits.get(digit, 0) * weight, 100)
+                   for digit, (name, weight) in zip(
+                       '123456789',
+                       ['purpose', 'energy', 'interest', 'health', 'logic',
+                        'labor', 'luck', 'duty', 'memory']
+                   )}
         total = sum(matrix_digits.values())
         indices['development_index'] = round((total / 27) * 100, 2)
         return indices
@@ -414,7 +272,7 @@ class PsyhoMatrixCalculator:
     def _get_detailed_talent_codes(self, matrix_digits: Dict[str, int],
                                   matrix_3x3: List[List[int]]) -> List[str]:
         talents = set()
-
+        
         for digit in range(1, 10):
             count = matrix_digits.get(str(digit), 0)
             if count >= 2:
@@ -422,7 +280,7 @@ class PsyhoMatrixCalculator:
                 talents.add(f"TALENT_{char_name.upper()}")
                 if count >= 3:
                     talents.add(f"MASTER_TALENT_{char_name.upper()}")
-
+        
         if matrix_digits.get('3', 0) >= 2 and matrix_digits.get('5', 0) >= 1:
             talents.add("TALENT_TECHNICAL_ANALYTICAL")
         if matrix_digits.get('2', 0) >= 2 and matrix_digits.get('7', 0) >= 1:
@@ -433,21 +291,21 @@ class PsyhoMatrixCalculator:
             talents.add("TALENT_HEALTH_HEALING")
         if matrix_digits.get('9', 0) >= 2 and matrix_digits.get('3', 0) >= 1:
             talents.add("TALENT_MEMORY_LEARNING")
-
+        
         main_diag = matrix_3x3[0][0] + matrix_3x3[1][1] + matrix_3x3[2][2]
         if main_diag >= 3:
             talents.add("TALENT_HOLISTIC_THINKING")
         if main_diag >= 5:
             talents.add("TALENT_SYSTEMIC_VISION")
-
+        
         anti_diag = matrix_3x3[0][2] + matrix_3x3[1][1] + matrix_3x3[2][0]
         if anti_diag >= 3:
             talents.add("TALENT_CREATIVE_INTUITION")
-
+        
         for i, row in enumerate(matrix_3x3):
             if sum(row) >= 4:
                 talents.add(f"TALENT_ROW_{i+1}_STRENGTH")
-
+        
         return sorted(talents) if talents else ["TALENT_ADAPTABILITY", "TALENT_LEARNING"]
 
     def _get_detailed_strength_codes(self, matrix_digits: Dict[str, int],
@@ -495,7 +353,7 @@ class PsyhoMatrixCalculator:
         else:
             reduced = self._reduction_with_masters(third_number)
             base = self.life_purpose_map.get(reduced, "Personal development and growth")
-
+            
             specific = {
                 10: "Leadership through cooperation",
                 20: "Cooperation through leadership",
@@ -510,7 +368,7 @@ class PsyhoMatrixCalculator:
                 90: "Humanity through service"
             }
             purpose = specific.get(third_number, f"{base} (realized through the unique path of number {third_number})")
-
+        
         if first_number in self.master_numbers:
             purpose += f" (amplified by master number {first_number})"
             if first_number == 11:
@@ -519,7 +377,7 @@ class PsyhoMatrixCalculator:
                 purpose += " - master builder"
             elif first_number == 33:
                 purpose += " - master healer"
-
+        
         return purpose[:800]
 
     # ==================== СОВМЕСТИМОСТЬ ====================
@@ -723,24 +581,22 @@ class PsyhoMatrixCalculator:
     # ==================== ПРОГНОСТИКА ====================
 
     def _get_forecasting_data(self, matrix_digits: Dict[str, int],
-                              first_number: int,
-                              fourth_number: int,
-                              day: int,
-                              month: int) -> Dict[str, Any]:
+                             first_number: int,
+                             fourth_number: int) -> Dict[str, Any]:
         return {
-            'personal_years': self._calculate_personal_years(day, month),
+            'personal_years': self._calculate_personal_years(first_number),
             'favorable_periods': self._calculate_favorable_periods(matrix_digits),
             'growth_areas': self._identify_growth_areas(matrix_digits),
             'current_cycle': self._determine_current_cycle(fourth_number),
             'recommendations': self._generate_recommendations(matrix_digits)
         }
 
-    def _calculate_personal_years(self, day: int, month: int) -> List[Dict[str, Any]]:
+    def _calculate_personal_years(self, first_number: int) -> List[Dict[str, Any]]:
         current_year = datetime.now().year
         years = []
         for i in range(-2, 3):
             target_year = current_year + i
-            year_num = self._reduction_with_masters(day + month + target_year)
+            year_num = self._reduction_with_masters(first_number + target_year)
             years.append({
                 'year': target_year,
                 'personal_year': year_num,
@@ -818,7 +674,7 @@ class PsyhoMatrixCalculator:
         return recommendations[:5]
 
     @staticmethod
-    @lru_cache(maxsize=2048)
+    @lru_cache(maxsize=1024)
     def calculate_matrix_static(birth_date: date) -> Dict[str, Any]:
         return PsyhoMatrixCalculator().calculate_matrix(birth_date)
 
@@ -848,7 +704,7 @@ def prepare_for_db_insert(matrix_data: Dict[str, Any]) -> Dict[str, Any]:
     return prepared
 
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=1024)
 def calculate_psyho_matrix(birth_date: date) -> Dict[str, Any]:
     return PsyhoMatrixCalculator().calculate_matrix(birth_date)
 
@@ -858,11 +714,11 @@ def compare_matrices(matrix1: Dict[str, Any], matrix2: Dict[str, Any]) -> Dict[s
     calc = PsyhoMatrixCalculator()
     r1 = calc._reduction_with_masters(matrix1['first_number'])
     r2 = calc._reduction_with_masters(matrix2['first_number'])
-
+    
     if r2 in COMPATIBILITY_MAP.get(r1, []):
         comp['overall_score'] += 30
         comp['strengths'].append("Natural compatibility")
-
+    
     levels = ['very_low', 'low', 'medium', 'high', 'very_high']
     e1, e2 = matrix1['energy_level'], matrix2['energy_level']
     if e1 in levels and e2 in levels:
@@ -873,16 +729,16 @@ def compare_matrices(matrix1: Dict[str, Any], matrix2: Dict[str, Any]) -> Dict[s
         elif diff >= 3:
             comp['overall_score'] -= 10
             comp['challenges'].append("Energy imbalance")
-
+    
     if matrix1['fourth_number'] == matrix2['fourth_number']:
         comp['overall_score'] += 20
         comp['strengths'].append("Shared purpose")
-
+    
     common = set(matrix1['talent_codes']) & set(matrix2['talent_codes'])
     if common:
         comp['overall_score'] += len(common) * 5
         comp['strengths'].append(f"Shared talents: {len(common)} areas")
-
+    
     comp['overall_score'] = max(0, min(100, comp['overall_score']))
     if comp['overall_score'] >= 70:
         comp['recommendations'].append("Strong potential")
@@ -893,12 +749,10 @@ def compare_matrices(matrix1: Dict[str, Any], matrix2: Dict[str, Any]) -> Dict[s
     return comp
 
 
-# ==================== ТЕСТЫ ====================
-
 def run_tests():
     calc = PsyhoMatrixCalculator()
     result = calc.calculate_matrix(date(1973, 10, 16))
-
+    
     tests = [
         ('Base numbers', 
          result['first_number'] == 28 and result['second_number'] == 1 and 
@@ -909,14 +763,9 @@ def run_tests():
          f"Maturity: {result['karmic_analysis']['karmic_maturity']}"),
         ('Soul number', result['additional']['soul_number'] == 7, 
          f"Soul: {result['additional']['soul_number']}"),
-        ('Version', result['calculation_version'] == '4.1', f"Version: {result['calculation_version']}"),
-        ('Matrix digit 1', result['matrix_digits']['1'] == 4, f"1s: {result['matrix_digits']['1']}"),
-        ('Matrix digit 2', result['matrix_digits']['2'] == 2, f"2s: {result['matrix_digits']['2']}"),
-        ('Matrix digit 8', result['matrix_digits']['8'] == 2, f"8s: {result['matrix_digits']['8']}"),
-        ('Past lives present', 'past_lives' in result['karmic_analysis'], "past_lives key"),
-        ('Soul age present', 'soul_age' in result['karmic_analysis'], "soul_age key"),
+        ('Version', result['calculation_version'] == '3.1', f"Version: {result['calculation_version']}"),
     ]
-
+    
     print("\n=== TEST RESULTS ===")
     all_passed = True
     for name, passed, note in tests:

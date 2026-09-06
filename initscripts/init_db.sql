@@ -408,19 +408,13 @@ CREATE TABLE IF NOT EXISTS psyho_matrices (
     first_number INTEGER NOT NULL CHECK (first_number BETWEEN 1 AND 99),
 
     -- Второе число (сумма цифр первого) - всегда 1-9 или мастер-числа
-    second_number INTEGER NOT NULL CHECK (
-        (second_number BETWEEN 1 AND 99) OR
-        (second_number IN (11, 22, 33))
-    ),
+    second_number INTEGER NOT NULL CHECK (second_number BETWEEN 1 AND 99),
 
     -- Третье число (первое - 2*день) - может быть мастер-числом
     third_number INTEGER NOT NULL CHECK (third_number BETWEEN 1 AND 99),
 
     -- Четвертое число (сумма цифр третьего) - всегда 1-9 или мастер-числа
-    fourth_number INTEGER NOT NULL CHECK (
-        (fourth_number BETWEEN 1 AND 9) OR
-        (fourth_number IN (11, 22, 33))
-    ),
+    fourth_number INTEGER NOT NULL CHECK (fourth_number BETWEEN 1 AND 99),
 
     -- ============ МАТРИЦЫ И ХАРАКТЕРИСТИКИ ============
     -- Словарь количеств цифр (ключи "1".."9", значения - количества)
@@ -457,7 +451,7 @@ CREATE TABLE IF NOT EXISTS psyho_matrices (
     -- ============ МЕТАДАННЫЕ ============
     -- Версия расчета
     calculation_version VARCHAR(20) NOT NULL DEFAULT '3.1'
-        CHECK (calculation_version IN ('1.0', '2.0', '3.0', '3.1')),
+        CHECK (calculation_version IN ('1.0', '2.0', '3.0', '3.1', '4.0', '4.1')),
 
     -- Временные метки
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

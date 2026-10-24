@@ -1,0 +1,4545 @@
+# МНОГОМЕРНАЯ АСТРОЛОГИЧЕСКАЯ МОДЕЛЬ
+## ВЕРСИЯ 7.0 — ИТОГОВАЯ КОНЦЕПЦИЯ К ВНЕДРЕНИЮ
+
+### ПОЛНЫЙ ИНЖЕНЕРНЫЙ ДОКУМЕНТ ДЛЯ РАЗРАБОТЧИКА
+### С УЧЁТОМ ВСЕХ ИСПРАВЛЕНИЙ, ИНСПЕКЦИЙ И РАСШИРЕНИЙ
+
+---
+
+## РАЗДЕЛ 0: ОГЛАВЛЕНИЕ
+
+1. [Введение и назначение](#1-введение-и-назначение)
+2. [Архитектура системы](#2-архитектура-системы)
+3. [Глоссарий и соглашения](#3-глоссарий-и-соглашения)
+4. [Слой 0: Астрономическое ядро](#4-слой-0-астрономическое-ядро)
+5. [Слой 1: Интерпретационные системы](#5-слой-1-интерпретационные-системы)
+6. [Слой 2: Интеграция](#6-слой-2-интеграция)
+7. [Слой 3: Профиль](#7-слой-3-профиль)
+8. [Смежные системы (Adjacent)](#8-смежные-системы-adjacent)
+9. [Геокодинг](#9-геокодинг)
+10. [Расчёт уверенности (Confidence)](#10-расчёт-уверенности-confidence)
+11. [Стратегия кеширования](#11-стратегия-кеширования)
+12. [Менеджер настроек](#12-менеджер-настроек)
+13. [API спецификация](#13-api-спецификация)
+14. [Модели данных (Pydantic)](#14-модели-данных-pydantic)
+15. [Модуль работы со временем](#15-модуль-работы-со-временем)
+16. [Структуры данных и миграции](#16-структуры-данных-и-миграции)
+17. [Алгоритмы и псевдокод](#17-алгоритмы-и-псевдокод)
+18. [Утилиты и вспомогательные модули](#18-утилиты-и-вспомогательные-модули)
+19. [Тестирование](#19-тестирование)
+20. [Внедренческий план](#20-внедренческий-план)
+21. [Приложения и таблицы](#21-приложения-и-таблицы)
+22. [История ревизий и принятые решения](#22-история-ревизий-и-принятые-решения)
+23. [Итоговое заключение](#23-итоговое-заключение)
+
+---
+
+## 1. ВВЕДЕНИЕ И НАЗНАЧЕНИЕ
+
+### 1.1. Что это
+
+**Многомерная астрологическая модель (МАМ)** — детерминированная вычислительная система, объединяющая **7 астрологических традиций** и **3 смежные системы** (психоматрица, биоритмы, девятивекторный профиль) для формирования комплексного прогноза.
+
+Система **не обучается** на обратной связи, **не использует** историческую точность и работает **"из коробки"**. Все результаты полностью воспроизводимы при одинаковых входных данных.
+
+### 1.2. Что Модель делает
+
+| Режим | Что возвращает | Когда используется | Кеширование |
+|-------|----------------|-------------------|-------------|
+| **Портрет** | Статический профиль личности (натальные данные + интеграция) | При создании профиля пользователя | Постоянно (TTL = ∞) |
+| **Предикт** | Ежедневный прогноз (статический фон + динамические сигналы) | При запросе на конкретную дату | 24 часа |
+| **Adjacent** | Психоматрица, биоритмы, девятивекторный профиль | По запросу или при инициализации | 24 часа (биоритмы) / ∞ (психоматрица) |
+
+### 1.3. Что Модель НЕ делает (ЯВНО УКАЗАНО)
+
+| № | Что НЕ делает | Почему |
+|---|----------------|--------|
+| 1 | НЕ обучается на обратной связи | Детерминированная система |
+| 2 | НЕ использует историческую точность | Нет данных для обучения |
+| 3 | НЕ требует сбора данных от пользователей | Работает "из коробки" |
+| 4 | НЕ отправляет веб-хуки | Упрощает архитектуру |
+| 5 | НЕ делает асинхронный пресчёт | Для MVP не требуется |
+| 6 | НЕ предоставляет экспорт в JSON/PDF | Не входит в scope |
+| 7 | НЕ проводит A/B тестирование | Не входит в scope |
+| 8 | НЕ использует Redis Lock | Осознанное решение для упрощения |
+| 9 | НЕ использует Kafka/RabbitMQ | Для MVP overkill |
+| 10 | НЕ использует CQRS/Event Sourcing | Астрология детерминирована |
+| 11 | НЕ использует GraphQL | REST + Pydantic достаточно |
+
+### 1.4. Ключевые принципы
+
+1. **Детерминизм** — одинаковый вход → одинаковый выход
+2. **Модульность** — каждый слой независим
+3. **Отказоустойчивость** — graceful degradation
+4. **Наблюдаемость** — структурированные логи + метрики
+5. **Конфигурируемость** — настройки без пересборки
+6. **YAGNI** — не создавать микросервисы, пока не доказана необходимость
+
+### 1.5. Версия документа
+
+- **Версия:** 7.0 — Итоговая концепция к внедрению
+- **Дата:** 2026-10-24
+- **Статус:** ✅ APPROVED FOR DEVELOPMENT
+- **Изменения относительно 6.2:**
+  - ✅ Добавлен модуль Adjacent (психоматрица, биоритмы, девятивекторный профиль)
+  - ✅ Добавлен SettingsManager (гибридные настройки: env + DB)
+  - ✅ Добавлена таблица `settings` в PostgreSQL
+  - ✅ Добавлены флаги `enable_*` для всех систем
+  - ✅ Добавлен API для управления настройками
+  - ✅ Добавлена подготовка к testing-service (отдельный микросервис)
+  - ✅ Добавлены все замечания инспектора (check_daytime, detect_patterns, tonalpohualli)
+  - ✅ Расширена документация по всем модулям
+  - ✅ Добавлены тесты для всех критических функций
+
+---
+
+## 2. АРХИТЕКТУРА СИСТЕМЫ
+
+### 2.1. Модульная архитектура (монолит с возможностью выделения)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           API GATEWAY (FastAPI)                                │
+│  /api/v7/profile/*   /api/v7/admin/*   /api/v7/adjacent/*   /health   /metrics │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      │
+        ┌─────────────────────────────┼─────────────────────────────┐
+        ▼                             ▼                             ▼
+┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
+│  ASTROLOGY CORE     │      │  ADJACENT SYSTEMS   │      │  SETTINGS MANAGER   │
+│                     │      │                     │      │                     │
+│  Слой 0: Ядро       │      │  • Psychomatrix     │      │  • Env (статич.)    │
+│  Слой 1: Интерпрет. │      │  • Biorhythms       │      │  • DB (динамич.)    │
+│  Слой 2: Интеграция │      │  • NineVector       │      │  • Defaults         │
+│  Слой 3: Профиль    │      │                     │      │                     │
+└─────────────────────┘      └─────────────────────┘      └─────────────────────┘
+        │                             │                             │
+        └─────────────────────────────┼─────────────────────────────┘
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          INFRASTRUCTURE                                       │
+│  • PostgreSQL (profiles + settings)                                           │
+│  • Redis (cache)                                                              │
+│  • SQLite (geocoder cache)                                                    │
+│  • Swiss Ephemeris (ephemeris files)                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                                      ▲
+                                      │ (future — отдельный микросервис)
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          TESTING SERVICE                                      │
+│  • Quiz engine                                                                │
+│  • Results storage                                                            │
+│  • POST to astrology-service (webhook)                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2. Пятислойная архитектура астрологического ядра
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                            СЛОЙ 3: ПРОФИЛЬ (Profile)                                │
+│  • Формирование ответа API                                                          │
+│  • Режимы: portrait / daily                                                         │
+│  • Кешируется: 24 часа (daily) / постоянно (portrait)                              │
+│  • primary_sphere — главная сфера дня                                              │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                          СЛОЙ 2: ИНТЕГРАЦИЯ (Integration)                          │
+│  • ШАГ 1: Кластеризация ВСЕХ тезисов (без ограничений)                            │
+│  • ШАГ 2: Нормализация внутри кластеров (N_max=5 на систему)                      │
+│  • ШАГ 3: Расчёт пересечений                                                       │
+│  • Результат кешируется (статическая часть)                                        │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                          СЛОЙ 1: ИНТЕРПРЕТАЦИЯ (Interpretation)                    │
+│  ┌────────────────────────────────────┐  ┌─────────────────────────────────────┐   │
+│  │  1А: Статическая                   │  │  1Б: Динамическая                  │   │
+│  │  • Western, Vedic, Arabic          │  │  • Транзиты                        │   │
+│  │  • Chinese, Maya, Mesopotamian     │  │  • Кешируется: 7 дней              │   │
+│  │  • Кешируется: постоянно           │  │                                     │   │
+│  │  • Graceful degradation            │  │                                     │   │
+│  └────────────────────────────────────┘  └─────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                               СЛОЙ 0: ЯДРО (Core)                                  │
+│  ┌────────────────────────────────────┐  ┌─────────────────────────────────────┐   │
+│  │  0А: Статическое                   │  │  0Б: Динамическое                  │   │
+│  │  • Натальные координаты            │  │  • Транзитные координаты           │   │
+│  │  • ОПТИМИЗАЦИЯ: calc_ut            │  │  • ОПТИМИЗАЦИЯ: calc_ut            │   │
+│  │  • Кешируется: постоянно           │  │  • Кешируется: 7 дней              │   │
+│  └────────────────────────────────────┘  └─────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                          СЛОЙ ГЕОКОДИНГА (Geocoding)                               │
+│  • Вход: страна + регион + город (многоязычно)                                     │
+│  • Fallback: ручной ввод координат                                                 │
+│  • Автоопределение часового пояса                                                  │
+│  • Кеш: SQLite + память (TTL 1 час память / 30 дней БД)                           │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                 ВХОДНЫЕ ДАННЫЕ                                     │
+│  • BirthData: дата, время, место рождения (Pydantic модель)                        │
+│  • Date: дата запроса (для daily режима)                                           │
+│  • Horizon: горизонт прогноза в днях (default: 90)                                │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.3. Критическое правило: порядок операций (ОБЯЗАТЕЛЬНО)
+
+```
+ПРАВИЛЬНЫЙ порядок (использовать):
+1. Геокодинг (если указан location)
+2. Кластеризация ВСЕХ тезисов (без ограничений)
+3. Нормализация внутри каждого кластера (N_max=5 на систему)
+4. Расчёт пересечений
+
+НЕПРАВИЛЬНЫЙ порядок (ЗАПРЕЩЕН):
+1. Глобальная нормализация (N_max=5 на систему)
+2. Кластеризация
+→ Проблема: теряются тезисы в слабых сферах
+```
+
+### 2.4. Разделение статики и динамики
+
+```
+Статика (рассчитывается 1 раз при инициализации):
+- Геокодинг → координаты + часовой пояс
+- Натальный Core
+- Статические тезисы (Western, Vedic, Arabic, Chinese, Maya, Mesopotamian)
+- Статическая кластеризация
+- Статические пересечения
+- Психоматрица
+→ Кешируется: ПОСТОЯННО (TTL = ∞)
+
+Динамика (рассчитывается на каждый запрос):
+- Транзитный Core
+- Динамические тезисы (Transits)
+- Наложение динамических сигналов на статические кластеры
+- Биоритмы (зависят от target_date)
+- Девятивекторный профиль (композитный)
+→ Кешируется: 7 дней (Core) / 24 часа (профиль)
+```
+
+---
+
+## 3. ГЛОССАРИЙ И СОГЛАШЕНИЯ
+
+### 3.1. Ключевые термины
+
+| Термин | Определение | Пример |
+|--------|-------------|--------|
+| **Core** | Астрономические координаты планет, домов, аспектов | `{Sun: {longitude: 202.84, sign: "Libra"}}` |
+| **Thesis** | Тезис одной системы | "Карьера через творчество" |
+| **Cluster** | Группа тезисов по сфере | Все тезисы о "Карьере" |
+| **Intersection** | Пересечение тезисов (пересечение систем) | 3 системы говорят о карьере |
+| **Confidence** | Уверенность тезиса (0-1) | 0.85 |
+| **Temporal Modulation** | Затухание уверенности по времени | Транзит затухает вдали от пика |
+| **Graceful Degradation** | Устойчивость к ошибкам подсистем | Одна система упала — остальные работают |
+| **Adjacent** | Смежные системы (не астрология) | Психоматрица, биоритмы |
+| **NineVector** | Девятивекторный сводный профиль | Композитный вектор 9 осей |
+| **Sphere Vector** | 12-мерный вектор сфер | `[0.8, 0.1, 0.3, ...]` |
+
+### 3.2. Соглашения по коду
+
+1. **Все `datetime` — с временной зоной UTC.** Наивные `datetime` запрещены.
+2. **Все `datetime.now()` заменены на `TimeModule.utc_now()`.**
+3. **Все Pydantic модели — с валидацией.**
+4. **Все функции — с docstring (Google style).**
+5. **Все исключения — с явным типом.**
+6. **Все логи — через structlog.**
+7. **Все настройки — через SettingsManager.**
+8. **Все системы — с флагом `enable_*`.**
+
+### 3.3. Индексы сфер (12 измерений)
+
+| Индекс | Сфера | Синонимы | Описание |
+|--------|-------|----------|----------|
+| 0 | career | 10 дом, MC, Part_of_Career | Профессиональная реализация |
+| 1 | relationships | 7 дом, DSC, Part_of_Marriage | Отношения, партнёрство |
+| 2 | finance | 2 дом, 8 дом, Part_of_Fortune | Финансы, ресурсы |
+| 3 | health | 6 дом, 12 дом | Здоровье, восстановление |
+| 4 | creativity | 5 дом, Part_of_Children | Творчество, дети |
+| 5 | spirituality | 9 дом, 12 дом, Part_of_Soul | Духовность, философия |
+| 6 | family | 4 дом, IC | Семья, дом, корни |
+| 7 | communication | 3 дом, Меркурий | Общение, обучение |
+| 8 | growth | Юпитер, 9 дом | Рост, расширение |
+| 9 | risk | Марс, 8 дом | Риск, трансформация |
+| 10 | service | 6 дом, Хирон | Служение, помощь |
+| 11 | independence | Уран, 11 дом | Свобода, независимость |
+
+---
+
+## 4. СЛОЙ 0: АСТРОНОМИЧЕСКОЕ ЯДРО
+
+### 4.1. Враппер Swiss Ephemeris (ОБЯЗАТЕЛЬНО)
+
+**Проблема:** `pyswisseph` возвращает кортежи, а не словари. Прямое использование невозможно.
+
+**Решение:** Создать `EphemerisWrapper` в `core/ephemeris_wrapper.py`.
+
+```python
+# core/ephemeris_wrapper.py
+import swisseph as swe
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+import structlog
+
+logger = structlog.get_logger()
+
+PLANET_IDS = {
+    "Sun": swe.SUN, "Moon": swe.MOON, "Mercury": swe.MERCURY,
+    "Venus": swe.VENUS, "Mars": swe.MARS, "Jupiter": swe.JUPITER,
+    "Saturn": swe.SATURN, "Uranus": swe.URANUS, "Neptune": swe.NEPTUNE,
+    "Pluto": swe.PLUTO, "NorthNode": swe.MEAN_NODE,
+}
+
+FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
+
+
+@dataclass
+class PlanetPosition:
+    """Модель позиции планеты."""
+    longitude: float      # 0-360°
+    latitude: float       # -90-90°
+    distance: float       # AU
+    speed_long: float     # °/день
+    speed_lat: float      # °/день
+    speed_dist: float     # AU/день
+    
+    @property
+    def retrograde(self) -> bool:
+        """True, если планета ретроградна."""
+        return self.speed_long < 0
+
+
+class EphemerisWrapper:
+    """Враппер над Swiss Ephemeris с проверкой форматов."""
+    
+    @staticmethod
+    def calc_ut(jd: float, planets: Optional[List[str]] = None) -> Dict[str, PlanetPosition]:
+        """
+        Рассчитывает позиции планет (UT).
+        
+        ВАЖНО: swe.calc_ut возвращает кортеж:
+        - 3 элемента (без FLG_SPEED): (lon, lat, dist)
+        - 6 элементов (с FLG_SPEED): (lon, lat, dist, speed_lon, speed_lat, speed_dist)
+        
+        Мы всегда используем FLG_SPEED, поэтому ожидаем 6 элементов.
+        
+        Args:
+            jd: Юлианский день (UT)
+            planets: Список имён планет (если None — все)
+        
+        Returns:
+            Dict[str, PlanetPosition]: Словарь {имя_планеты: позиция}
+        
+        Raises:
+            RuntimeError: Если Swiss Ephemeris вернул ошибку
+        """
+        if planets is None:
+            planets = list(PLANET_IDS.keys())
+        
+        result = {}
+        for name in planets:
+            if name not in PLANET_IDS:
+                continue
+            
+            try:
+                pos = swe.calc_ut(jd, PLANET_IDS[name], FLAGS)
+            except Exception as e:
+                raise RuntimeError(f"Swiss Ephemeris error for {name}: {e}")
+            
+            if not isinstance(pos, (tuple, list)):
+                raise RuntimeError(f"Unexpected return type for {name}: {type(pos)}")
+            
+            if len(pos) < 6:
+                raise RuntimeError(
+                    f"Expected 6 elements for {name}, got {len(pos)}. "
+                    f"Check that FLG_SPEED flag is set."
+                )
+            
+            result[name] = PlanetPosition(
+                longitude=pos[0] % 360,
+                latitude=pos[1],
+                distance=pos[2],
+                speed_long=pos[3],
+                speed_lat=pos[4],
+                speed_dist=pos[5]
+            )
+        
+        # Южный узел = Северный + 180°
+        if "NorthNode" in result:
+            nn = result["NorthNode"]
+            result["SouthNode"] = PlanetPosition(
+                longitude=(nn.longitude + 180) % 360,
+                latitude=-nn.latitude,
+                distance=nn.distance,
+                speed_long=nn.speed_long,
+                speed_lat=-nn.speed_lat,
+                speed_dist=nn.speed_dist
+            )
+        
+        return result
+    
+    @staticmethod
+    def get_sunrise(jd: float, lat: float, lng: float, altitude: float = 0) -> float:
+        """
+        Возвращает время восхода в часах после полуночи UT.
+        
+        ВАЖНО: swe.rise_transit принимает geopos как КОРТЕЖ:
+        geopos = (longitude, latitude, altitude)
+        """
+        geopos = (lng, lat, altitude)
+        rsmi = swe.CALC_RISE
+        
+        try:
+            result = swe.rise_transit(jd, swe.SUN, rsmi, geopos, 0, 0, 0)
+            if result[0] != 0:
+                return 6.0  # Fallback
+            return result[1][0]
+        except Exception as e:
+            logger.warning("sunrise_failed", error=str(e))
+            return 6.0
+    
+    @staticmethod
+    def get_sunset(jd: float, lat: float, lng: float, altitude: float = 0) -> float:
+        """Возвращает время заката."""
+        geopos = (lng, lat, altitude)
+        rsmi = swe.CALC_SET
+        
+        try:
+            result = swe.rise_transit(jd, swe.SUN, rsmi, geopos, 0, 0, 0)
+            if result[0] != 0:
+                return 18.0
+            return result[1][0]
+        except Exception as e:
+            logger.warning("sunset_failed", error=str(e))
+            return 18.0
+    
+    @staticmethod
+    def get_ayanamsa(jd: float) -> float:
+        """Возвращает айанамшу Lahiri."""
+        return swe.ayanamsa(jd)
+    
+    @staticmethod
+    def get_equation_of_time(jd: float) -> float:
+        """Возвращает уравнение времени в минутах."""
+        return swe.equation_of_time(jd)
+
+
+ephemeris = EphemerisWrapper()
+```
+
+### 4.2. Входные данные (BirthData) — Pydantic модель с геокодингом
+
+```python
+# core/models.py
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+import pytz
+from calendar import monthrange
+
+
+class LocationInput(BaseModel):
+    """Модель ввода местоположения."""
+    country: str = Field(..., min_length=1, max_length=100)
+    region: Optional[str] = Field(None, min_length=1, max_length=200)
+    city: str = Field(..., min_length=1, max_length=200)
+
+
+class BirthData(BaseModel):
+    """Модель входных данных рождения."""
+    user_id: str = Field(..., max_length=50)
+    
+    # Вариант 1: Геокодинг
+    location: Optional[LocationInput] = None
+    
+    # Вариант 2: Ручной ввод
+    lat: Optional[float] = Field(None, ge=-90.0, le=90.0)
+    lng: Optional[float] = Field(None, ge=-180.0, le=180.0)
+    timezone: Optional[str] = None
+    
+    # Обязательные поля
+    year: int = Field(..., ge=1900, le=2100)
+    month: int = Field(..., ge=1, le=12)
+    day: int = Field(..., ge=1, le=31)
+    hour: int = Field(..., ge=0, le=23)
+    minute: int = Field(..., ge=0, le=59)
+    second: int = Field(0, ge=0, le=59)
+    altitude: float = Field(0.0, ge=-1000, le=10000)
+    
+    @field_validator('timezone')
+    @classmethod
+    def validate_timezone(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        try:
+            pytz.timezone(v)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise ValueError(f"Unknown timezone: {v}")
+        return v
+    
+    @field_validator('day')
+    @classmethod
+    def validate_day(cls, v: int, info) -> int:
+        month = info.data.get('month')
+        year = info.data.get('year')
+        if month and year:
+            max_day = monthrange(year, month)[1]
+            if v > max_day:
+                raise ValueError(f"Day {v} is invalid for month {month}")
+        return v
+    
+    @model_validator(mode='after')
+    def validate_location(self) -> 'BirthData':
+        has_location = self.location is not None
+        has_coords = self.lat is not None and self.lng is not None
+        if not has_location and not has_coords:
+            raise ValueError("Either 'location' or 'lat/lng' must be provided")
+        return self
+    
+    async def resolve_location(self) -> 'BirthData':
+        """Геокодирует location, если координаты не указаны."""
+        if self.lat is not None and self.lng is not None:
+            return self
+        if self.location is None:
+            raise ValueError("No location provided")
+        
+        from services.geocoding import geocode_city
+        result = await geocode_city(
+            city=self.location.city,
+            country=self.location.country,
+            region=self.location.region
+        )
+        if result is None:
+            raise ValueError(
+                f"Город '{self.location.city}' не найден. "
+                f"Уточните название или введите координаты вручную."
+            )
+        self.lat = result.lat
+        self.lng = result.lng
+        if self.timezone is None:
+            self.timezone = result.timezone
+        return self
+    
+    def to_utc_datetime(self) -> datetime:
+        """Преобразует локальное время рождения в UTC."""
+        from utils.time_module import TimeModule
+        local_dt = datetime(
+            year=self.year, month=self.month, day=self.day,
+            hour=self.hour, minute=self.minute, second=self.second
+        )
+        return TimeModule.local_to_utc(local_dt, self.timezone)
+```
+
+### 4.3. Статическое ядро (0А)
+
+```python
+# core/calculations.py
+import hashlib
+from typing import Dict, Any
+from core.ephemeris_wrapper import ephemeris
+from core.models import BirthData
+from utils.time_module import TimeModule
+from constants.astrology_mapping import (
+    calculate_dignity, get_sign, normalize_speed, get_house
+)
+
+
+def calculate_static_core(birth_data: BirthData) -> Dict[str, Any]:
+    """
+    Рассчитывает статическое астрономическое ядро.
+    
+    Args:
+        birth_data: Данные рождения (с разрешёнными координатами)
+    
+    Returns:
+        dict: StaticCore
+    
+    Raises:
+        ValueError: Если координаты не разрешены
+        RuntimeError: Если Swiss Ephemeris вернул ошибку
+    """
+    if birth_data.lat is None or birth_data.lng is None or birth_data.timezone is None:
+        raise ValueError("BirthData must have resolved coordinates and timezone")
+    
+    utc_dt = birth_data.to_utc_datetime()
+    jd = TimeModule.to_julian_day(utc_dt)
+    
+    # Solar Time
+    solar_time = calculate_solar_time(jd, birth_data.lng, birth_data.lat, birth_data.timezone)
+    
+    # Планеты (ОДИН вызов calc_ut)
+    all_coords = ephemeris.calc_ut(jd)
+    if not all_coords:
+        raise RuntimeError("No ephemeris data returned")
+    
+    planets = {}
+    for name, pos in all_coords.items():
+        planets[name] = {
+            "longitude": pos.longitude,
+            "latitude": pos.latitude,
+            "speed": pos.speed_long,
+            "speed_normalized": normalize_speed(name, pos.speed_long),
+            "retrograde": pos.retrograde,
+            "sign": get_sign(pos.longitude),
+            "sign_longitude": pos.longitude % 30,
+            "dignity": calculate_dignity(name, pos.longitude)
+        }
+    
+    # Дома (Placidus)
+    houses = calculate_houses_placidus(jd, birth_data.lat, birth_data.lng)
+    
+    # Привязка к домам
+    for name, data in planets.items():
+        data["house"] = get_house(data["longitude"], houses)
+    
+    # Аспекты
+    aspects = calculate_aspects(planets)
+    
+    # Айанамша
+    ayanamsa = ephemeris.get_ayanamsa(jd)
+    
+    # День/ночь
+    is_daytime = check_daytime(planets["Sun"]["longitude"], houses)
+    
+    core_hash = hashlib.md5(str(birth_data.model_dump()).encode()).hexdigest()[:8]
+    
+    from config.version import VERSION_MANAGER
+    
+    return {
+        "jd": jd,
+        "utc_datetime": utc_dt.isoformat(),
+        "solar_time": solar_time,
+        "ayanamsa": ayanamsa,
+        "ayanamsa_type": "lahiri",
+        "planets": planets,
+        "houses": houses,
+        "aspects": aspects,
+        "is_daytime": is_daytime,
+        "birth_data": birth_data.model_dump(),
+        "birth_data_hash": core_hash,
+        "metadata": {
+            "calculated_at": TimeModule.utc_now().isoformat(),
+            "rules_version": VERSION_MANAGER.get_api_version()
+        }
+    }
+```
+
+### 4.4. Динамическое ядро (0Б)
+
+```python
+# core/calculations.py
+from datetime import datetime, timedelta
+from typing import Optional
+
+ASPECT_ANGLES = {
+    "conjunction": 0, "sextile": 60, "square": 90, "trine": 120,
+    "opposition": 180, "semisextile": 30, "semisquare": 45,
+    "sesquiquadrate": 135, "quincunx": 150
+}
+
+ASPECT_ORBS_DEFAULT = {
+    "conjunction": 8, "sextile": 6, "square": 8, "trine": 8,
+    "opposition": 8, "semisextile": 3, "semisquare": 2,
+    "sesquiquadrate": 2, "quincunx": 3
+}
+
+ASPECT_ORBS_BY_PLANET = {
+    "Moon": {"conjunction": 10, "sextile": 8, "square": 10, "trine": 10, "opposition": 10},
+    "Sun": {"conjunction": 10, "sextile": 6, "square": 8, "trine": 8, "opposition": 8},
+    "Mercury": {"conjunction": 7, "sextile": 5, "square": 7, "trine": 7, "opposition": 7},
+    "Venus": {"conjunction": 7, "sextile": 5, "square": 7, "trine": 7, "opposition": 7},
+    "Mars": {"conjunction": 7, "sextile": 5, "square": 7, "trine": 7, "opposition": 7},
+    "Jupiter": {"conjunction": 8, "sextile": 6, "square": 8, "trine": 8, "opposition": 8},
+    "Saturn": {"conjunction": 8, "sextile": 6, "square": 8, "trine": 8, "opposition": 8},
+    "Uranus": {"conjunction": 6, "sextile": 4, "square": 6, "trine": 6, "opposition": 6},
+    "Neptune": {"conjunction": 6, "sextile": 4, "square": 6, "trine": 6, "opposition": 6},
+    "Pluto": {"conjunction": 6, "sextile": 4, "square": 6, "trine": 6, "opposition": 6},
+    "NorthNode": {"conjunction": 3, "sextile": 3, "square": 3, "trine": 3, "opposition": 3},
+}
+
+
+def get_orb(planet_name: str, aspect_name: str) -> float:
+    """Возвращает орб для конкретной планеты и аспекта."""
+    planet_orbs = ASPECT_ORBS_BY_PLANET.get(planet_name, {})
+    return planet_orbs.get(aspect_name, ASPECT_ORBS_DEFAULT.get(aspect_name, 8))
+
+
+def calculate_dynamic_core(static_core: dict, current_date: datetime, horizon_days: int = 90) -> dict:
+    """
+    Рассчитывает динамическое ядро (транзиты).
+    
+    Args:
+        static_core: Статическое ядро
+        current_date: Дата запроса (UTC)
+        horizon_days: Горизонт прогноза
+    
+    Returns:
+        dict: DynamicCore
+    """
+    from utils.time_module import TimeModule
+    
+    if current_date.tzinfo is None:
+        current_date = TimeModule.localize_utc(current_date)
+    
+    transit_jd = TimeModule.to_julian_day(
+        current_date.replace(hour=12, minute=0, second=0)
+    )
+    
+    all_coords = ephemeris.calc_ut(transit_jd)
+    if not all_coords:
+        raise RuntimeError("No ephemeris data returned")
+    
+    transit_planets = {
+        name: {
+            "longitude": pos.longitude,
+            "speed": pos.speed_long,
+            "retrograde": pos.retrograde
+        }
+        for name, pos in all_coords.items()
+    }
+    
+    transit_aspects = []
+    for tp_name, tp_data in transit_planets.items():
+        for np_name, np_data in static_core["planets"].items():
+            angle = (tp_data["longitude"] - np_data["longitude"]) % 360
+            
+            for aspect_name, aspect_angle in ASPECT_ANGLES.items():
+                orb = get_orb(np_name, aspect_name)
+                diff = abs(angle - aspect_angle)
+                if diff > 180:
+                    diff = 360 - diff
+                
+                if diff <= orb:
+                    peak_date = calculate_peak_date(
+                        transit_longitude=tp_data["longitude"],
+                        natal_longitude=np_data["longitude"],
+                        aspect_angle=aspect_angle,
+                        current_date=current_date,
+                        speed=tp_data["speed"],
+                        horizon_days=horizon_days
+                    )
+                    
+                    if peak_date is None:
+                        continue
+                    
+                    transit_aspects.append({
+                        "transit_planet": tp_name,
+                        "natal_planet": np_name,
+                        "aspect_type": aspect_name,
+                        "aspect_angle": aspect_angle,
+                        "angle": angle,
+                        "orb": diff,
+                        "strength": 1 - (diff / orb),
+                        "peak_date": peak_date.isoformat(),
+                        "days_to_peak": (peak_date - current_date).days,
+                        "speed": abs(tp_data["speed"])
+                    })
+    
+    return {
+        "date": current_date.isoformat(),
+        "jd": transit_jd,
+        "planets": transit_planets,
+        "aspects": transit_aspects,
+        "horizon_days": horizon_days,
+        "metadata": {"calculated_at": TimeModule.utc_now().isoformat()}
+    }
+```
+
+### 4.5. Расчёт даты точного аспекта (ИСПРАВЛЕНО)
+
+```python
+# core/calculations.py
+def calculate_peak_date(
+    transit_longitude: float,
+    natal_longitude: float,
+    aspect_angle: float,
+    current_date: datetime,
+    speed: float,
+    horizon_days: int = 90
+) -> Optional[datetime]:
+    """
+    Вычисляет дату точного аспекта (исправленная версия).
+    
+    Учитывает:
+    - Направление движения (ретроградность)
+    - Горизонт прогноза (отсечение далёких пиков)
+    - Случай, когда аспект уже прошёл
+    
+    Returns:
+        datetime или None, если пик вне горизонта
+    """
+    if speed == 0:
+        return current_date + timedelta(days=30)
+    
+    current_diff = (transit_longitude - natal_longitude) % 360
+    delta = (aspect_angle - current_diff) % 360
+    
+    if delta > 180:
+        delta -= 360
+    
+    # Учёт направления движения
+    if speed < 0:
+        if delta > 0:
+            delta -= 360
+    
+    days_to_peak = delta / speed
+    
+    # Аспект в прошлом — ищем следующий (упрощение: возвращаем None)
+    if days_to_peak < 0:
+        if abs(days_to_peak) > horizon_days:
+            return None
+        return None
+    
+    # Отсечение по горизонту
+    if days_to_peak > horizon_days:
+        return None
+    
+    return current_date + timedelta(days=days_to_peak)
+```
+
+### 4.6. Solar Time (ИСПРАВЛЕНО)
+
+```python
+# core/solar_time.py
+from datetime import datetime, timedelta
+from typing import Dict, Any
+from core.ephemeris_wrapper import ephemeris
+from utils.time_module import TimeModule
+
+
+def calculate_solar_time(jd: float, lng: float, lat: float, timezone: str) -> Dict[str, Any]:
+    """
+    Рассчитывает местное истинное солнечное время для всех систем.
+    
+    Args:
+        jd: Юлианский день
+        lng: Долгота
+        lat: Широта
+        timezone: IANA timezone
+    """
+    utc_dt = TimeModule.from_julian_day(jd)
+    
+    # LMT (Local Mean Time)
+    lmt = utc_dt + timedelta(hours=lng / 15)
+    
+    # EOT (Equation of Time)
+    eot = ephemeris.get_equation_of_time(jd)
+    last = lmt + timedelta(minutes=eot)
+    
+    # Sunrise/Sunset для Vedic и Maya
+    sunrise_hours = ephemeris.get_sunrise(jd, lat, lng)
+    sunset_hours = ephemeris.get_sunset(jd, lat, lng)
+    
+    systems = {}
+    
+    # Western, Arabic, Mesopotamian, Transits — LAST
+    for system in ["western", "arabic", "mesopotamian", "transits"]:
+        systems[system] = _make_system_entry(last, offset_hours=0)
+    
+    # Vedic — восход как начало дня
+    systems["vedic"] = _make_system_entry(last, offset_hours=-sunrise_hours)
+    
+    # Chinese — 子时 (23:00-01:00) как начало дня
+    systems["chinese"] = _make_system_entry(last, offset_hours=-1)
+    
+    # Maya — закат предыдущего дня
+    prev_sunset = ephemeris.get_sunset(jd - 1, lat, lng)
+    systems["maya"] = _make_system_entry(last, offset_hours=-prev_sunset)
+    
+    return {
+        "lmt": lmt.isoformat(),
+        "eot": eot,
+        "last": last.isoformat(),
+        "sunrise_hours": sunrise_hours,
+        "sunset_hours": sunset_hours,
+        "systems": systems
+    }
+
+
+def _make_system_entry(base_dt: datetime, offset_hours: float) -> Dict[str, Any]:
+    """Создаёт запись системы с учётом offset."""
+    final_time = base_dt + timedelta(hours=offset_hours)
+    
+    if final_time.hour < 0:
+        final_date = final_time - timedelta(days=1)
+    elif final_time.hour >= 24:
+        final_date = final_time + timedelta(days=1)
+    else:
+        final_date = final_time
+    
+    return {
+        "datetime": final_date.isoformat(),
+        "jd": TimeModule.to_julian_day(final_date),
+        "offset_hours": offset_hours
+    }
+```
+
+### 4.7. check_daytime (ИСПРАВЛЕНО — P0)
+
+```python
+# core/calculations.py
+def check_daytime(sun_longitude: float, houses: dict) -> bool:
+    """
+    Определяет, находится ли Солнце над горизонтом (день).
+    
+    Классическая логика:
+    - Дома 1-6: НАД горизонтом (день) — от восхода (ASC) через IC до заката (DSC)
+    - Дома 7-12: ПОД горизонтом (ночь) — от заката (DSC) через MC до восхода (ASC)
+    
+    Args:
+        sun_longitude: Долгота Солнца (0-360)
+        houses: Словарь домов {1: {"cusp": ...}, ..., 12: {"cusp": ...}}
+    
+    Returns:
+        bool: True если день (Солнце над горизонтом), False если ночь
+    """
+    sun_house = get_house(sun_longitude, houses)
+    return sun_house in [1, 2, 3, 4, 5, 6]
+```
+
+### 4.8. calculate_aspects
+
+```python
+# core/calculations.py
+def calculate_aspects(planets: dict) -> list:
+    """
+    Рассчитывает все аспекты между планетами.
+    
+    Использует орбисы по планетам (ASPECT_ORBS_BY_PLANET).
+    """
+    aspects = []
+    planet_names = list(planets.keys())
+    
+    for i, p1_name in enumerate(planet_names):
+        for p2_name in planet_names[i+1:]:
+            p1 = planets[p1_name]
+            p2 = planets[p2_name]
+            
+            angle = abs(p1["longitude"] - p2["longitude"])
+            if angle > 180:
+                angle = 360 - angle
+            
+            for aspect_name, aspect_angle in ASPECT_ANGLES.items():
+                orb = get_orb(p1_name, aspect_name)
+                diff = abs(angle - aspect_angle)
+                
+                if diff <= orb:
+                    aspects.append({
+                        "planet1": p1_name,
+                        "planet2": p2_name,
+                        "aspect_type": aspect_name,
+                        "aspect_angle": aspect_angle,
+                        "angle": angle,
+                        "orb": diff,
+                        "strength": 1 - (diff / orb)
+                    })
+    
+    return aspects
+```
+
+---
+
+## 5. СЛОЙ 1: ИНТЕРПРЕТАЦИОННЫЕ СИСТЕМЫ
+
+### 5.1. Структура тезиса
+
+```python
+# core/models.py
+class TimeHorizon(BaseModel):
+    """Модель временного горизонта."""
+    decay: str = Field(..., pattern=r'^(constant|gaussian)$')
+    sigma_days: Optional[float] = Field(None, ge=0)
+
+
+class Thesis(BaseModel):
+    """Модель тезиса."""
+    id: str = Field(..., description="Уникальный ID, формат: {system}_{name}")
+    system: str = Field(..., pattern=r'^(western|vedic|arabic|chinese|maya|mesopotamian|transits)$')
+    sphere_vector: List[float] = Field(..., min_length=12, max_length=12)
+    sign: int = Field(..., ge=-1, le=1, description="+1 | -1 | 0")
+    claim: str = Field(..., max_length=200, description="Человекочитаемое описание")
+    base_confidence: float = Field(..., ge=0.0, le=1.0)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    level: int = Field(..., ge=1, le=4)
+    anchors: List[str] = Field(..., min_length=1)
+    time_horizon: TimeHorizon
+    days_to_peak: int = 0
+    peak_date: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    @field_validator('sphere_vector')
+    @classmethod
+    def normalize_vector(cls, v: List[float]) -> List[float]:
+        """Нормализует вектор к сумме 1.0."""
+        total = sum(v)
+        if total == 0:
+            return v
+        return [x / total for x in v]
+```
+
+**ВАЖНО:** `base_confidence` и `confidence` — разные поля:
+- `base_confidence` — рассчитывается при генерации тезиса
+- `confidence` — рассчитывается после генерации (base × K-факторы × временная модуляция)
+
+### 5.2. Локализация (i18n)
+
+```python
+# constants/i18n.py
+from enum import Enum
+from typing import Dict, List
+
+class Language(Enum):
+    EN = "en"
+    RU = "ru"
+
+SIGNS: Dict[Language, List[str]] = {
+    Language.EN: ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+                  "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"],
+    Language.RU: ["Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева",
+                  "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы"]
+}
+
+PLANETS: Dict[Language, List[str]] = {
+    Language.EN: ["Sun", "Moon", "Mercury", "Venus", "Mars",
+                  "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
+                  "North Node", "South Node"],
+    Language.RU: ["Солнце", "Луна", "Меркурий", "Венера", "Марс",
+                  "Юпитер", "Сатурн", "Уран", "Нептун", "Плутон",
+                  "Северный узел", "Южный узел"]
+}
+
+HOUSES: Dict[Language, List[str]] = {
+    Language.EN: ["1st House", "2nd House", "3rd House", "4th House", "5th House", "6th House",
+                  "7th House", "8th House", "9th House", "10th House", "11th House", "12th House"],
+    Language.RU: ["1 дом", "2 дом", "3 дом", "4 дом", "5 дом", "6 дом",
+                  "7 дом", "8 дом", "9 дом", "10 дом", "11 дом", "12 дом"]
+}
+
+SPHERES: Dict[Language, List[str]] = {
+    Language.RU: ["Карьера", "Отношения", "Финансы", "Здоровье", "Творчество",
+                  "Духовность", "Семья", "Общение", "Рост", "Риск",
+                  "Служение", "Независимость"],
+    Language.EN: ["Career", "Relationships", "Finance", "Health", "Creativity",
+                  "Spirituality", "Family", "Communication", "Growth", "Risk",
+                  "Service", "Independence"]
+}
+
+
+def get_sign_name(index: int, lang: Language = Language.RU) -> str:
+    return SIGNS[lang][index]
+
+
+def get_planet_name(index: int, lang: Language = Language.RU) -> str:
+    return PLANETS[lang][index]
+
+
+def get_house_name(number: int, lang: Language = Language.RU) -> str:
+    return HOUSES[lang][number - 1]
+
+
+def get_sphere_name(index: int, lang: Language = Language.RU) -> str:
+    return SPHERES[lang][index]
+```
+
+### 5.3. Экспертные таблицы векторов сфер
+
+```python
+# constants/astrology_mapping.py
+from typing import Dict, List, Tuple
+
+# Индексы сфер: 0=career, 1=relationships, 2=finance, 3=health,
+# 4=creativity, 5=spirituality, 6=family, 7=communication,
+# 8=growth, 9=risk, 10=service, 11=independence
+
+PLANET_SIGN_VECTORS: Dict[Tuple[str, str], List[float]] = {
+    ("Sun", "Aries"): [0.8, 0.1, 0.3, 0.4, 0.7, 0.2, 0.1, 0.5, 0.6, 0.9, 0.2, 0.8],
+    ("Sun", "Taurus"): [0.5, 0.3, 0.9, 0.7, 0.3, 0.2, 0.8, 0.2, 0.4, 0.3, 0.5, 0.2],
+    ("Sun", "Gemini"): [0.3, 0.4, 0.3, 0.2, 0.4, 0.3, 0.2, 0.9, 0.8, 0.2, 0.3, 0.3],
+    ("Moon", "Cancer"): [0.2, 0.5, 0.3, 0.3, 0.3, 0.8, 0.9, 0.2, 0.2, 0.1, 0.7, 0.2],
+    # ... полный набор 120 комбинаций (10 планет × 12 знаков)
+    # В продакшене заполняется экспертами-астрологами
+}
+
+DASHA_VECTORS: Dict[str, List[float]] = {
+    "Sun": [0.7, 0.1, 0.3, 0.2, 0.6, 0.8, 0.1, 0.2, 0.5, 0.3, 0.2, 0.4],
+    "Moon": [0.2, 0.5, 0.4, 0.3, 0.3, 0.7, 0.9, 0.3, 0.2, 0.1, 0.6, 0.3],
+    "Mars": [0.9, 0.3, 0.4, 0.2, 0.3, 0.1, 0.2, 0.3, 0.4, 0.9, 0.3, 0.7],
+    "Mercury": [0.4, 0.5, 0.6, 0.2, 0.3, 0.2, 0.2, 0.9, 0.7, 0.3, 0.4, 0.3],
+    "Jupiter": [0.8, 0.4, 0.5, 0.3, 0.4, 0.8, 0.3, 0.4, 0.9, 0.2, 0.5, 0.3],
+    "Venus": [0.3, 0.9, 0.8, 0.3, 0.7, 0.3, 0.4, 0.4, 0.3, 0.2, 0.3, 0.2],
+    "Saturn": [0.6, 0.3, 0.3, 0.5, 0.2, 0.6, 0.5, 0.2, 0.3, 0.4, 0.8, 0.6],
+}
+
+NAKSHATRA_VECTORS: Dict[str, List[float]] = { ... }  # 27 накшатр
+ARABIC_VECTORS: Dict[str, List[float]] = { ... }  # 6 частей
+
+ELEMENT_VECTORS: Dict[str, List[float]] = {
+    "Wood": [0.5, 0.3, 0.4, 0.3, 0.4, 0.3, 0.5, 0.4, 0.5, 0.2, 0.3, 0.4],
+    "Fire": [0.8, 0.3, 0.3, 0.2, 0.7, 0.3, 0.2, 0.3, 0.4, 0.6, 0.2, 0.5],
+    "Earth": [0.4, 0.5, 0.8, 0.6, 0.3, 0.2, 0.7, 0.2, 0.3, 0.2, 0.5, 0.2],
+    "Metal": [0.6, 0.3, 0.6, 0.3, 0.2, 0.3, 0.3, 0.4, 0.3, 0.4, 0.4, 0.5],
+    "Water": [0.2, 0.6, 0.4, 0.4, 0.3, 0.7, 0.6, 0.3, 0.2, 0.2, 0.5, 0.3],
+}
+
+MAYA_VECTORS: Dict = { ... }
+
+
+def get_planet_sign_vector(planet: str, sign: str) -> List[float]:
+    return PLANET_SIGN_VECTORS.get((planet, sign), [0.5] * 12)
+
+
+def get_dasha_vector(planet: str) -> List[float]:
+    return DASHA_VECTORS.get(planet, [0.5] * 12)
+
+
+def get_nakshatra_vector(name: str) -> List[float]:
+    return NAKSHATRA_VECTORS.get(name, [0.5] * 12)
+
+
+def get_arabic_vector(name: str) -> List[float]:
+    return ARABIC_VECTORS.get(name, [0.5] * 12)
+
+
+def get_element_vector(element: str) -> List[float]:
+    return ELEMENT_VECTORS.get(element, [0.5] * 12)
+
+
+def get_maya_vector(key: str, subkey) -> List[float]:
+    return MAYA_VECTORS.get(key, {}).get(subkey, [0.5] * 12)
+
+
+# ============================================================
+# SPEED_RANGES для normalize_speed (ИСПРАВЛЕНО: узлы добавлены)
+# ============================================================
+SPEED_RANGES = {
+    "Sun": (0.95, 1.02),
+    "Moon": (11.8, 15.4),
+    "Mercury": (-1.5, 2.2),
+    "Venus": (-0.7, 1.3),
+    "Mars": (-0.5, 0.8),
+    "Jupiter": (-0.15, 0.25),
+    "Saturn": (-0.12, 0.15),
+    "Uranus": (-0.06, 0.06),
+    "Neptune": (-0.04, 0.04),
+    "Pluto": (-0.03, 0.03),
+    "NorthNode": (-0.06, 0.0),
+    "SouthNode": (-0.06, 0.0),
+}
+
+
+def normalize_speed(planet_name: str, speed: float) -> float:
+    """
+    Нормализует скорость планеты в диапазон 0-1.
+    
+    Для ретроградных планет (speed < 0) возвращает 0.
+    Для стационарных (speed = 0) возвращает 0.5.
+    """
+    if planet_name not in SPEED_RANGES:
+        return 0.5
+    
+    min_s, max_s = SPEED_RANGES[planet_name]
+    
+    if max_s == min_s:
+        return 0.5
+    
+    if speed < 0:
+        return 0.0
+    
+    normalized = (speed - min_s) / (max_s - min_s)
+    return max(0.0, min(1.0, normalized))
+
+
+# ============================================================
+# ASPECT_SPHERE_MODIFIERS (уточнено инспектором)
+# ============================================================
+ASPECT_SPHERE_MODIFIERS = {
+    "conjunction": 1.20,      # Слияние — максимальное усиление
+    "trine": 0.85,            # Гармония (но не усиливает)
+    "sextile": 0.75,          # Возможности (слабее трина)
+    "square": 1.15,           # Напряжение (конструктивное)
+    "opposition": 1.25,       # Максимальное противостояние
+    "quincunx": 0.65,         # Корректировка
+    "semisextile": 0.55,
+    "semisquare": 0.70,
+    "sesquiquadrate": 0.70,
+}
+
+
+def get_transit_sphere_vector(natal_planet: str, aspect_type: str) -> List[float]:
+    """Вектор транзита = вектор натальной планеты × модификатор аспекта."""
+    base_vector = get_planet_sphere(natal_planet)["vector"]
+    modifier = ASPECT_SPHERE_MODIFIERS.get(aspect_type, 1.0)
+    return [min(1.0, v * modifier) for v in base_vector]
+```
+
+### 5.4. Статическая интерпретация с graceful degradation
+
+```python
+# interpretation/generator.py
+import structlog
+from typing import List, Dict, Any
+from core.models import Thesis, TimeHorizon
+from config.settings_manager import get_settings
+
+logger = structlog.get_logger()
+
+
+def generate_static_theses(static_core: Dict[str, Any]) -> List[Thesis]:
+    """
+    Генерирует все статические тезисы с graceful degradation.
+    
+    Если одна система падает — логируем ошибку и продолжаем.
+    Если все системы падают — выбрасываем исключение.
+    
+    Учитывает флаги enable_* из SettingsManager.
+    """
+    settings = get_settings()
+    
+    all_systems = [
+        ("western", generate_western_theses),
+        ("vedic", generate_vedic_theses),
+        ("arabic", generate_arabic_theses),
+        ("chinese", generate_chinese_theses),
+        ("maya", generate_maya_theses),
+        ("mesopotamian", generate_mesopotamian_theses),
+    ]
+    
+    # Фильтрация по настройкам
+    enabled_systems = []
+    for name, func in all_systems:
+        if settings.get(f"enable_{name}", True):
+            enabled_systems.append((name, func))
+        else:
+            logger.info("system_disabled", system=name)
+    
+    if not enabled_systems:
+        raise ValueError("All systems disabled in settings")
+    
+    all_theses = []
+    failed_systems = []
+    
+    for system_name, generator_func in enabled_systems:
+        try:
+            theses = generator_func(static_core)
+            if theses:
+                all_theses.extend(theses)
+                logger.info("system_generated", system=system_name, count=len(theses))
+            else:
+                logger.warning("system_empty", system=system_name)
+        except Exception as e:
+            logger.error("system_failed", system=system_name,
+                        error=str(e), error_type=type(e).__name__)
+            failed_systems.append(system_name)
+    
+    if not all_theses:
+        raise ValueError(
+            f"All enabled interpretation systems failed. "
+            f"Failed: {failed_systems}. Check ephemeris data and system integrity."
+        )
+    
+    if failed_systems:
+        logger.warning("partial_failure", failed_systems=failed_systems)
+    
+    # Расчёт Confidence
+    from confidence.astronomical import calculate_astronomical_confidence
+    for thesis in all_theses:
+        thesis.confidence = calculate_astronomical_confidence(thesis, static_core)
+        thesis.time_horizon = TimeHorizon(decay="constant")
+        thesis.days_to_peak = 0
+        thesis.peak_date = None
+    
+    return all_theses
+```
+
+### 5.5. Western (западная)
+
+```python
+# interpretation/western.py
+from typing import List, Dict
+from core.models import Thesis, TimeHorizon
+from constants.astrology_mapping import get_planet_sign_vector
+from constants.i18n import get_sign_name, get_planet_name, get_house_name, Language, SIGNS
+
+
+def generate_western_theses(core: dict) -> List[Thesis]:
+    """Генерирует тезисы западной астрологии."""
+    theses = []
+    
+    for planet_name, planet_data in core["planets"].items():
+        vector = get_planet_sign_vector(planet_name, planet_data["sign"])
+        sign = get_direction_from_dignity(planet_data["dignity"])
+        
+        base_conf = 0.6
+        if planet_data["dignity"].get("ruler", False):
+            base_conf += 0.15
+        if planet_data["dignity"].get("exaltation", False):
+            base_conf += 0.1
+        if planet_data.get("retrograde", False):
+            base_conf -= 0.05
+        
+        planet_ru = get_planet_name_by_symbol(planet_name)
+        sign_ru = get_sign_name(SIGNS.index(planet_data["sign"]), Language.RU)
+        house_ru = get_house_name(planet_data["house"], Language.RU)
+        
+        thesis = Thesis(
+            id=f"W_{planet_name}",
+            system="western",
+            sphere_vector=vector,
+            sign=sign,
+            claim=f"{planet_ru} в {sign_ru} в {house_ru}",
+            base_confidence=max(0.1, min(1.0, base_conf)),
+            confidence=0.0,
+            level=1,
+            anchors=[f"{planet_name}_{planet_data['sign']}_{planet_data['house']}"],
+            time_horizon=TimeHorizon(decay="constant"),
+            days_to_peak=0,
+            peak_date=None,
+            metadata={
+                "planet": planet_name,
+                "sign": planet_data["sign"],
+                "house": planet_data["house"]
+            }
+        )
+        theses.append(thesis)
+    
+    # Паттерны (уровень 2)
+    patterns = detect_patterns(core["aspects"], core["planets"])
+    for pattern in patterns:
+        vector = get_pattern_vector(pattern)
+        sign = get_pattern_direction(pattern)
+        thesis = Thesis(
+            id=f"W_PAT_{pattern['type']}",
+            system="western",
+            sphere_vector=vector,
+            sign=sign,
+            claim=f"{pattern['type']} с вершиной на {pattern['apex']}",
+            base_confidence=0.5 + (0.3 * pattern["strength"]),
+            confidence=0.0,
+            level=2,
+            anchors=pattern["planets"],
+            time_horizon=TimeHorizon(decay="constant"),
+            days_to_peak=0,
+            peak_date=None,
+            metadata={"pattern_type": pattern["type"], "apex": pattern["apex"]}
+        )
+        theses.append(thesis)
+    
+    return theses
+
+
+# ============================================================
+# detect_patterns — полная реализация (ИСПРАВЛЕНО)
+# ============================================================
+def detect_patterns(aspects: list, planets: dict) -> list:
+    """Определяет астрологические паттерны."""
+    patterns = []
+    patterns.extend(_detect_stellium(planets))
+    patterns.extend(_detect_grand_trine(aspects, planets))
+    patterns.extend(_detect_t_square(aspects))
+    patterns.extend(_detect_yod(aspects))
+    return patterns
+
+
+def _detect_stellium(planets: dict) -> list:
+    """Stellium: 3+ планет в одном знаке или доме."""
+    patterns = []
+    
+    sign_groups: Dict[str, List[str]] = {}
+    for name, data in planets.items():
+        sign_groups.setdefault(data["sign"], []).append(name)
+    
+    for sign, planet_list in sign_groups.items():
+        if len(planet_list) >= 3:
+            patterns.append({
+                "type": "Stellium",
+                "apex": None,
+                "planets": planet_list,
+                "strength": min(1.0, len(planet_list) / 5),
+                "details": {"sign": sign, "count": len(planet_list), "by": "sign"}
+            })
+    
+    house_groups: Dict[int, List[str]] = {}
+    for name, data in planets.items():
+        house_groups.setdefault(data["house"], []).append(name)
+    
+    for house, planet_list in house_groups.items():
+        if len(planet_list) >= 3:
+            patterns.append({
+                "type": "Stellium",
+                "apex": None,
+                "planets": planet_list,
+                "strength": min(1.0, len(planet_list) / 5),
+                "details": {"house": house, "count": len(planet_list), "by": "house"}
+            })
+    
+    return patterns
+
+
+def _detect_grand_trine(aspects: list, planets: dict = None) -> list:
+    """Grand Trine: 3 планеты, соединённые тринами (цикл длины 3)."""
+    trine_edges = set()
+    for a in aspects:
+        if a["aspect_type"] == "trine":
+            p1, p2 = a["planet1"], a["planet2"]
+            trine_edges.add((min(p1, p2), max(p1, p2)))
+    
+    patterns = []
+    planets_in_trines = set()
+    for p1, p2 in trine_edges:
+        planets_in_trines.add(p1)
+        planets_in_trines.add(p2)
+    
+    planet_list = sorted(planets_in_trines)
+    for i, p1 in enumerate(planet_list):
+        for j, p2 in enumerate(planet_list[i+1:], start=i+1):
+            edge12 = (min(p1, p2), max(p1, p2))
+            if edge12 not in trine_edges:
+                continue
+            for p3 in planet_list[j+1:]:
+                edge13 = (min(p1, p3), max(p1, p3))
+                edge23 = (min(p2, p3), max(p2, p3))
+                if edge13 in trine_edges and edge23 in trine_edges:
+                    element = _get_element_for_trine(p1, p2, p3, planets)
+                    patterns.append({
+                        "type": "Grand Trine",
+                        "apex": None,
+                        "planets": [p1, p2, p3],
+                        "strength": 0.9,
+                        "details": {"element": element}
+                    })
+    
+    return patterns
+
+
+def _get_element_for_trine(p1: str, p2: str, p3: str, planets: dict = None) -> str:
+    """Определяет стихию Grand Trine по знакам планет."""
+    if planets is None:
+        return "unknown"
+    
+    SIGNS_TO_ELEMENTS = {
+        "Aries": "Fire", "Leo": "Fire", "Sagittarius": "Fire",
+        "Taurus": "Earth", "Virgo": "Earth", "Capricorn": "Earth",
+        "Gemini": "Air", "Libra": "Air", "Aquarius": "Air",
+        "Cancer": "Water", "Scorpio": "Water", "Pisces": "Water",
+    }
+    
+    elements = set()
+    for p in (p1, p2, p3):
+        if p in planets:
+            sign = planets[p].get("sign")
+            if sign in SIGNS_TO_ELEMENTS:
+                elements.add(SIGNS_TO_ELEMENTS[sign])
+    
+    return elements.pop() if len(elements) == 1 else "mixed"
+
+
+def _detect_t_square(aspects: list) -> list:
+    """T-Square: 2 оппозиции + 2 квадрата, образующие T."""
+    oppositions = [(a["planet1"], a["planet2"]) for a in aspects if a["aspect_type"] == "opposition"]
+    squares_set = set()
+    for a in aspects:
+        if a["aspect_type"] == "square":
+            p1, p2 = a["planet1"], a["planet2"]
+            squares_set.add((min(p1, p2), max(p1, p2)))
+    
+    patterns = []
+    for opp_p1, opp_p2 in oppositions:
+        candidates = set()
+        for p1, p2 in squares_set:
+            candidates.add(p1)
+            candidates.add(p2)
+        
+        for apex in candidates:
+            if apex in (opp_p1, opp_p2):
+                continue
+            sq1 = (min(apex, opp_p1), max(apex, opp_p1)) in squares_set
+            sq2 = (min(apex, opp_p2), max(apex, opp_p2)) in squares_set
+            if sq1 and sq2:
+                patterns.append({
+                    "type": "T-Square",
+                    "apex": apex,
+                    "planets": [opp_p1, opp_p2, apex],
+                    "strength": 0.85,
+                    "details": {"opposition": [opp_p1, opp_p2]}
+                })
+    
+    return patterns
+
+
+def _detect_yod(aspects: list) -> list:
+    """Yod (Перст Судьбы): 2 квинконса + 1 секстиль."""
+    quincunxes_set = set()
+    for a in aspects:
+        if a["aspect_type"] == "quincunx":
+            p1, p2 = a["planet1"], a["planet2"]
+            quincunxes_set.add((min(p1, p2), max(p1, p2)))
+    
+    sextiles = [(a["planet1"], a["planet2"]) for a in aspects if a["aspect_type"] == "sextile"]
+    
+    patterns = []
+    for p1, p2 in sextiles:
+        candidates = set()
+        for a, b in quincunxes_set:
+            candidates.add(a)
+            candidates.add(b)
+        
+        for apex in candidates:
+            if apex in (p1, p2):
+                continue
+            q1 = (min(apex, p1), max(apex, p1)) in quincunxes_set
+            q2 = (min(apex, p2), max(apex, p2)) in quincunxes_set
+            if q1 and q2:
+                patterns.append({
+                    "type": "Yod",
+                    "apex": apex,
+                    "planets": [p1, p2, apex],
+                    "strength": 0.8,
+                    "details": {"sextile": [p1, p2]}
+                })
+    
+    return patterns
+```
+
+### 5.6. Vedic (джйотиш)
+
+```python
+# interpretation/vedic.py
+from typing import List, Dict
+from core.models import Thesis, TimeHorizon
+from constants.astrology_mapping import get_nakshatra_vector, get_dasha_vector, get_sign
+from constants.i18n import Language, get_sign_name
+
+NAKSHATRAS = [
+    "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra",
+    "Punarvasu", "Pushya", "Ashlesha", "Magha", "Purva Phalguni", "Uttara Phalguni",
+    "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha",
+    "Mula", "Purva Ashadha", "Uttara Ashadha", "Shravana", "Dhanishta",
+    "Shatabhisha", "Purva Bhadrapada", "Uttara Bhadrapada", "Revati"
+]
+
+NAKSHATRA_LORDS = [
+    "Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"
+] * 3
+
+DASHA_ORDER = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
+DASHA_YEARS = {
+    "Ketu": 7, "Venus": 20, "Sun": 6, "Moon": 10, "Mars": 7,
+    "Rahu": 18, "Jupiter": 16, "Saturn": 19, "Mercury": 17
+}
+
+
+def apply_ayanamsa(planets: dict, ayanamsa: float) -> dict:
+    """Переводит тропические долготы в сидерические."""
+    result = {}
+    for name, data in planets.items():
+        new_data = data.copy()
+        new_data["tropical_longitude"] = data["longitude"]
+        new_data["longitude"] = (data["longitude"] - ayanamsa) % 360
+        new_data["sign"] = get_sign(new_data["longitude"])
+        new_data["sign_longitude"] = new_data["longitude"] % 30
+        result[name] = new_data
+    return result
+
+
+def calculate_nakshatra(moon_longitude: float) -> dict:
+    """Определяет накшатру Луны."""
+    NAKSHATRA_SIZE = 360 / 27
+    PADA_SIZE = NAKSHATRA_SIZE / 4
+    
+    index = int(moon_longitude / NAKSHATRA_SIZE) % 27
+    pada = int((moon_longitude % NAKSHATRA_SIZE) / PADA_SIZE) + 1
+    
+    return {
+        "name": NAKSHATRAS[index],
+        "index": index,
+        "pada": pada,
+        "lord": NAKSHATRA_LORDS[index],
+        "strength": 1.0 - abs((moon_longitude % NAKSHATRA_SIZE) - NAKSHATRA_SIZE / 2) / (NAKSHATRA_SIZE / 2)
+    }
+
+
+def calculate_dasha(moon_data: dict, birth_data: dict) -> dict:
+    """Рассчитывает Вимшоттари-дашу (120-летний цикл)."""
+    from datetime import datetime
+    
+    moon_long = moon_data["longitude"]
+    nakshatra = calculate_nakshatra(moon_long)
+    
+    start_lord = nakshatra["lord"]
+    start_index = DASHA_ORDER.index(start_lord)
+    
+    nakshatra_progress = (moon_long % (360 / 27)) / (360 / 27)
+    start_dasha_years = DASHA_YEARS[start_lord]
+    elapsed_years = start_dasha_years * nakshatra_progress
+    
+    birth_date = datetime(
+        birth_data["year"], birth_data["month"], birth_data["day"],
+        birth_data["hour"], birth_data["minute"]
+    )
+    
+    now = datetime.utcnow()
+    years_since_birth = (now - birth_date).days / 365.25
+    
+    periods = []
+    current_year = -elapsed_years
+    dasha_index = start_index
+    
+    for _ in range(9):
+        planet = DASHA_ORDER[dasha_index]
+        duration = DASHA_YEARS[planet]
+        period_start = current_year
+        period_end = current_year + duration
+        
+        if period_start <= years_since_birth < period_end:
+            progress = (years_since_birth - period_start) / duration
+            periods.append({
+                "planet": planet,
+                "type": "mahadasha",
+                "progress": progress,
+                "start_year": period_start,
+                "end_year": period_end,
+                "is_current": True
+            })
+        
+        current_year = period_end
+        dasha_index = (dasha_index + 1) % 9
+    
+    return {"periods": periods}
+
+
+def generate_vedic_theses(core: dict) -> List[Thesis]:
+    """Генерирует тезисы ведической астрологии (макс ~15)."""
+    theses = []
+    sidereal_planets = apply_ayanamsa(core["planets"], core["ayanamsa"])
+    
+    nakshatra = calculate_nakshatra(sidereal_planets["Moon"]["longitude"])
+    vector = get_nakshatra_vector(nakshatra["name"])
+    sign = get_nakshatra_direction(nakshatra)
+    
+    thesis = Thesis(
+        id=f"V_NAK_{nakshatra['name']}",
+        system="vedic",
+        sphere_vector=vector,
+        sign=sign,
+        claim=f"Накшатра {nakshatra['name']} (пада {nakshatra['pada']})",
+        base_confidence=0.7 + (0.05 * nakshatra["strength"]),
+        confidence=0.0,
+        level=1,
+        anchors=[f"Moon_{nakshatra['name']}"],
+        time_horizon=TimeHorizon(decay="constant"),
+        days_to_peak=0, peak_date=None,
+        metadata={"nakshatra": nakshatra["name"], "pada": nakshatra["pada"]}
+    )
+    theses.append(thesis)
+    
+    dasha = calculate_dasha(sidereal_planets["Moon"], core["birth_data"])
+    for period in dasha["periods"]:
+        vector = get_dasha_vector(period["planet"])
+        sign = get_dasha_direction(period)
+        level = 2 if period["type"] == "mahadasha" else 3
+        
+        thesis = Thesis(
+            id=f"V_DAS_{period['planet']}_{period['type']}",
+            system="vedic",
+            sphere_vector=vector,
+            sign=sign,
+            claim=f"{period['type']} {period['planet']} ({period['progress']:.1%})",
+            base_confidence=0.5 + (0.3 * period["progress"]),
+            confidence=0.0,
+            level=level,
+            anchors=[f"Dasha_{period['planet']}"],
+            time_horizon=TimeHorizon(decay="constant"),
+            days_to_peak=0, peak_date=None,
+            metadata={"dasha_planet": period["planet"], "dasha_type": period["type"]}
+        )
+        theses.append(thesis)
+    
+    return theses
+```
+
+### 5.7. Arabic (арабские части) — с формульным движком
+
+```python
+# interpretation/arabic.py
+from typing import Callable, Dict, Any, List
+from core.models import Thesis, TimeHorizon
+from constants.astrology_mapping import get_arabic_vector
+
+ARABIC_FORMULAS = {
+    "Fortune": {
+        "day": lambda asc, planets, points: asc + planets["Moon"]["longitude"] - planets["Sun"]["longitude"],
+        "night": lambda asc, planets, points: asc + planets["Sun"]["longitude"] - planets["Moon"]["longitude"]
+    },
+    "Soul": {
+        "day": lambda asc, planets, points: asc + planets["Sun"]["longitude"] - planets["Moon"]["longitude"],
+        "night": lambda asc, planets, points: asc + planets["Moon"]["longitude"] - planets["Sun"]["longitude"]
+    },
+    "Career": {
+        "day": lambda asc, planets, points: asc + points["MC"] - planets["Sun"]["longitude"],
+        "night": lambda asc, planets, points: asc + points["MC"] - planets["Sun"]["longitude"]
+    },
+    "Marriage": {
+        "day": lambda asc, planets, points: asc + points["DSC"] - planets["Venus"]["longitude"],
+        "night": lambda asc, planets, points: asc + points["DSC"] - planets["Venus"]["longitude"]
+    },
+    "Children": {
+        "day": lambda asc, planets, points: asc + planets["Saturn"]["longitude"] - planets["Jupiter"]["longitude"],
+        "night": lambda asc, planets, points: asc + planets["Saturn"]["longitude"] - planets["Jupiter"]["longitude"]
+    },
+    "Death": {
+        "day": lambda asc, planets, points: asc + planets["Saturn"]["longitude"] - planets["Mars"]["longitude"],
+        "night": lambda asc, planets, points: asc + planets["Mars"]["longitude"] - planets["Saturn"]["longitude"]
+    }
+}
+
+
+def calculate_arabic_part(asc: float, formula: Callable, planets: dict, points: dict) -> float:
+    """Вычисляет арабскую часть по формуле."""
+    return formula(asc, planets, points) % 360
+
+
+def generate_arabic_theses(core: dict) -> List[Thesis]:
+    """Генерирует тезисы арабских частей (макс ~10)."""
+    theses = []
+    is_day = core["is_daytime"]
+    points = {"MC": core["houses"][10]["cusp"], "DSC": core["houses"][7]["cusp"]}
+    
+    for name, formulas in ARABIC_FORMULAS.items():
+        formula = formulas["day"] if is_day else formulas["night"]
+        longitude = calculate_arabic_part(
+            asc=core["houses"][1]["cusp"],
+            formula=formula,
+            planets=core["planets"],
+            points=points
+        )
+        sign = get_sign(longitude)
+        house = get_house(longitude, core["houses"])
+        vector = get_arabic_vector(name)
+        direction = get_arabic_direction(name, longitude, core)
+        
+        base_conf = 0.5
+        if house in [1, 4, 7, 10]:
+            base_conf += 0.2
+        elif house in [2, 5, 8, 11]:
+            base_conf += 0.1
+        
+        thesis = Thesis(
+            id=f"A_{name}",
+            system="arabic",
+            sphere_vector=vector,
+            sign=direction,
+            claim=f"{name} в {sign} в {house} доме",
+            base_confidence=max(0.1, min(1.0, base_conf)),
+            confidence=0.0,
+            level=2,
+            anchors=[f"Arabic_{name}_{sign}"],
+            time_horizon=TimeHorizon(decay="constant"),
+            days_to_peak=0, peak_date=None,
+            metadata={"part_name": name, "longitude": longitude, "sign": sign, "house": house}
+        )
+        theses.append(thesis)
+    
+    return theses
+```
+
+### 5.8. Chinese, Maya, Mesopotamian
+
+Реализуются аналогично, максимально 4 / 2 / 5 тезисов соответственно. Каждая система использует свой вектор и направление.
+
+### 5.9. Динамическая интерпретация (транзиты)
+
+```python
+# interpretation/transits.py
+from datetime import datetime
+from typing import List
+from core.models import Thesis, TimeHorizon
+from constants.astrology_mapping import get_transit_sphere_vector
+
+
+def generate_dynamic_theses(dynamic_core: dict, static_core: dict, current_date: datetime) -> List[Thesis]:
+    """Генерирует тезисы на основе транзитов (только в пределах горизонта)."""
+    theses = []
+    for aspect in dynamic_core["aspects"]:
+        vector = get_transit_sphere_vector(aspect["natal_planet"], aspect["aspect_type"])
+        sigma = calculate_sigma(aspect["speed"], aspect["orb"])
+        
+        thesis = Thesis(
+            id=f"T_{aspect['transit_planet']}_{aspect['natal_planet']}_{aspect['aspect_type']}",
+            system="transits",
+            sphere_vector=vector,
+            sign=get_transit_direction(aspect),
+            claim=f"Транзит {aspect['transit_planet']} {aspect['aspect_type']} натального {aspect['natal_planet']}",
+            base_confidence=aspect["strength"],
+            confidence=0.0,
+            level=2,
+            anchors=[f"Transit_{aspect['transit_planet']}_{aspect['natal_planet']}"],
+            time_horizon=TimeHorizon(decay="gaussian", sigma_days=sigma),
+            days_to_peak=aspect["days_to_peak"],
+            peak_date=datetime.fromisoformat(aspect["peak_date"]),
+            metadata={
+                "transit_planet": aspect["transit_planet"],
+                "natal_planet": aspect["natal_planet"],
+                "aspect_type": aspect["aspect_type"],
+                "aspect_angle": aspect["aspect_angle"],
+                "orb": aspect["orb"],
+                "speed": aspect["speed"]
+            }
+        )
+        theses.append(thesis)
+    return theses
+
+
+def calculate_sigma(speed: float, orb: float) -> float:
+    """
+    Чем быстрее планета — тем уже окно.
+    Возвращает sigma в днях.
+    
+    TODO(v8.0): Перейти на динамический расчёт sigma = orb / speed * 2
+    """
+    if speed > 12:
+        return 7        # Луна
+    elif speed > 2:
+        return 14       # Меркурий, Венера, Марс
+    elif speed > 0.3:
+        return 35       # Юпитер
+    else:
+        return 90       # Сатурн, Уран, Нептун, Плутон
+
+
+def get_transit_direction(aspect: dict) -> int:
+    """Определяет направление транзита (+1 / -1)."""
+    aspect_type = aspect["aspect_type"]
+    
+    if aspect_type in ["trine", "sextile"]:
+        return 1
+    elif aspect_type in ["square", "opposition"]:
+        return -1
+    elif aspect_type == "conjunction":
+        benefics = ["Jupiter", "Venus"]
+        malefics = ["Saturn", "Mars", "Pluto"]
+        
+        if aspect["transit_planet"] in benefics:
+            return 1
+        elif aspect["transit_planet"] in malefics:
+            return -1
+        return 0
+    else:
+        return 0
+```
+
+---
+
+## 6. СЛОЙ 2: ИНТЕГРАЦИЯ
+
+### 6.1. Критическое правило
+
+```
+1. Кластеризация ВСЕХ тезисов (без ограничений)
+2. Нормализация внутри кластеров (N_max=5 на систему)
+3. Расчёт пересечений
+```
+
+### 6.2. ШАГ 1: Кластеризация
+
+```python
+# integration/clustering.py
+import numpy as np
+from typing import List, Set
+from core.models import Thesis
+
+
+def cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    """Косинусное расстояние (numpy)."""
+    v1_np = np.array(v1)
+    v2_np = np.array(v2)
+    norm1 = np.linalg.norm(v1_np)
+    norm2 = np.linalg.norm(v2_np)
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return float(np.dot(v1_np, v2_np) / (norm1 * norm2))
+
+
+def cluster_theses(theses: List[Thesis]) -> List[List[Thesis]]:
+    """
+    Кластеризует тезисы по косинусному расстоянию (порог из SettingsManager).
+    
+    Обоснование порога 0.7:
+        При 0.6: слишком много ложных объединений.
+        При 0.8: слишком много изолированных тезисов.
+        0.7 даёт оптимальное число кластеров (~8-12 для 47 тезисов).
+    """
+    from config.settings_manager import get_settings
+    settings = get_settings()
+    threshold = settings.get("cluster_threshold", 0.70)
+    
+    clusters = []
+    used: Set[int] = set()
+    
+    for i, t1 in enumerate(theses):
+        if i in used:
+            continue
+        cluster = [t1]
+        used.add(i)
+        for j, t2 in enumerate(theses[i+1:], start=i+1):
+            if j in used:
+                continue
+            if cosine_similarity(t1.sphere_vector, t2.sphere_vector) >= threshold:
+                cluster.append(t2)
+                used.add(j)
+        if cluster:
+            clusters.append(cluster)
+    return clusters
+```
+
+### 6.3. ШАГ 2: Нормализация
+
+```python
+# integration/normalization.py
+from typing import List
+from core.models import Thesis
+
+
+def normalize_cluster(cluster: List[Thesis], N_max: int = None) -> List[Thesis]:
+    """
+    Оставляет не более N_max тезисов от одной системы.
+    
+    Обоснование N_max=5:
+        - В западной астрологии типично 5 планет в одном доме (максимум)
+        - В ведической — 5 тезисов (накшатра + 4 даши)
+        - 5 — максимальное осмысленное количество для пользователя
+    
+    Args:
+        cluster: Кластер тезисов
+        N_max: Максимальное количество тезисов от одной системы
+               (по умолчанию из SettingsManager)
+    """
+    if N_max is None:
+        from config.settings_manager import get_settings
+        N_max = get_settings().get("n_max", 5)
+    
+    by_system: dict = {}
+    for thesis in cluster:
+        by_system.setdefault(thesis.system, []).append(thesis)
+    
+    normalized = []
+    for system, system_theses in by_system.items():
+        sorted_theses = sorted(system_theses, key=lambda t: t.confidence, reverse=True)
+        normalized.extend(sorted_theses[:N_max])
+    return normalized
+```
+
+### 6.4. ШАГ 3: Расчёт пересечений
+
+```python
+# integration/intersections.py
+from typing import List, Dict, Any
+from core.models import Thesis
+from constants.i18n import SPHERES, Language
+
+
+def classify_intersection(cluster: List[Thesis]) -> Dict[str, Any]:
+    """Классифицирует пересечение внутри кластера."""
+    n_systems = len(set(t.system for t in cluster))
+    directions = [t.sign for t in cluster]
+    confidences = [t.confidence for t in cluster]
+    avg_confidence = sum(confidences) / len(confidences)
+    
+    # 1. Tension (конфликт направлений)
+    if any(s == 1 for s in directions) and any(s == -1 for s in directions):
+        return {
+            "type": "tension",
+            "strength": avg_confidence,
+            "tension_index": calculate_tension_index(cluster),
+            "sources": list(set(t.system for t in cluster)),
+            "sign": 0,
+            "spheres": get_sphere_names(cluster[0].sphere_vector)
+        }
+    
+    # 2. Full (≥3 систем, avg_confidence ≥ 0.8)
+    if n_systems >= 3 and avg_confidence >= 0.8:
+        strength = 1 - (1 - confidences[0]) * (1 - confidences[1]) * (1 - confidences[2])
+        return {
+            "type": "full", "strength": strength, "tension_index": 0,
+            "sources": list(set(t.system for t in cluster)),
+            "sign": 1 if directions[0] == 1 else -1,
+            "spheres": get_sphere_names(cluster[0].sphere_vector)
+        }
+    
+    # 3. Partial (≥2 систем, avg_confidence ≥ 0.5)
+    if n_systems >= 2 and avg_confidence >= 0.5:
+        strength = sum(c * c for c in confidences) / sum(confidences)
+        return {
+            "type": "partial", "strength": strength, "tension_index": 0,
+            "sources": list(set(t.system for t in cluster)),
+            "sign": 1 if directions[0] == 1 else -1,
+            "spheres": get_sphere_names(cluster[0].sphere_vector)
+        }
+    
+    # 4. Weak
+    return {
+        "type": "weak", "strength": avg_confidence, "tension_index": 0,
+        "sources": list(set(t.system for t in cluster)),
+        "sign": 1 if directions[0] == 1 else -1,
+        "spheres": get_sphere_names(cluster[0].sphere_vector)
+    }
+
+
+def calculate_tension_index(cluster: List[Thesis]) -> float:
+    """
+    Нормированный индекс напряжения (0-1).
+    
+    0.0 = полное согласие
+    1.0 = максимальное противостояние
+    """
+    positives = [t for t in cluster if t.sign == 1]
+    negatives = [t for t in cluster if t.sign == -1]
+    
+    if not positives or not negatives:
+        return 0.0
+    
+    pos_avg = sum(t.confidence for t in positives) / len(positives)
+    neg_avg = sum(t.confidence for t in negatives) / len(negatives)
+    
+    return 1 - abs(pos_avg - neg_avg) / (pos_avg + neg_avg + 1e-9)
+
+
+def get_sphere_names(vector: List[float], lang: Language = Language.RU) -> List[str]:
+    """Возвращает названия сфер, где вектор > 0.3."""
+    return [SPHERES[lang][i] for i, v in enumerate(vector) if v > 0.3]
+```
+
+### 6.5. Статическая интеграция
+
+```python
+# integration/static.py
+from typing import List, Dict, Any
+from core.models import Thesis
+
+
+def integrate_static(static_theses: List[Thesis]) -> Dict[str, Any]:
+    """Полная статическая интеграция (1 раз, кешируется постоянно)."""
+    raw_clusters = cluster_theses(static_theses)
+    balanced_clusters = [normalize_cluster(c) for c in raw_clusters]
+    intersections = [classify_intersection(c) for c in balanced_clusters]
+    
+    return {
+        "clusters": balanced_clusters,
+        "intersections": intersections,
+        "all_theses": static_theses,
+        "metadata": {
+            "clusters_count": len(balanced_clusters),
+            "theses_count": len(static_theses)
+        }
+    }
+```
+
+### 6.6. Динамическая интеграция
+
+```python
+# integration/dynamic.py
+from datetime import datetime
+from typing import List, Dict, Any
+from core.models import Thesis
+
+
+def integrate_dynamic(
+    dynamic_theses: List[Thesis],
+    static_clusters: Dict[str, Any],
+    current_date: datetime,
+    horizon_days: int
+) -> List[Dict[str, Any]]:
+    """Интеграция динамических тезисов с наложением на статические кластеры."""
+    from config.settings_manager import get_settings
+    MIN_CONFIDENCE = get_settings().get("min_dynamic_confidence", 0.10)
+    
+    filtered = [t for t in dynamic_theses if t.confidence >= MIN_CONFIDENCE]
+    if not filtered:
+        return []
+    
+    dyn_clusters = cluster_theses(filtered)
+    integrated = []
+    
+    for dyn_cluster in dyn_clusters:
+        dyn_centroid = compute_centroid(dyn_cluster)
+        best_match = None
+        best_similarity = 0
+        
+        for static_cluster in static_clusters["clusters"]:
+            static_centroid = compute_centroid(static_cluster)
+            similarity = cosine_similarity(dyn_centroid, static_centroid)
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = static_cluster
+        
+        if best_match and best_similarity > 0.3:
+            static_sign = get_cluster_sign(best_match)
+            dynamic_sign = get_cluster_sign(dyn_cluster)
+            if static_sign != dynamic_sign:
+                intersection_type = "tension"
+                tension_index = calculate_tension_index(dyn_cluster + best_match)
+            else:
+                intersection_type = "amplification"
+                tension_index = 0
+            integrated.append({
+                "static_cluster": best_match,
+                "dynamic_cluster": dyn_cluster,
+                "similarity": best_similarity,
+                "type": intersection_type,
+                "tension_index": tension_index,
+                "time_window": get_intersection_window(dyn_cluster),
+                "temporal_confidence": sum(t.confidence for t in dyn_cluster) / len(dyn_cluster)
+            })
+        else:
+            integrated.append({
+                "static_cluster": None,
+                "dynamic_cluster": dyn_cluster,
+                "similarity": 0,
+                "type": "new_signal",
+                "tension_index": 0,
+                "time_window": get_intersection_window(dyn_cluster),
+                "temporal_confidence": sum(t.confidence for t in dyn_cluster) / len(dyn_cluster)
+            })
+    return integrated
+
+
+def compute_centroid(cluster: List[Thesis]) -> List[float]:
+    """Центроид кластера (среднее векторов)."""
+    n = len(cluster)
+    if n == 0:
+        return [0.0] * 12
+    centroid = [0.0] * 12
+    for thesis in cluster:
+        for i, val in enumerate(thesis.sphere_vector):
+            centroid[i] += val
+    return [v / n for v in centroid]
+
+
+def get_cluster_sign(cluster: List[Thesis]) -> int:
+    pos = sum(1 for t in cluster if t.sign == 1)
+    neg = sum(1 for t in cluster if t.sign == -1)
+    if pos > neg: return 1
+    elif neg > pos: return -1
+    return 0
+
+
+def get_intersection_window(dyn_cluster: List[Thesis]) -> Dict[str, float]:
+    """Окно = [пик - 2σ, пик + 2σ]."""
+    if not dyn_cluster:
+        return {"start": 0, "end": 0, "center": 0}
+    peaks = [t.days_to_peak for t in dyn_cluster]
+    sigmas = [t.time_horizon.sigma_days or 30 for t in dyn_cluster]
+    starts = [p - 2 * s for p, s in zip(peaks, sigmas)]
+    ends = [p + 2 * s for p, s in zip(peaks, sigmas)]
+    return {
+        "start": min(starts) if starts else 0,
+        "end": max(ends) if ends else 0,
+        "center": sum(peaks) / len(peaks) if peaks else 0
+    }
+```
+
+---
+
+## 7. СЛОЙ 3: ПРОФИЛЬ
+
+### 7.1. Режимы работы
+
+```python
+class ProfileMode:
+    PORTRAIT = "portrait"
+    DAILY = "daily"
+```
+
+### 7.2. Портрет
+
+```python
+# profile/portrait.py
+from typing import List, Dict, Any
+from utils.time_module import TimeModule
+from config.version import VERSION_MANAGER
+
+
+def create_portrait_profile(static_integration: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Создаёт статический портрет (кеш — постоянно)."""
+    intersections = static_integration["intersections"]
+    return {
+        "type": "portrait",
+        "user_id": user_id,
+        "calculated_at": TimeModule.utc_now().isoformat(),
+        "intersections": intersections,
+        "global_consistency": calculate_consistency(intersections),
+        "metadata": {
+            "rules_version": VERSION_MANAGER.get_api_version(),
+            "theses_count": len(static_integration["all_theses"]),
+            "clusters_count": static_integration["metadata"]["clusters_count"],
+            "feedback_enabled": False
+        }
+    }
+
+
+def calculate_consistency(intersections: List[dict]) -> float:
+    """
+    Глобальная согласованность (1 — полностью согласован).
+    
+    При пустом списке возвращает 1.0 (нет конфликтов = согласовано).
+    """
+    if not intersections:
+        return 1.0
+    tensions = sum(1 for i in intersections if i["type"] == "tension")
+    return 1 - (tensions / len(intersections))
+```
+
+### 7.3. Ежедневный предикт
+
+```python
+# profile/daily.py
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+from utils.time_module import TimeModule
+from config.version import VERSION_MANAGER
+
+
+def create_daily_profile(
+    static_integration: Dict[str, Any],
+    dynamic_signals: List[Dict[str, Any]],
+    user_id: str,
+    current_date: datetime,
+    horizon_days: int
+) -> Dict[str, Any]:
+    """Создаёт ежедневный предикт (кеш — 24 часа)."""
+    base_intersections = static_integration["intersections"]
+    
+    # Системная ошибка
+    if not static_integration["all_theses"]:
+        raise ValueError("Static theses are empty — system error")
+    
+    # Пустой профиль — HTTP 200
+    if not base_intersections and not dynamic_signals:
+        return {
+            "type": "daily", "user_id": user_id,
+            "date": current_date.isoformat(),
+            "calculated_at": TimeModule.utc_now().isoformat(),
+            "horizon_days": horizon_days,
+            "status": "empty_profile",
+            "message": "В данный момент нет значимых сигналов ни в одной сфере",
+            "recommendations": ["Рекомендуется повторить запрос через несколько дней"],
+            "metadata": {
+                "rules_version": VERSION_MANAGER.get_api_version(),
+                "static_theses_count": len(static_integration["all_theses"]),
+                "dynamic_signals_count": 0,
+                "feedback_enabled": False, "cached": False
+            }
+        }
+    
+    # Только статика
+    if not dynamic_signals:
+        return {
+            "type": "daily", "user_id": user_id,
+            "date": current_date.isoformat(),
+            "calculated_at": TimeModule.utc_now().isoformat(),
+            "horizon_days": horizon_days,
+            "status": "static_only",
+            "message": "Динамические сигналы отсутствуют. Используется статический фон.",
+            "base_profile": {
+                "intersections": base_intersections,
+                "global_consistency": calculate_consistency(base_intersections)
+            },
+            "recommendations": ["Нет активных транзитов. Обратитесь к натальному портрету."],
+            "metadata": {
+                "rules_version": VERSION_MANAGER.get_api_version(),
+                "static_theses_count": len(static_integration["all_theses"]),
+                "dynamic_signals_count": 0,
+                "feedback_enabled": False, "cached": False
+            }
+        }
+    
+    # Нормальный случай
+    signals = []
+    for signal in dynamic_signals:
+        static_vector = signal["static_cluster"][0].sphere_vector if signal["static_cluster"] else None
+        sphere_names = get_sphere_names(static_vector) if static_vector else []
+        
+        signals.append({
+            "static_sphere": static_vector,
+            "static_sphere_names_ru": sphere_names,
+            "dynamic_theses": [t.id for t in signal["dynamic_cluster"]],
+            "similarity": signal["similarity"],
+            "type": signal["type"],
+            "tension_index": signal["tension_index"],
+            "time_window": signal["time_window"],
+            "confidence": signal["temporal_confidence"]
+        })
+    
+    priorities = calculate_priorities(horizon_days)
+    recommendations = generate_recommendations(base_intersections, signals)
+    
+    primary_sphere = None
+    if signals:
+        best_signal = max(signals, key=lambda s: s["confidence"])
+        if best_signal.get("static_sphere_names_ru"):
+            primary_sphere = best_signal["static_sphere_names_ru"][0]
+    
+    return {
+        "type": "daily", "user_id": user_id,
+        "date": current_date.isoformat(),
+        "calculated_at": TimeModule.utc_now().isoformat(),
+        "horizon_days": horizon_days,
+        "status": "active",
+        "primary_sphere": primary_sphere,
+        "base_profile": {
+            "intersections": base_intersections,
+            "global_consistency": calculate_consistency(base_intersections)
+        },
+        "dynamic_signals": signals,
+        "priorities": priorities,
+        "recommendations": recommendations,
+        "metadata": {
+            "rules_version": VERSION_MANAGER.get_api_version(),
+            "static_theses_count": len(static_integration["all_theses"]),
+            "dynamic_signals_count": len(signals),
+            "feedback_enabled": False, "cached": False
+        }
+    }
+```
+
+### 7.4. Взвешивание по горизонту
+
+```python
+# profile/priorities.py
+from typing import Dict, Any
+
+# Магические числа вынесены в константы
+PRIORITY_CONSTANTS = {
+    "western_horizon": 30,
+    "vedic_horizon": 30,
+    "arabic_optimal": 90,
+    "chinese_cycle": 365,
+    "maya_cycle": 260,
+    "mesopotamian_horizon": 30,
+    "transits_horizon": 14,
+}
+
+
+def calculate_priorities(horizon_days: int) -> Dict[str, Any]:
+    """Взвешивание систем по горизонту прогноза."""
+    system_weights = {
+        "western": 1.0, "vedic": 1.0, "arabic": 1.0,
+        "chinese": 0.7, "maya": 0.6, "mesopotamian": 0.7, "transits": 1.0
+    }
+    c = PRIORITY_CONSTANTS
+    time_multipliers = {
+        "western": 1.0 / (1 + horizon_days / c["western_horizon"]),
+        "vedic": 1.0 / (1 + c["vedic_horizon"] / horizon_days) if horizon_days > 0 else 0.5,
+        "arabic": 1.0 / (1 + abs(horizon_days - c["arabic_optimal"]) / c["arabic_optimal"]),
+        "chinese": 0.5 + 0.5 / (1 + horizon_days / c["chinese_cycle"]),
+        "maya": 0.5 + 0.5 / (1 + horizon_days / c["maya_cycle"]),
+        "mesopotamian": 0.5 + 0.5 / (1 + horizon_days / c["mesopotamian_horizon"]),
+        "transits": 1.0 / (1 + horizon_days / c["transits_horizon"])
+    }
+    final_weights = {s: system_weights[s] * time_multipliers[s] for s in system_weights}
+    total = sum(final_weights.values())
+    final_weights = {s: w / total for s, w in final_weights.items()}
+    sorted_systems = sorted(final_weights.items(), key=lambda x: -x[1])
+    
+    return {
+        "weights": final_weights,
+        "primary": sorted_systems[0][0],
+        "secondary": sorted_systems[1][0] if len(sorted_systems) > 1 else None,
+        "all": sorted_systems
+    }
+```
+
+### 7.5. Рекомендации
+
+```python
+# profile/recommendations.py
+from typing import List, Dict
+
+
+def generate_recommendations(base_intersections: List[Dict], signals: List[Dict]) -> List[str]:
+    """Генерирует человекочитаемые рекомендации (макс 5)."""
+    recommendations = []
+    for intersection in base_intersections:
+        if intersection["type"] == "full" and intersection["strength"] >= 0.8:
+            spheres = intersection["spheres"]
+            sign = "положительное" if intersection["sign"] == 1 else "отрицательное"
+            recommendations.append(
+                f"Сильный сигнал в сфере {', '.join(spheres)}: {sign} направление"
+            )
+    for signal in signals:
+        if signal["type"] == "amplification" and signal["confidence"] >= 0.7:
+            recommendations.append("Усиление сигнала: динамика подтверждает статику")
+        elif signal["type"] == "tension":
+            recommendations.append("Конфликт: динамика противоречит статике, требуется внимание")
+        elif signal["type"] == "new_signal" and signal["confidence"] >= 0.6:
+            recommendations.append("Новый сигнал: динамика указывает на сферу без статической базы")
+    return recommendations[:5]
+```
+
+---
+
+## 8. СМЕЖНЫЕ СИСТЕМЫ (ADJACENT)
+
+### 8.1. Назначение
+
+Смежные системы — **не астрология**. Они используют другие принципы (нумерология, биоритмология) и не требуют эфемерид. Но они дополняют астрологический профиль, создавая **композитную картину** личности.
+
+### 8.2. Базовый интерфейс
+
+```python
+# adjacent/base.py
+from abc import ABC, abstractmethod
+from typing import Dict, Any, List
+
+
+class AdjacentSystem(ABC):
+    """Базовый интерфейс для смежных систем."""
+    
+    @property
+    @abstractmethod
+    def system_name(self) -> str:
+        """Уникальное имя системы."""
+        pass
+    
+    @abstractmethod
+    def calculate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Рассчитывает систему."""
+        pass
+    
+    @abstractmethod
+    def to_vector(self, result: Dict[str, Any]) -> List[float]:
+        """Преобразует результат в вектор для интеграции."""
+        pass
+```
+
+### 8.3. Психоматрица (квадрат Пифагора)
+
+```python
+# adjacent/psychomatrix.py
+from typing import Dict, Any, List
+from datetime import date
+from adjacent.base import AdjacentSystem
+
+
+class PsychomatrixSystem(AdjacentSystem):
+    """
+    Психоматрица (квадрат Пифагора).
+    
+    Ячейки:
+    1 — характер, воля
+    2 — энергия, биоэнергетика
+    3 — познание, интерес
+    4 — здоровье
+    5 — логика, интуиция
+    6 — труд, быт
+    7 — удача, талант
+    8 — долг, ответственность
+    9 — память, ум
+    """
+    
+    @property
+    def system_name(self) -> str:
+        return "psychomatrix"
+    
+    def calculate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        birth_date = input_data["birth_date"]
+        digits = self._date_to_digits(birth_date)
+        
+        w1 = sum(digits)
+        w2 = self._digit_sum(w1)
+        w3 = w1 - 2 * digits[0]
+        w4 = self._digit_sum(w3)
+        
+        all_digits = (digits + self._number_to_digits(w1) + 
+                     self._number_to_digits(w2) + 
+                     self._number_to_digits(w3) + 
+                     self._number_to_digits(w4))
+        
+        cells = {str(i): all_digits.count(i) for i in range(1, 10)}
+        
+        return {
+            "system": "psychomatrix",
+            "cells": cells,
+            "working_numbers": [w1, w2, w3, w4],
+            "raw_digits": all_digits,
+        }
+    
+    def to_vector(self, result: Dict[str, Any]) -> List[float]:
+        """9-мерный вектор (ячейки 1-9, нормализованные)."""
+        cells = result["cells"]
+        max_count = max(cells.values()) if cells else 1
+        return [cells[str(i)] / max_count for i in range(1, 10)]
+    
+    @staticmethod
+    def _date_to_digits(birth_date: date) -> List[int]:
+        """ДДММГГГГ без нулей."""
+        s = f"{birth_date.day:02d}{birth_date.month:02d}{birth_date.year:04d}"
+        return [int(d) for d in s if d != "0"]
+    
+    @staticmethod
+    def _digit_sum(n: int) -> int:
+        return sum(int(d) for d in str(abs(n)))
+    
+    @staticmethod
+    def _number_to_digits(n: int) -> List[int]:
+        return [int(d) for d in str(abs(n)) if d != "0"]
+```
+
+### 8.4. Биоритмы
+
+```python
+# adjacent/biorhythms.py
+import math
+from typing import Dict, Any, List
+from datetime import date
+from adjacent.base import AdjacentSystem
+
+
+class BiorhythmsSystem(AdjacentSystem):
+    """
+    Биоритмы (классические, 3 цикла).
+    
+    Циклы:
+    - Физический: 23 дня
+    - Эмоциональный: 28 дней
+    - Интеллектуальный: 33 дня
+    
+    Формула: sin(2π × days / period)
+    """
+    
+    PERIODS = {
+        "physical": 23,
+        "emotional": 28,
+        "intellectual": 33,
+    }
+    
+    @property
+    def system_name(self) -> str:
+        return "biorhythms"
+    
+    def calculate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        birth_date = input_data["birth_date"]
+        target_date = input_data.get("target_date", date.today())
+        
+        days = (target_date - birth_date).days
+        
+        values = {}
+        for name, period in self.PERIODS.items():
+            values[name] = math.sin(2 * math.pi * days / period)
+        
+        critical = {name: abs(v) < 0.1 for name, v in values.items()}
+        
+        return {
+            "system": "biorhythms",
+            "days_since_birth": days,
+            "values": values,
+            "critical_days": critical,
+        }
+    
+    def to_vector(self, result: Dict[str, Any]) -> List[float]:
+        """3-мерный вектор (нормализованный в 0-1)."""
+        values = result["values"]
+        return [
+            (values["physical"] + 1) / 2,
+            (values["emotional"] + 1) / 2,
+            (values["intellectual"] + 1) / 2,
+        ]
+```
+
+### 8.5. Девятивекторный сводный профиль
+
+```python
+# adjacent/nine_vector.py
+from typing import Dict, Any, List
+from adjacent.psychomatrix import PsychomatrixSystem
+from adjacent.biorhythms import BiorhythmsSystem
+
+
+class NineVectorProfile:
+    """
+    Девятивекторный сводный профиль.
+    
+    Сводит 3 системы в 9 осей:
+    - 3 оси от психоматрицы (характер, энергия, познание)
+    - 3 оси от биоритмов (физика, эмоции, интеллект)
+    - 3 оси от астрологии (стабильность, динамика, активность)
+    
+    ВАЖНО: Это НЕ заменяет астрологический профиль.
+    Это ДОПОЛНИТЕЛЬНАЯ визуализация для пользователя.
+    """
+    
+    def __init__(self):
+        self.psychomatrix = PsychomatrixSystem()
+        self.biorhythms = BiorhythmsSystem()
+    
+    def calculate(
+        self,
+        birth_date,
+        target_date,
+        astro_profile: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Сводит все системы в 9-мерный вектор."""
+        
+        pm_result = self.psychomatrix.calculate({"birth_date": birth_date})
+        br_result = self.biorhythms.calculate({
+            "birth_date": birth_date,
+            "target_date": target_date,
+        })
+        
+        pm_vector = self.psychomatrix.to_vector(pm_result)
+        br_vector = self.biorhythms.to_vector(br_result)
+        astro_vector = self._astro_to_vector(astro_profile)
+        
+        nine_vector = [
+            pm_vector[0], pm_vector[1], pm_vector[2],
+            br_vector[0], br_vector[1], br_vector[2],
+            astro_vector[0], astro_vector[1], astro_vector[2],
+        ]
+        
+        return {
+            "nine_vector": nine_vector,
+            "components": {
+                "psychomatrix": pm_result,
+                "biorhythms": br_result,
+                "astrology": astro_profile,
+            },
+            "interpretation": self._interpret(nine_vector),
+        }
+    
+    def _astro_to_vector(self, astro_profile: Dict[str, Any]) -> List[float]:
+        """Извлекает 3 оси из астрологического профиля."""
+        return [
+            astro_profile.get("global_consistency", 0.5),
+            astro_profile.get("primary_sphere_strength", 0.5),
+            min(1.0, astro_profile.get("dynamic_signals_count", 0) / 5),
+        ]
+    
+    def _interpret(self, vector: List[float]) -> Dict[str, str]:
+        """Интерпретирует 9-мерный вектор."""
+        axes = [
+            "Характер", "Энергия", "Познание",
+            "Физика", "Эмоции", "Интеллект",
+            "Стабильность", "Динамика", "Активность",
+        ]
+        
+        result = {}
+        for axis, value in zip(axes, vector):
+            if value < 0.3:
+                level = "низкий"
+            elif value < 0.6:
+                level = "средний"
+            else:
+                level = "высокий"
+            result[axis] = level
+        
+        return result
+```
+
+---
+
+## 9. ГЕОКОДИНГ
+
+### 9.1. Назначение
+
+Преобразование ввода пользователя (страна + регион + город) в координаты (широта, долгота) и часовой пояс.
+
+### 9.2. Архитектура
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                  services/geocoding.py                     │
+│  • Единая точка входа (singleton)                          │
+│  • Интеграция с AsyncCityGeocoder                          │
+│  • Обработка ошибок и fallback                             │
+└────────────────────────────────────────────────────────────┘
+                            ▲
+                            │
+┌────────────────────────────────────────────────────────────┐
+│              calculators/geocoder.py                       │
+│  • AsyncCityGeocoder                                       │
+│  • SQLite + память кэш                                     │
+│  • Nominatim API (OpenStreetMap)                           │
+│  • Транслитерация (кириллица ↔ латиница)                   │
+│  • Fallback для 30+ городов РФ                             │
+│  • timezonefinder для автоопределения TZ                   │
+└────────────────────────────────────────────────────────────┘
+```
+
+### 9.3. Порядок поиска (ОБЯЗАТЕЛЬНО)
+
+```
+1. Локальная база major cities (30+ городов РФ, мгновенно)
+2. Fallback координаты (те же 30+ городов)
+3. Кэш памяти (TTL 1 час)
+4. Кэш SQLite (TTL 30 дней)
+5. Nominatim API (OpenStreetMap)
+   5.1. Пробуем оригинальное название
+   5.2. Транслитерируем (кириллица → латиница)
+   5.3. Транслитерируем (латиница → кириллица)
+6. Повторные попытки (2 раза с экспоненциальной задержкой)
+```
+
+### 9.4. Обработка ошибок
+
+| Ситуация | HTTP | Сообщение |
+|----------|------|-----------|
+| Город не найден | 400 | "Город '{city}' не найден. Уточните название или введите координаты вручную." |
+| Ошибка Nominatim API | 200 (fallback) | Используется локальная база |
+| Таймаут API | 200 (fallback) | Повторная попытка, затем локальная база |
+| Невалидные координаты | 400 | Pydantic валидация |
+
+---
+
+## 10. РАСЧЁТ УВЕРЕННОСТИ (CONFIDENCE)
+
+### 10.1. Принцип: ТОЛЬКО АСТРОНОМИЯ
+
+Confidence рассчитывается **ИСКЛЮЧИТЕЛЬНО** из астрономических параметров.
+
+### 10.2. Astronomical Confidence
+
+```python
+# confidence/astronomical.py
+from core.models import Thesis
+
+
+def calculate_astronomical_confidence(thesis: Thesis, static_core: dict) -> float:
+    """
+    Рассчитывает уверенность ТОЛЬКО из астрономии.
+    Используется для статических тезисов.
+    
+    ВАЖНО: Ретроградность учитывается ТОЛЬКО здесь.
+    Нет двойного применения ретроградности в Temporal Confidence.
+    """
+    base = thesis.base_confidence
+    k_retro = calculate_k_retrograde(thesis, static_core)
+    k_dignity = calculate_k_dignity(thesis, static_core)
+    k_speed = calculate_k_speed(thesis, static_core)
+    k_window = calculate_k_window(thesis)
+    k_level = calculate_k_level(thesis)
+    
+    confidence = base * k_retro * k_dignity * k_speed * k_window * k_level
+    return max(0.05, min(1.0, confidence))
+```
+
+### 10.3. Temporal Confidence
+
+```python
+# confidence/temporal.py
+from datetime import datetime
+from core.models import Thesis
+from confidence.astronomical import calculate_astronomical_confidence
+
+
+def calculate_temporal_confidence(
+    thesis: Thesis,
+    static_core: dict,
+    dynamic_core: dict,
+    current_date: datetime
+) -> float:
+    """
+    Рассчитывает уверенность с временной модуляцией.
+    
+    ВАЖНО: Ретроградность НЕ применяется дважды.
+    Ретроградность уже учтена в Astronomical Confidence.
+    Temporal модуляция учитывает ТОЛЬКО расстояние до пика.
+    """
+    astro = calculate_astronomical_confidence(thesis, static_core)
+    temporal = calculate_temporal_modulation(thesis, current_date)
+    return max(0.05, min(1.0, astro * temporal))
+```
+
+### 10.4. K-факторы
+
+```python
+# confidence/k_factors.py
+from core.models import Thesis
+
+
+def calculate_k_retrograde(thesis: Thesis, core: dict) -> float:
+    """Поправка на ретроградность."""
+    if thesis.system in ["western", "arabic"]:
+        planet_name = thesis.anchors[0].split("_")[0]
+        if planet_name in core["planets"]:
+            return 0.7 if core["planets"][planet_name]["retrograde"] else 1.0
+    return 1.0
+
+
+def calculate_k_dignity(thesis: Thesis, core: dict) -> float:
+    """Поправка на эссенциальные достоинства."""
+    if thesis.system == "western":
+        planet_name = thesis.anchors[0].split("_")[0]
+        if planet_name in core["planets"]:
+            dignity = core["planets"][planet_name]["dignity"]
+            if dignity.get("ruler") or dignity.get("exaltation"):
+                return 1.2
+            elif dignity.get("fall") or dignity.get("detriment"):
+                return 0.8
+    return 1.0
+
+
+def calculate_k_speed(thesis: Thesis, core: dict) -> float:
+    """Поправка на скорость планеты."""
+    if thesis.system in ["western", "arabic"]:
+        planet_name = thesis.anchors[0].split("_")[0]
+        if planet_name in core["planets"]:
+            speed_norm = core["planets"][planet_name]["speed_normalized"]
+            return max(0.7, min(1.3, 1.0 + 0.2 * (speed_norm - 0.5)))
+    return 1.0
+
+
+def calculate_k_window(thesis: Thesis) -> float:
+    """Поправка на точность временного окна."""
+    window_type = thesis.metadata.get("window", {}).get("type", "medium")
+    return {"high": 1.1, "medium": 1.0, "low": 0.9}.get(window_type, 1.0)
+
+
+def calculate_k_level(thesis: Thesis) -> float:
+    """Поправка на иерархический уровень."""
+    return {1: 1.2, 2: 1.0, 3: 0.9, 4: 0.8}.get(thesis.level, 1.0)
+```
+
+### 10.5. Временная модуляция (гауссова, с отсечением 2σ)
+
+```python
+# confidence/temporal.py
+import math
+from datetime import datetime
+from core.models import Thesis
+
+
+def calculate_temporal_modulation(thesis: Thesis, current_date: datetime) -> float:
+    """
+    Временная модуляция для динамических тезисов.
+    Гауссово затухание с асимметрией и отсечением 2σ.
+    
+    Семантика асимметрии:
+    - До пика: pre < 1 → modulation^pre > modulation → сигнал усиливается
+    - После пика: post > 1 → modulation^post < modulation → сигнал ослабляется
+    """
+    if thesis.time_horizon.decay == "constant":
+        return 1.0
+    if thesis.days_to_peak is None:
+        return 1.0
+    
+    days_to_peak = thesis.days_to_peak
+    sigma = thesis.time_horizon.sigma_days or 30
+    if sigma == 0:
+        return 1.0
+    
+    # Строгое отсечение: >= 2σ
+    if abs(days_to_peak) >= 2 * sigma:
+        return 0.0
+    
+    modulation = math.exp(-(days_to_peak ** 2) / (2 * sigma ** 2))
+    asymmetry = get_asymmetry(thesis)
+    if days_to_peak < 0:
+        modulation = modulation ** asymmetry["pre"]
+    else:
+        modulation = modulation ** asymmetry["post"]
+    
+    return max(0.05, min(1.0, modulation))
+
+
+def get_asymmetry(thesis: Thesis) -> dict:
+    """Коэффициенты асимметрии для разных типов событий."""
+    ASYMMETRY_TABLE = {
+        "transit_fast": {"pre": 0.8, "post": 1.3},
+        "transit_slow": {"pre": 0.7, "post": 1.5},
+        "transit_outer": {"pre": 0.6, "post": 2.0},
+        "default": {"pre": 1.0, "post": 1.0}
+    }
+    if thesis.system == "transits":
+        speed = thesis.metadata.get("speed", 1.0)
+        if speed > 2:
+            return ASYMMETRY_TABLE["transit_fast"]
+        elif speed > 0.3:
+            return ASYMMETRY_TABLE["transit_slow"]
+        else:
+            return ASYMMETRY_TABLE["transit_outer"]
+    return ASYMMETRY_TABLE["default"]
+```
+
+---
+
+## 11. СТРАТЕГИЯ КЕШИРОВАНИЯ
+
+### 11.1. Гибкая система версионирования
+
+```python
+# config/version.py
+import hashlib
+import os
+from pathlib import Path
+from functools import lru_cache
+
+
+class VersionManager:
+    """
+    Управление версиями правил и API.
+    
+    API_VERSION — меняется при изменении структуры ответа.
+    RULES_HASH — автоматический хэш содержимого правил.
+    RULES_MINOR_VERSION — для текстовых изменений (не влияет на кеш).
+    """
+    
+    def __init__(self):
+        self.api_version = os.getenv("API_VERSION", "v7.0")
+        self.minor_version = os.getenv("RULES_MINOR_VERSION", "1")
+    
+    def get_api_version(self) -> str:
+        return self.api_version
+    
+    @lru_cache(maxsize=1)
+    def get_rules_hash(self) -> str:
+        """Хэш-сумма содержимого интерпретационных модулей."""
+        interpretation_dir = Path(__file__).parent.parent / "interpretation"
+        if not interpretation_dir.exists():
+            return hashlib.md5(b"default").hexdigest()[:8]
+        files = sorted(interpretation_dir.glob("*.py"))
+        content = ""
+        for file in files:
+            if file.name.startswith("__"):
+                continue
+            try:
+                content += file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+        return hashlib.md5(content.encode()).hexdigest()[:8]
+    
+    def get_cache_version(self) -> str:
+        return f"{self.api_version}:{self.get_rules_hash()}"
+    
+    def get_minor_version(self) -> str:
+        return self.minor_version
+
+
+VERSION_MANAGER = VersionManager()
+```
+
+### 11.2. Схема кеширования
+
+```python
+# cache/strategy.py
+from config.version import VERSION_MANAGER
+
+CACHE_STRATEGY = {
+    # Статика (TTL = ∞)
+    "static_core": {
+        "ttl": None,
+        "key": f"static_core:{VERSION_MANAGER.get_cache_version()}:{{user_id}}"
+    },
+    "static_theses": {
+        "ttl": None,
+        "key": f"static_theses:{VERSION_MANAGER.get_cache_version()}:{{user_id}}"
+    },
+    "static_clusters": {
+        "ttl": None,
+        "key": f"static_clusters:{VERSION_MANAGER.get_cache_version()}:{{user_id}}"
+    },
+    "portrait_profile": {
+        "ttl": None,
+        "key": f"portrait:{VERSION_MANAGER.get_cache_version()}:{{user_id}}"
+    },
+    
+    # Динамика (TTL ограничен)
+    "dynamic_core": {
+        "ttl": 604800,  # 7 дней
+        "key": "dynamic_core:{user_id}:{date}"
+    },
+    "daily_profile": {
+        "ttl": 86400,   # 24 часа
+        "key": f"daily:{VERSION_MANAGER.get_api_version()}:{{user_id}}:{{date}}"
+    },
+    
+    # Adjacent (TTL ограничен)
+    "psychomatrix": {
+        "ttl": None,    # Постоянно (зависит только от birth_date)
+        "key": f"psychomatrix:{VERSION_MANAGER.get_cache_version()}:{{user_id}}"
+    },
+    "biorhythms": {
+        "ttl": 86400,   # 24 часа (зависит от target_date)
+        "key": f"biorhythms:{{user_id}}:{{date}}"
+    },
+}
+```
+
+### 11.3. Менеджер кеша с DateTimeEncoder
+
+```python
+# cache/manager.py
+import redis
+import json
+from datetime import datetime, date
+from typing import Optional, Any, Dict
+from pydantic import BaseModel
+from config.version import VERSION_MANAGER
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """
+    JSON-кодировщик с поддержкой datetime и Pydantic моделей.
+    
+    Без этого кодировщика Redis падает:
+    TypeError: Object of type datetime is not JSON serializable
+    """
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        if isinstance(obj, BaseModel):
+            return obj.model_dump()
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        return super().default(obj)
+
+
+class CacheManager:
+    def __init__(self, redis_client: redis.Redis):
+        self.redis = redis_client
+    
+    def get(self, key: str, remove_meta: bool = True) -> Optional[Dict[str, Any]]:
+        """
+        Получить объект из кеша.
+        
+        Args:
+            key: Ключ кеша
+            remove_meta: Удалять ли _cache_metadata перед возвратом
+        """
+        data = self.redis.get(key)
+        if not data:
+            return None
+        obj = json.loads(data)
+        if remove_meta:
+            obj.pop("_cache_metadata", None)
+        return obj
+    
+    def set(self, key: str, value: Dict[str, Any], ttl: Optional[int] = None):
+        """Сохранить объект в кеш."""
+        value["_cache_metadata"] = {
+            "cached_at": datetime.now().isoformat(),
+            "rules_version": VERSION_MANAGER.get_cache_version()
+        }
+        self.redis.set(key, json.dumps(value, cls=DateTimeEncoder), ex=ttl)
+    
+    def delete_pattern(self, pattern: str):
+        """Удалить все объекты по паттерну."""
+        for key in self.redis.scan_iter(match=pattern):
+            self.redis.delete(key)
+```
+
+### 11.4. Инвалидация кеша
+
+```python
+# cache/invalidation.py
+from config.version import VERSION_MANAGER
+
+
+def invalidate_user_cache(user_id: str):
+    """Инвалидирует весь кеш пользователя (при изменении birth_data)."""
+    from main import cache_manager
+    
+    cache_version = VERSION_MANAGER.get_cache_version()
+    cache_manager.delete_pattern(f"*:{cache_version}:{user_id}")
+    cache_manager.delete_pattern(f"*:{user_id}:*")
+    
+    import structlog
+    logger = structlog.get_logger()
+    logger.info("cache_invalidated", user_id=user_id, cache_version=cache_version)
+```
+
+---
+
+## 12. МЕНЕДЖЕР НАСТРОЕК
+
+### 12.1. Три уровня настроек
+
+| Уровень | Где хранится | Кто меняет | Пример |
+|---------|--------------|------------|--------|
+| **Environment** | `.env` | DevOps | `MIN_DYNAMIC_CONFIDENCE=0.10` |
+| **Database** | PostgreSQL | Админ через API | `cluster_threshold=0.75` |
+| **Code** | `config/constants.py` | Разработчик | `N_max=5` (default) |
+
+### 12.2. Менеджер настроек
+
+```python
+# config/settings_manager.py
+from typing import Any, Optional
+import json
+import os
+from functools import lru_cache
+
+
+class SettingsManager:
+    """
+    Гибридный менеджер настроек.
+    
+    Приоритет:
+    1. Database (если есть) — динамические
+    2. Environment — статические
+    3. Defaults — жёстко закодированные
+    """
+    
+    DEFAULTS = {
+        "min_dynamic_confidence": 0.10,
+        "cluster_threshold": 0.70,
+        "n_max": 5,
+        "enable_psychomatrix": True,
+        "enable_biorhythms": True,
+        "enable_nine_vector": True,
+        "enable_western": True,
+        "enable_vedic": True,
+        "enable_arabic": True,
+        "enable_chinese": True,
+        "enable_maya": True,
+        "enable_mesopotamian": True,
+        "enable_transits": True,
+    }
+    
+    def __init__(self, db_pool=None):
+        self.db_pool = db_pool
+        self._cache: dict = {}
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Получить настройку с приоритетом."""
+        if key in self._cache:
+            return self._cache[key]
+        
+        if self.db_pool:
+            db_value = self._get_from_db(key)
+            if db_value is not None:
+                self._cache[key] = db_value
+                return db_value
+        
+        env_key = key.upper()
+        if env_key in os.environ:
+            value = self._parse_env(os.environ[env_key])
+            self._cache[key] = value
+            return value
+        
+        if key in self.DEFAULTS:
+            return self.DEFAULTS[key]
+        
+        return default
+    
+    def set(self, key: str, value: Any, updated_by: str = "system") -> None:
+        """Установить настройку (только в БД)."""
+        if not self.db_pool:
+            raise RuntimeError("Database not configured")
+        
+        with self.db_pool.getconn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO settings (key, value, updated_by)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value,
+                        updated_at = NOW(),
+                        updated_by = EXCLUDED.updated_by
+                """, (key, json.dumps({"value": value}), updated_by))
+            conn.commit()
+        
+        self._cache.pop(key, None)
+    
+    def invalidate_cache(self):
+        """Очистить локальный кэш (после изменения в БД)."""
+        self._cache.clear()
+    
+    def _get_from_db(self, key: str) -> Optional[Any]:
+        """Получить из БД."""
+        try:
+            with self.db_pool.getconn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+                    row = cur.fetchone()
+                    if row:
+                        return row[0].get("value")
+        except Exception:
+            return None
+        return None
+    
+    @staticmethod
+    def _parse_env(value: str) -> Any:
+        """Парсит env-значение в правильный тип."""
+        if value.lower() in ("true", "1", "yes"):
+            return True
+        if value.lower() in ("false", "0", "no"):
+            return False
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        return value
+
+
+# Глобальный экземпляр
+settings_manager: Optional[SettingsManager] = None
+
+
+def init_settings(db_pool=None):
+    """Инициализация менеджера настроек."""
+    global settings_manager
+    settings_manager = SettingsManager(db_pool)
+
+
+def get_settings() -> SettingsManager:
+    """Получить менеджер настроек."""
+    if settings_manager is None:
+        raise RuntimeError("SettingsManager not initialized")
+    return settings_manager
+```
+
+### 12.3. API для настроек
+
+```python
+# main.py
+from fastapi import Header, HTTPException
+from config.settings_manager import get_settings
+
+
+def _verify_admin_token(token: str):
+    """Проверяет административный токен."""
+    import os
+    expected = os.getenv("ADMIN_TOKEN")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid admin token")
+
+
+@app.get("/api/v7/admin/settings")
+async def list_settings(admin_token: str = Header(...)):
+    """Список всех настроек."""
+    _verify_admin_token(admin_token)
+    settings = get_settings()
+    return {
+        "settings": {
+            key: settings.get(key)
+            for key in settings.DEFAULTS
+        }
+    }
+
+
+@app.put("/api/v7/admin/settings/{key}")
+async def update_setting(
+    key: str,
+    value: Any,
+    admin_token: str = Header(...)
+):
+    """Обновить настройку."""
+    _verify_admin_token(admin_token)
+    settings = get_settings()
+    settings.set(key, value, updated_by="admin")
+    return {"status": "updated", "key": key, "value": value}
+```
+
+### 12.4. Таблица settings в PostgreSQL
+
+```sql
+-- db/init.sql (дополнение)
+CREATE TABLE IF NOT EXISTS settings (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(100) UNIQUE NOT NULL,
+    value JSONB NOT NULL,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    updated_by VARCHAR(50)
+);
+
+-- Примеры начальных настроек
+INSERT INTO settings (key, value, description) VALUES
+('cluster_threshold', '{"value": 0.70}', 'Порог косинусного сходства'),
+('min_dynamic_confidence', '{"value": 0.10}', 'Минимальная уверенность'),
+('enabled_systems', '{"systems": ["western", "vedic", "arabic", "chinese", "maya", "mesopotamian", "transits"]}', 'Активные системы')
+ON CONFLICT (key) DO NOTHING;
+```
+
+---
+
+## 13. API СПЕЦИФИКАЦИЯ
+
+### 13.1. Эндпоинты
+
+```yaml
+POST /api/v7/profile/init
+  Описание: Инициализация статического профиля (1 раз)
+  Request:
+    {
+      "birth_data": {
+        "user_id": "string",
+        "location": {
+          "country": "Россия",
+          "region": "Калининградская область",
+          "city": "Калининград"
+        },
+        "year": 1973, "month": 10, "day": 16,
+        "hour": 11, "minute": 42, "second": 0
+      }
+    }
+  Response:
+    {
+      "status": "initialized",
+      "user_id": "string",
+      "location": {
+        "city": "Калининград",
+        "country": "Россия",
+        "region": "Калининградская область",
+        "coordinates": {"lat": 54.7104, "lng": 20.507},
+        "timezone": "Europe/Kaliningrad"
+      },
+      "portrait": { ... }
+    }
+  Ошибки:
+    - 400: Невалидные данные / город не найден
+    - 500: Ошибка эфемерид
+
+POST /api/v7/profile/daily
+  Описание: Ежедневный предикт
+  Request:
+    {
+      "user_id": "string",
+      "date": "2026-10-24",  # опционально
+      "horizon_days": 90     # опционально
+    }
+  Response:
+    {
+      "profile": { ... },   # DailyProfile (может быть empty_profile)
+      "cached": true/false
+    }
+  Ошибки:
+    - 404: Пользователь не найден
+    - 500: Ошибка расчёта
+
+POST /api/v7/profile/portrait
+  Описание: Получить натальный портрет
+  Request: {"user_id": "string"}
+  Response: {"profile": { ... }}
+  Ошибки:
+    - 404: Пользователь не найден
+
+POST /api/v7/profile/nine-vector
+  Описание: Девятивекторный сводный профиль
+  Request:
+    {
+      "user_id": "string",
+      "target_date": "2026-10-24",
+      "test_results": {  # опционально
+        "mbti": "INTJ",
+        "big_five": {...}
+      }
+    }
+  Response:
+    {
+      "nine_vector": [0.8, 0.6, ...],
+      "components": {
+        "psychomatrix": {...},
+        "biorhythms": {...},
+        "astrology": {...}
+      },
+      "interpretation": {...}
+    }
+  Ошибки:
+    - 404: Пользователь не найден
+    - 400: Невалидные test_results
+
+POST /api/v7/admin/cache/invalidate/{user_id}
+  Описание: Инвалидация кеша пользователя
+  Headers: {"Admin-Token": "string"}
+  Response: {"status": "success", "user_id": "string"}
+  Ошибки:
+    - 403: Неверный токен
+
+GET /api/v7/admin/settings
+  Описание: Список всех настроек
+  Headers: {"Admin-Token": "string"}
+  Response: {"settings": {...}}
+  Ошибки:
+    - 403: Неверный токен
+
+PUT /api/v7/admin/settings/{key}
+  Описание: Обновить настройку
+  Headers: {"Admin-Token": "string"}
+  Request: {"value": any}
+  Response: {"status": "updated", "key": "string", "value": any}
+  Ошибки:
+    - 403: Неверный токен
+
+GET /health
+  Описание: Health check
+  Response:
+    {
+      "status": "ok",
+      "rules_version": "v7.0",
+      "components": {
+        "postgres": "ok", "redis": "ok",
+        "ephemeris": "ok", "geocoder": "ok"
+      },
+      "timestamp": "2026-10-24T14:07:18.092Z"
+    }
+
+GET /metrics
+  Описание: Prometheus метрики
+  Response: (text/plain)
+```
+
+### 13.2. Структуры ответов
+
+#### PortraitProfile
+
+```json
+{
+  "type": "portrait",
+  "user_id": "1",
+  "calculated_at": "2026-10-24T14:07:18.092Z",
+  "intersections": [
+    {
+      "type": "full",
+      "strength": 0.85,
+      "tension_index": 0,
+      "sources": ["western", "vedic", "arabic"],
+      "sign": 1,
+      "spheres": ["Карьера", "Творчество"]
+    }
+  ],
+  "global_consistency": 0.92,
+  "metadata": {
+    "rules_version": "v7.0",
+    "theses_count": 47,
+    "clusters_count": 8,
+    "feedback_enabled": false
+  }
+}
+```
+
+#### DailyProfile
+
+```json
+{
+  "type": "daily",
+  "user_id": "1",
+  "date": "2026-10-24",
+  "calculated_at": "2026-10-24T14:07:18.092Z",
+  "horizon_days": 90,
+  "status": "active",
+  "primary_sphere": "Карьера",
+  "base_profile": {
+    "intersections": [...],
+    "global_consistency": 0.92
+  },
+  "dynamic_signals": [
+    {
+      "static_sphere": [0.8, 0.0, 0.0, ...],
+      "static_sphere_names_ru": ["Карьера"],
+      "dynamic_theses": ["T_Saturn_Sun_conjunction"],
+      "similarity": 0.75,
+      "type": "amplification",
+      "tension_index": 0,
+      "time_window": {"start": -100, "end": 80, "center": 10},
+      "confidence": 0.73
+    }
+  ],
+  "priorities": {
+    "weights": {"western": 0.25, "vedic": 0.30, ...},
+    "primary": "vedic",
+    "secondary": "western"
+  },
+  "recommendations": [
+    "Сильный сигнал в сфере Карьера: положительное направление"
+  ],
+  "metadata": {
+    "rules_version": "v7.0",
+    "static_theses_count": 47,
+    "dynamic_signals_count": 3,
+    "feedback_enabled": false,
+    "cached": false
+  }
+}
+```
+
+---
+
+## 14. МОДЕЛИ ДАННЫХ (PYDANTIC)
+
+### 14.1. Полный набор моделей
+
+```python
+# core/models.py
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+import pytz
+from calendar import monthrange
+
+
+class LocationInput(BaseModel):
+    country: str = Field(..., min_length=1, max_length=100)
+    region: Optional[str] = Field(None, min_length=1, max_length=200)
+    city: str = Field(..., min_length=1, max_length=200)
+
+
+class BirthData(BaseModel):
+    # ... (см. раздел 4.2)
+
+
+class TimeHorizon(BaseModel):
+    decay: str = Field(..., pattern=r'^(constant|gaussian)$')
+    sigma_days: Optional[float] = Field(None, ge=0)
+
+
+class Thesis(BaseModel):
+    # ... (см. раздел 5.1)
+
+
+class Intersection(BaseModel):
+    type: str = Field(..., pattern=r'^(full|partial|weak|tension)$')
+    strength: float = Field(..., ge=0.0, le=1.0)
+    tension_index: float = Field(..., ge=0.0, le=1.0)  # ИСПРАВЛЕНО: 0-1
+    sources: List[str]
+    sign: int = Field(..., ge=-1, le=1)
+    spheres: List[str]
+
+
+class PortraitProfile(BaseModel):
+    type: str = Field(..., pattern=r'^portrait$')
+    user_id: str
+    calculated_at: str
+    intersections: List[Intersection]
+    global_consistency: float = Field(..., ge=0.0, le=1.0)
+    metadata: Dict[str, Any]
+
+
+class DailyProfile(BaseModel):
+    type: str = Field(..., pattern=r'^daily$')
+    user_id: str
+    date: str
+    calculated_at: str
+    horizon_days: int
+    status: str = Field(..., pattern=r'^(active|static_only|empty_profile)$')
+    primary_sphere: Optional[str] = None
+    base_profile: Dict[str, Any]
+    dynamic_signals: List[Dict[str, Any]]
+    priorities: Dict[str, Any]
+    recommendations: List[str]
+    metadata: Dict[str, Any]
+
+
+class GeocodeResult(BaseModel):
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lng: float = Field(..., ge=-180.0, le=180.0)
+    timezone: str
+    country_code: Optional[str] = None
+    city: str
+    region: Optional[str] = None
+    country: Optional[str] = None
+
+
+class NineVectorProfile(BaseModel):
+    nine_vector: List[float] = Field(..., min_length=9, max_length=9)
+    components: Dict[str, Any]
+    interpretation: Dict[str, str]
+```
+
+---
+
+## 15. МОДУЛЬ РАБОТЫ СО ВРЕМЕНЕМ
+
+```python
+# utils/time_module.py
+import pytz
+from datetime import datetime, timedelta
+from typing import Optional
+import structlog
+
+logger = structlog.get_logger()
+
+
+class TimeModule:
+    """
+    Централизованный модуль для работы со временем.
+    
+    ВНИМАНИЕ: Все вызовы datetime.now() заменены на TimeModule.utc_now().
+    """
+    
+    @staticmethod
+    def local_to_utc(local_dt: datetime, timezone_str: str) -> datetime:
+        """Преобразует локальное время в UTC с учётом DST."""
+        try:
+            tz = pytz.timezone(timezone_str)
+        except pytz.exceptions.UnknownTimeZoneError as e:
+            raise ValueError(f"Unknown timezone: {timezone_str}") from e
+        
+        if local_dt.tzinfo is None:
+            local_dt = tz.localize(local_dt)
+        
+        return local_dt.astimezone(pytz.UTC)
+    
+    @staticmethod
+    def utc_now() -> datetime:
+        """Возвращает текущее время в UTC."""
+        return datetime.now(pytz.UTC)
+    
+    @staticmethod
+    def localize_utc(dt: datetime) -> datetime:
+        """Добавляет UTC временную зону к наивному datetime."""
+        if dt.tzinfo is None:
+            return pytz.UTC.localize(dt)
+        return dt.astimezone(pytz.UTC)
+    
+    @staticmethod
+    def to_julian_day(dt: datetime) -> float:
+        """Преобразует datetime (с TZ) в юлианский день."""
+        if dt.tzinfo is None:
+            raise ValueError("datetime must have timezone information")
+        
+        dt_utc = dt.astimezone(pytz.UTC)
+        
+        year = dt_utc.year
+        month = dt_utc.month
+        day = dt_utc.day
+        hour = dt_utc.hour
+        minute = dt_utc.minute
+        second = dt_utc.second + dt_utc.microsecond / 1_000_000
+        
+        if month <= 2:
+            year -= 1
+            month += 12
+        
+        A = int(year / 100)
+        B = 2 - A + int(A / 4)
+        
+        jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
+        jd += (hour + minute/60 + second/3600) / 24
+        
+        return jd
+    
+    @staticmethod
+    def from_julian_day(jd: float) -> datetime:
+        """Преобразует юлианский день в datetime (UTC)."""
+        jd += 0.5
+        Z = int(jd)
+        F = jd - Z
+        
+        if Z < 2299161:
+            A = Z
+        else:
+            alpha = int((Z - 1867216.25) / 36524.25)
+            A = Z + 1 + alpha - int(alpha / 4)
+        
+        B = A + 1524
+        C = int((B - 122.1) / 365.25)
+        D = int(365.25 * C)
+        E = int((B - D) / 30.6001)
+        
+        day = B - D - int(30.6001 * E)
+        month = E - 1 if E < 14 else E - 13
+        year = C - 4716 if month > 2 else C - 4715
+        
+        total_seconds = F * 86400
+        hour = int(total_seconds // 3600)
+        minute = int((total_seconds % 3600) // 60)
+        second = int(total_seconds % 60)
+        microsecond = int((total_seconds % 1) * 1_000_000)
+        
+        return datetime(
+            year=year, month=month, day=day,
+            hour=hour, minute=minute, second=second,
+            microsecond=microsecond, tzinfo=pytz.UTC
+        )
+
+
+time_module = TimeModule()
+
+
+def get_current_utc() -> datetime:
+    return time_module.utc_now()
+
+
+def local_to_utc(local_dt: datetime, timezone_str: str) -> datetime:
+    return time_module.local_to_utc(local_dt, timezone_str)
+
+
+def to_julian_day(dt: datetime) -> float:
+    return time_module.to_julian_day(dt)
+```
+
+---
+
+## 16. СТРУКТУРЫ ДАННЫХ И МИГРАЦИИ
+
+### 16.1. PostgreSQL схема
+
+```sql
+-- db/init.sql
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) UNIQUE NOT NULL,
+    birth_data JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS static_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) REFERENCES users(user_id) UNIQUE,
+    portrait_profile JSONB NOT NULL,
+    rules_version VARCHAR(20) NOT NULL,
+    calculated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS daily_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) REFERENCES users(user_id),
+    date DATE NOT NULL,
+    profile JSONB NOT NULL,
+    rules_version VARCHAR(20) NOT NULL,
+    calculated_at TIMESTAMP DEFAULT NOW(),
+    expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '24 hours',
+    UNIQUE(user_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(100) UNIQUE NOT NULL,
+    value JSONB NOT NULL,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    updated_by VARCHAR(50)
+);
+
+CREATE INDEX IF NOT EXISTS idx_static_profiles_user_id ON static_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_daily_profiles_user_id_date ON daily_profiles(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_daily_profiles_expires ON daily_profiles(expires_at);
+CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key);
+```
+
+### 16.2. Инициализация БД
+
+```python
+# db/init.py
+import psycopg2
+from pathlib import Path
+import structlog
+
+logger = structlog.get_logger()
+
+
+def init_database(database_url: str) -> None:
+    """Инициализирует базу данных при старте приложения."""
+    try:
+        conn = psycopg2.connect(database_url)
+    except Exception as e:
+        raise RuntimeError(f"Failed to connect to database: {e}")
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'users'
+                )
+            """)
+            exists = cur.fetchone()[0]
+            
+            if exists:
+                logger.info("database_exists", message="Skipping initialization")
+                return
+            
+            sql_path = Path(__file__).parent / "init.sql"
+            if not sql_path.exists():
+                raise FileNotFoundError(f"init.sql not found at {sql_path}")
+            
+            sql = sql_path.read_text()
+            cur.execute(sql)
+            conn.commit()
+            
+            logger.info("database_initialized")
+    
+    except Exception as e:
+        logger.error("database_init_failed", error=str(e))
+        raise RuntimeError(f"Database initialization failed: {e}")
+    finally:
+        conn.close()
+```
+
+### 16.3. Миграция версий
+
+```python
+# db/init.py (дополнение)
+def migrate_rules_version(conn, old_version: str, new_version: str):
+    """Обновляет rules_version в static_profiles."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE static_profiles SET rules_version = %s WHERE rules_version = %s",
+            (new_version, old_version)
+        )
+        conn.commit()
+        logger.info("migrated_profiles", count=cur.rowcount, from_ver=old_version, to_ver=new_version)
+```
+
+---
+
+## 17. АЛГОРИТМЫ И ПСЕВДОКОД
+
+### 17.1. Полный конвейер (ASYNC)
+
+```python
+# main.py
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from fastapi import FastAPI, HTTPException
+from typing import Optional
+
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ephemeris")
+
+
+async def calculate_profile_v7(
+    birth_data_dict: dict,
+    current_date: Optional[str] = None,
+    mode: str = "daily",
+    horizon_days: int = 90
+) -> dict:
+    """
+    Главный асинхронный конвейер v7.0.
+    
+    Все CPU-bound вызовы (Swiss Ephemeris) — через run_in_executor.
+    Геокодинг — асинхронный (сетевой I/O).
+    """
+    # 1. Валидация
+    birth_data = BirthData(**birth_data_dict)
+    
+    # 2. Геокодинг
+    if birth_data.location and (birth_data.lat is None or birth_data.lng is None):
+        birth_data = await birth_data.resolve_location()
+    
+    loop = asyncio.get_running_loop()
+    
+    # 3. Статическое ядро
+    static_core = await _get_or_calculate_static(
+        user_id=birth_data.user_id,
+        calculate_func=lambda: calculate_static_core(birth_data),
+        loop=loop
+    )
+    
+    # 4. Портрет — ранний выход
+    if mode == "portrait":
+        static_theses = await _get_or_calculate_static(
+            user_id=birth_data.user_id,
+            calculate_func=lambda: generate_static_theses(static_core),
+            loop=loop
+        )
+        static_integration = await _get_or_calculate_static(
+            user_id=birth_data.user_id,
+            calculate_func=lambda: integrate_static(static_theses),
+            loop=loop
+        )
+        return create_portrait_profile(static_integration, birth_data.user_id)
+    
+    # 5. Динамическое ядро
+    date_obj = _parse_date(current_date)
+    dynamic_core = await loop.run_in_executor(
+        _executor,
+        calculate_dynamic_core,
+        static_core, date_obj, horizon_days
+    )
+    
+    # 6-7. Статические тезисы и интеграция
+    static_theses = await _get_or_calculate_static(
+        birth_data.user_id,
+        lambda: generate_static_theses(static_core),
+        loop
+    )
+    static_integration = await _get_or_calculate_static(
+        birth_data.user_id,
+        lambda: integrate_static(static_theses),
+        loop
+    )
+    
+    # 8. Динамические тезисы
+    dynamic_theses = await loop.run_in_executor(
+        _executor,
+        generate_dynamic_theses,
+        dynamic_core, static_core, date_obj
+    )
+    
+    # 9. Temporal confidence
+    for thesis in dynamic_theses:
+        thesis.confidence = await loop.run_in_executor(
+            _executor,
+            calculate_temporal_confidence,
+            thesis, static_core, dynamic_core, date_obj
+        )
+    
+    # 10. Динамическая интеграция
+    dynamic_signals = await loop.run_in_executor(
+        _executor,
+        integrate_dynamic,
+        dynamic_theses, static_integration, date_obj, horizon_days
+    )
+    
+    # 11. Профиль
+    profile = create_daily_profile(
+        static_integration, dynamic_signals,
+        birth_data.user_id, date_obj, horizon_days
+    )
+    
+    # 12. Кеширование
+    await _cache_daily_profile(birth_data.user_id, current_date, profile)
+    
+    return profile
+
+
+async def _get_or_calculate_static(user_id: str, calculate_func, loop) -> dict:
+    """Получить статику из кеша или рассчитать через executor."""
+    cached = await static_cache.get_async(user_id)
+    if cached:
+        return cached
+    
+    result = await loop.run_in_executor(_executor, calculate_func)
+    await static_cache.set_async(user_id, result)
+    return result
+
+
+def _parse_date(current_date: Optional[str]) -> datetime:
+    if current_date is None:
+        return get_current_utc()
+    return datetime.strptime(current_date, "%Y-%m-%d")
+```
+
+---
+
+## 18. УТИЛИТЫ И ВСПОМОГАТЕЛЬНЫЕ МОДУЛИ
+
+### 18.1. Структура проекта
+
+```
+astrology_model/
+├── main.py
+├── config/
+│   ├── settings.py
+│   ├── settings_manager.py
+│   └── version.py
+├── core/
+│   ├── models.py
+│   ├── calculations.py
+│   ├── ephemeris_wrapper.py
+│   └── solar_time.py
+├── services/
+│   └── geocoding.py
+├── calculators/
+│   └── geocoder.py
+├── interpretation/
+│   ├── generator.py
+│   ├── western.py
+│   ├── vedic.py
+│   ├── arabic.py
+│   ├── chinese.py
+│   ├── maya.py
+│   ├── mesopotamian.py
+│   └── transits.py
+├── integration/
+│   ├── clustering.py
+│   ├── normalization.py
+│   ├── intersections.py
+│   ├── static.py
+│   └── dynamic.py
+├── profile/
+│   ├── portrait.py
+│   ├── daily.py
+│   ├── priorities.py
+│   └── recommendations.py
+├── confidence/
+│   ├── astronomical.py
+│   ├── temporal.py
+│   └── k_factors.py
+├── cache/
+│   ├── manager.py
+│   ├── static.py
+│   ├── dynamic.py
+│   └── invalidation.py
+├── adjacent/
+│   ├── base.py
+│   ├── psychomatrix.py
+│   ├── biorhythms.py
+│   └── nine_vector.py
+├── constants/
+│   ├── i18n.py
+│   └── astrology_mapping.py
+├── db/
+│   ├── init.py
+│   └── init.sql
+├── utils/
+│   ├── time_module.py
+│   └── logging.py
+├── tasks/
+│   └── scheduler.py
+├── tests/
+│   ├── test_geocoder.py
+│   ├── test_core.py
+│   ├── test_interpretation.py
+│   ├── test_integration.py
+│   ├── test_profile.py
+│   ├── test_time_module.py
+│   ├── test_cache.py
+│   ├── test_adjacent.py
+│   └── test_e2e.py
+├── scripts/
+│   └── import_cities.py
+├── requirements.txt
+├── .env
+└── docker-compose.yml
+```
+
+### 18.2. Зависимости
+
+```txt
+# requirements.txt
+
+# Астрономия
+pyswisseph==2.10.0
+
+# API
+fastapi==0.100.0
+uvicorn[standard]==0.23.0
+pydantic==2.0.0
+
+# База данных
+psycopg2-binary==2.9.7
+
+# Кеш
+redis==4.6.0
+
+# Утилиты
+python-dotenv==1.0.0
+pytz==2023.3
+structlog==24.1.0
+numpy==1.24.0
+
+# Геокодинг
+aiosqlite==0.19.0
+aiohttp==3.9.0
+timezonefinder==6.2.0
+cyrtranslit==1.1.1
+aiolimiter==1.1.0
+
+# Планировщик
+apscheduler==3.10.0
+
+# Тесты
+pytest==7.4.0
+pytest-asyncio==0.21.0
+pytest-cov==4.1.0
+```
+
+### 18.3. Переменные окружения
+
+```env
+# .env
+
+# База данных
+DATABASE_URL=postgresql://user:pass@localhost:5432/astrology
+DATABASE_POOL_SIZE=10
+
+# Кеш
+REDIS_URL=redis://localhost:6379/0
+REDIS_POOL_SIZE=10
+
+# Геокодер
+GEOCODER_DB_PATH=/data/geocoder_cache.db
+GEOCODER_RATE_LIMIT=1.0
+
+# Swiss Ephemeris
+EPHEMERIS_PATH=/usr/share/swisseph
+
+# Версия правил
+API_VERSION=v7.0
+RULES_MINOR_VERSION=1
+
+# Логирование
+LOG_LEVEL=INFO
+LOG_FORMAT=json
+
+# Администрирование
+ADMIN_TOKEN=your-secure-admin-token-here
+
+# Настройки (опционально — для override)
+MIN_DYNAMIC_CONFIDENCE=0.10
+CLUSTER_THRESHOLD=0.70
+N_MAX=5
+ENABLE_MAYA=true
+ENABLE_MESOPOTAMIAN=true
+ENABLE_PSYCHOMATRIX=true
+ENABLE_BIORHYTHMS=true
+```
+
+### 18.4. Docker Compose
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: astrology
+      POSTGRES_PASSWORD: astrology
+      POSTGRES_DB: astrology
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrology"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://astrology:astrology@postgres:5432/astrology
+      REDIS_URL: redis://redis:6379/0
+      EPHEMERIS_PATH: /usr/share/swisseph
+      API_VERSION: v7.0
+      RULES_MINOR_VERSION: 1
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-token}
+      MIN_DYNAMIC_CONFIDENCE: 0.10
+    volumes:
+      - ./ephemeris:/usr/share/swisseph
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+---
+
+## 19. ТЕСТИРОВАНИЕ
+
+### 19.1. Ключевые тесты
+
+```python
+# tests/test_core.py
+import pytest
+from datetime import datetime
+from core.models import BirthData
+from core.calculations import check_daytime
+from utils.time_module import TimeModule
+
+
+def test_birth_data_validation():
+    """Валидация BirthData через Pydantic."""
+    data = BirthData(
+        user_id="test_1",
+        year=1973, month=10, day=16,
+        hour=11, minute=42, second=0,
+        timezone="Europe/Kaliningrad",
+        lat=54.7104, lng=20.507
+    )
+    assert data.year == 1973
+    
+    with pytest.raises(ValueError):
+        BirthData(
+            user_id="test_1", year=1899, month=1, day=1,
+            hour=0, minute=0, timezone="UTC", lat=0, lng=0
+        )
+
+
+def test_check_daytime_noon():
+    """Солнце в 10 доме (MC, полдень) — день."""
+    houses = {
+        1: {"cusp": 0}, 4: {"cusp": 90},
+        7: {"cusp": 180}, 10: {"cusp": 270},
+    }
+    assert check_daytime(270.0, houses) is True
+
+
+def test_check_daytime_midnight():
+    """Солнце в 4 доме (IC, полночь) — ночь."""
+    houses = {
+        1: {"cusp": 0}, 4: {"cusp": 90},
+        7: {"cusp": 180}, 10: {"cusp": 270},
+    }
+    assert check_daytime(90.0, houses) is False
+
+
+def test_calc_ut_format():
+    """Проверяет формат возврата swe.calc_ut."""
+    import swisseph as swe
+    from core.ephemeris_wrapper import FLAGS
+    
+    jd = 2451545.0
+    pos = swe.calc_ut(jd, swe.SUN, FLAGS)
+    assert len(pos) == 6, f"Expected 6 elements, got {len(pos)}"
+
+
+def test_temporal_modulation_cutoff():
+    """Отсечение сигналов дальше 2σ."""
+    from core.models import Thesis, TimeHorizon
+    from confidence.temporal import calculate_temporal_modulation
+    
+    thesis = Thesis(
+        id="T_test", system="transits",
+        sphere_vector=[0.1] * 12, sign=1, claim="test",
+        base_confidence=0.7, confidence=0.7, level=2,
+        anchors=["T_test"],
+        time_horizon=TimeHorizon(decay="gaussian", sigma_days=30),
+        days_to_peak=100,
+        peak_date=None,
+        metadata={"speed": 1.0}
+    )
+    
+    mod = calculate_temporal_modulation(thesis, datetime.now())
+    assert mod == 0.0
+```
+
+### 19.2. Тесты для Adjacent
+
+```python
+# tests/test_adjacent.py
+from datetime import date
+from adjacent.psychomatrix import PsychomatrixSystem
+from adjacent.biorhythms import BiorhythmsSystem
+
+
+def test_psychomatrix_1973_10_16():
+    """Проверка психоматрицы для 16.10.1973."""
+    system = PsychomatrixSystem()
+    result = system.calculate({"birth_date": date(1973, 10, 16)})
+    
+    assert result["working_numbers"] == [28, 10, 26, 8]
+
+
+def test_biorhythms_zero_days():
+    """В день рождения все биоритмы = 0."""
+    system = BiorhythmsSystem()
+    result = system.calculate({
+        "birth_date": date(2000, 1, 1),
+        "target_date": date(2000, 1, 1),
+    })
+    
+    for value in result["values"].values():
+        assert abs(value) < 1e-9
+
+
+def test_biorhythms_full_cycle():
+    """Через 23 дня физический цикл возвращается."""
+    system = BiorhythmsSystem()
+    r1 = system.calculate({
+        "birth_date": date(2000, 1, 1),
+        "target_date": date(2000, 1, 1),
+    })
+    r2 = system.calculate({
+        "birth_date": date(2000, 1, 1),
+        "target_date": date(2000, 1, 24),  # +23 дня
+    })
+    
+    assert abs(r1["values"]["physical"] - r2["values"]["physical"]) < 1e-9
+```
+
+### 19.3. E2E тест
+
+```python
+# tests/test_e2e.py
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_full_pipeline():
+    """Полный e2e тест: init → portrait → daily."""
+    from main import calculate_profile_v7
+    
+    # 1. Инициализация (портрет)
+    portrait = await calculate_profile_v7(
+        birth_data_dict={
+            "user_id": "test_e2e",
+            "location": {"country": "Россия", "city": "Калининград"},
+            "year": 1973, "month": 10, "day": 16,
+            "hour": 11, "minute": 42
+        },
+        mode="portrait"
+    )
+    assert portrait["type"] == "portrait"
+    assert len(portrait["intersections"]) > 0
+    
+    # 2. Daily
+    daily = await calculate_profile_v7(
+        birth_data_dict={
+            "user_id": "test_e2e",
+            "location": {"country": "Россия", "city": "Калининград"},
+            "year": 1973, "month": 10, "day": 16,
+            "hour": 11, "minute": 42
+        },
+        current_date="2026-10-24",
+        mode="daily"
+    )
+    assert daily["type"] == "daily"
+    assert daily["status"] in ["active", "static_only", "empty_profile"]
+```
+
+---
+
+## 20. ВНЕДРЕНЧЕСКИЙ ПЛАН
+
+### 20.1. Этапы
+
+| Этап | Длительность | Задачи | Критерии готовности |
+|------|--------------|--------|---------------------|
+| **0. Подготовка** | 3 дня | Swiss Ephemeris, PostgreSQL, Redis, GeoNames | Компоненты установлены |
+| **1. Геокодер** | 2 дня | AsyncCityGeocoder + импорт городов | 30+ городов РФ работают |
+| **2. Core + API** | 1 неделя | Слой 0, геокодинг, эндпоинты | `/init` возвращает координаты + ядро |
+| **3. Интерпретация** | 1 неделя | 7 систем с graceful degradation | Все системы генерируют тезисы |
+| **4. Интеграция** | 3 дня | Кластеризация, нормализация, пересечения | Портрет формируется |
+| **5. Динамика** | 3 дня | Транзиты, временная модуляция | Daily профиль работает |
+| **6. Adjacent** | 1 неделя | Психоматрица, биоритмы, nine_vector | Nine-vector работает |
+| **7. Settings** | 3 дня | SettingsManager + API | Настройки меняются без пересборки |
+| **8. Кеш** | 2 дня | Redis + DateTimeEncoder + инвалидация | p95 < 200ms |
+| **9. Тесты** | 2 дня | Юнит + интеграционные | Coverage > 80% |
+| **10. Продакшен** | 1 неделя | Деплой, мониторинг, документация | Система в production |
+
+**Итого:** ~5 недель.
+
+### 20.2. Точки контроля
+
+- **Неделя 1:** Демо `/init` с геокодингом + портрет
+- **Неделя 2:** Демо `/daily` с транзитами
+- **Неделя 3:** Демо `/nine-vector`
+- **Неделя 4:** Демо `/admin/settings`
+- **Неделя 5:** Production-ready
+
+### 20.3. Метрики готовности
+
+| Метрика | Целевое значение |
+|---------|------------------|
+| p95 latency (cached) | < 200ms |
+| p95 latency (uncached) | < 2s |
+| Coverage | > 80% |
+| Availability | > 99.5% |
+| Error rate | < 1% |
+
+---
+
+## 21. ПРИЛОЖЕНИЯ И ТАБЛИЦЫ
+
+### 21.1. Иерархия тезисов
+
+| Уровень | Описание | Примеры | K_level |
+|---------|----------|---------|---------|
+| 1 | Базовые архетипы | Солнце в Весах, Накшатра | 1.2 |
+| 2 | Паттерны и комбинации | Стеллиум, Yod, Транзиты | 1.0 |
+| 3 | Конкретные тезисы | Карьера через творчество | 0.9 |
+| 4 | Детали и уточнения | Аспекты к жребиям | 0.8 |
+
+### 21.2. Аспекты и орбисы
+
+```python
+ASPECT_ORBS = {
+    "conjunction": 8, "sextile": 6, "square": 8, "trine": 8,
+    "opposition": 8, "semisextile": 3, "semisquare": 2,
+    "sesquiquadrate": 2, "quincunx": 3
+}
+
+ASPECT_ANGLES = {
+    "conjunction": 0, "sextile": 60, "square": 90, "trine": 120,
+    "opposition": 180, "semisextile": 30, "semisquare": 45,
+    "sesquiquadrate": 135, "quincunx": 150
+}
+```
+
+### 21.3. Параметры и пороги
+
+| Параметр | Значение | Применение | Обоснование |
+|----------|----------|------------|-------------|
+| N_max | 5 | Нормализация внутри кластеров | Эмпирический оптимум |
+| MIN_DYNAMIC_CONFIDENCE | 0.10 | Минимальный порог для динамических сигналов | Отсечение шума |
+| CLUSTER_THRESHOLD | 0.70 | Порог косинусного расстояния | Баланс объединения/разделения |
+| DYNAMIC_CORE_TTL | 604800 | 7 дней | Транзиты меняются медленно |
+| DAILY_PROFILE_TTL | 86400 | 24 часа | Ежедневное обновление |
+| GEOCODER_MEMORY_TTL | 3600 | 1 час | Кэш в памяти |
+| GEOCODER_DB_TTL | 2592000 | 30 дней | Кэш в SQLite |
+| SIGMA_CUTOFF | 2.0 | Отсечение гауссианы | Математическая строгость |
+
+### 21.4. Векторный словарь сфер (12 измерений)
+
+| Индекс | Сфера | Описание |
+|--------|-------|----------|
+| 0 | career | Профессиональная реализация |
+| 1 | relationships | Отношения, партнёрство |
+| 2 | finance | Финансы, ресурсы |
+| 3 | health | Здоровье, восстановление |
+| 4 | creativity | Творчество, дети |
+| 5 | spirituality | Духовность, философия |
+| 6 | family | Семья, дом, корни |
+| 7 | communication | Общение, обучение |
+| 8 | growth | Рост, расширение |
+| 9 | risk | Риск, трансформация |
+| 10 | service | Служение, помощь |
+| 11 | independence | Свобода, независимость |
+
+---
+
+## 22. ИСТОРИЯ РЕВИЗИЙ И ПРИНЯТЫЕ РЕШЕНИЯ
+
+### 22.1. История версий
+
+| Версия | Дата | Ключевые изменения |
+|--------|------|-------------------|
+| 5.1 | 2026-09-09 | Базовая концепция, 7 систем, Calc_ut, TimeModule |
+| 6.0 | 2026-09-09 | Геокодинг, i18n, экспертные векторы, враппер SE |
+| 6.1 | 2026-09-10 | Async pipeline, detect_patterns, check_daytime fix |
+| 6.2 | 2026-09-18 | Финальные исправления, все P0/P1 закрыты |
+| **7.0** | **2026-10-24** | **Adjacent модуль, SettingsManager, nine_vector, API расширения** |
+
+### 22.2. Принятые архитектурные решения
+
+| № | Решение | Обоснование |
+|---|---------|-------------|
+| 1 | TimeModule с UTC | Корректная работа с DST |
+| 2 | VersionManager (API + RULES_HASH) | Гибкая инвалидация |
+| 3 | Pydantic v2 модели | Строгая типизация |
+| 4 | Graceful degradation | Устойчивость к ошибкам |
+| 5 | DateTimeEncoder | Надёжная сериализация |
+| 6 | Отсечение 2σ | Математическая строгость |
+| 7 | init.sql вместо Alembic | Простота для MVP |
+| 8 | AsyncCityGeocoder | Скорость и надёжность |
+| 9 | Fallback для 30+ городов РФ | Работа без внешних API |
+| 10 | Транслитерация | Многоязычность |
+| 11 | timezonefinder | Автоопределение TZ |
+| 12 | Ручной ввод координат | Fallback для редких городов |
+| 13 | Numpy для математики | Производительность |
+| 14 | Отсутствие Redis Lock | Осознанное упрощение |
+| 15 | HTTP 200 для пустого профиля | Валидный ответ |
+| 16 | Ежедневная очистка кэша | Гигиена данных |
+| 17 | **Adjacent как модуль монолита** | **YAGNI: не создавать микросервисы преждевременно** |
+| 18 | **SettingsManager (env + DB)** | **Баланс простоты и гибкости** |
+| 19 | **Флаги enable_* для всех систем** | **Эфемерность проекта требует быстрого отключения** |
+| 20 | **Nine_vector в Adjacent, не в Astro** | **Это композитная система, не астрология** |
+| 21 | **Testing-service — отдельный** | **Stateful + UI-heavy ≠ stateless** |
+| 22 | **check_daytime: дома 1-6 — день** | **Классическая астрология (Птолемей)** |
+
+### 22.3. Что НЕ входит в v7.0
+
+- ❌ Асинхронный пресчёт профилей
+- ❌ Экспорт в JSON/PDF
+- ❌ A/B тестирование
+- ❌ Веб-хуки
+- ❌ Сбор метрик точности прогнозов
+- ❌ Alembic (отложен)
+- ❌ Redis Lock (осознанное решение)
+- ❌ Kafka/RabbitMQ
+- ❌ CQRS/Event Sourcing
+- ❌ GraphQL
+- ❌ Микросервисная архитектура (пока)
+
+### 22.4. Roadmap
+
+| Версия | Ожидаемые изменения |
+|--------|---------------------|
+| v7.1 | `_detect_grand_trine_optimized` (O(n²)) |
+| v7.2 | `check_daytime_accurate` для высоких широт |
+| v7.3 | Testing-service (отдельный микросервис) |
+| v7.4 | Аштоттари и Йогани даши |
+| v8.0 | Динамический расчёт `sigma = orb / speed * 2` |
+
+---
+
+## 23. ИТОГОВОЕ ЗАКЛЮЧЕНИЕ
+
+### 23.1. Статус документа
+
+**Документ v7.0 — итоговая концепция к внедрению.**
+
+### 23.2. Готовность: 100%
+
+Все компоненты определены, формализованы, проверены и готовы к реализации.
+
+### 23.3. Ключевые особенности v7.0
+
+| № | Особенность | Преимущество |
+|---|-------------|--------------|
+| 1 | Разделение статики и динамики | Производительность ×100 |
+| 2 | Кластеризация → нормализация | Сохранение всех сфер |
+| 3 | Временная модуляция с 2σ | Реалистичное поведение транзитов |
+| 4 | Взвешивание по горизонту | Плавный переход между системами |
+| 5 | Детерминизм | Полная воспроизводимость |
+| 6 | primary_sphere | Явный приоритет для пользователя |
+| 7 | DateTimeEncoder | Надёжная сериализация Redis |
+| 8 | calc_ut одним вызовом | Ускорение ×5-10 |
+| 9 | TimeModule | Корректная работа со временем |
+| 10 | Pydantic модели | Строгая типизация |
+| 11 | Graceful degradation | Устойчивость к ошибкам |
+| 12 | AsyncCityGeocoder | Production-ready геокодинг |
+| 13 | Fallback 30+ городов | Работа без API |
+| 14 | Транслитерация | Многоязычность |
+| 15 | timezonefinder | Автоопределение TZ |
+| 16 | Ручной ввод координат | Fallback |
+| 17 | Локальная база городов | Независимость от API |
+| 18 | i18n (RU/EN) | Локализация |
+| 19 | Экспертные векторы сфер | Астрологический движок |
+| 20 | Эндпоинт admin/cache/invalidate | Администрирование |
+| 21 | **Adjacent модуль** | **Психоматрица + биоритмы + nine_vector** |
+| 22 | **SettingsManager** | **Гибридные настройки (env + DB)** |
+| 23 | **Флаги enable_*** | **Отключение систем без пересборки** |
+| 24 | **API настроек** | **Управление из админки** |
+| 25 | **Подготовка к testing-service** | **Готовность к расширению** |
+
+### 23.4. Следующие шаги
+
+1. ✅ Документ готов и утверждён
+2. ⬜ Разработка MVP согласно спецификации (5 недель)
+3. ⬜ Тестирование на тестовых данных
+4. ⬜ Калибровка параметров
+5. ⬜ Продакшен
+
+### 23.5. Метрики успеха
+
+| Метрика | Целевое значение |
+|---------|------------------|
+| p95 latency (cached) | < 200ms |
+| p95 latency (uncached) | < 2s |
+| Coverage | > 80% |
+| Availability | > 99.5% |
+| Error rate | < 1% |
+| Determinism | 100% (одинаковый вход → одинаковый выход) |
+
+### 23.6. Принципы сопровождения
+
+1. **Любое изменение правил** → обновление `RULES_HASH` → автоматическая инвалидация кеша
+2. **Любое изменение структуры ответа** → обновление `API_VERSION`
+3. **Любое изменение порогов** → через SettingsManager (без пересборки)
+4. **Любая новая система** → через `enable_*` флаг (по умолчанию `false`)
+5. **Любое изменение BirthData** → `invalidate_user_cache()`
+
+---
+
+**КОНЕЦ ДОКУМЕНТА**
